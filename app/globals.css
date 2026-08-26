@@ -627,7 +627,7 @@ select {
 }
 
 /* Safe, declarative UI primitives rendered as tldraw custom shapes. */
-.surface-block {
+.surface-block.surface-block {
   --block-bg: #fffefb;
   --block-ink: #22231f;
   --block-quiet: #696b64;

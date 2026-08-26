@@ -78,9 +78,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       return {
         className: 'is-unavailable',
         label: 'Site tools not active in this tab',
-        title: 'Enable Site tools in ChatGPT',
+        title: 'Check browser and rollout availability',
         detail:
-          'Open Settings → Browser → Permissions and turn on Enable site tools, then reload this page. If that switch is missing, WebMCP has not reached this account yet.',
+          'Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Open Surface does not, this origin is not enabled for the current rollout yet.',
       };
     }
     if (connection.registered === 0 && connection.failed === 0) {
