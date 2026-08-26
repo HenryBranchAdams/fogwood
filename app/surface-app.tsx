@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Editor, Tldraw } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { SurfaceBlockUtil } from './surface-block';
@@ -41,8 +41,10 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     available: false,
     registered: 0,
     failed: 0,
+    errors: [],
   });
   const [activity, setActivity] = useState<Activity[]>([INTRO_ACTIVITY]);
+  const registrationCleanup = useRef<(() => void) | null>(null);
 
   const hasContent = shapeCount > 0;
 
@@ -57,12 +59,22 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     return editor.store.listen(updateCount);
   }, [editor]);
 
-  useEffect(() => {
-    if (!editor) return;
-    return registerSurfaceTools(editor, setConnection, (title, detail) => {
-      addActivity({ kind: 'action', title, detail });
-    });
-  }, [editor]);
+  useEffect(() => () => registrationCleanup.current?.(), []);
+
+  const mountEditor = useCallback((nextEditor: Editor) => {
+    registrationCleanup.current?.();
+    setEditor(nextEditor);
+    registrationCleanup.current = registerSurfaceTools(
+      nextEditor,
+      setConnection,
+      (title, detail) => {
+        setActivity((current) => [
+          ...current.slice(-24),
+          { kind: 'action', title, detail, id: activityId() },
+        ]);
+      },
+    );
+  }, []);
 
   const connectionStatus = useMemo(() => {
     if (!connection.checked) {
@@ -75,12 +87,15 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       };
     }
     if (!connection.available) {
+      const providerDetail = connection.errors[0]
+        ? ` The host reported: ${connection.errors[0]}`
+        : '';
       return {
         className: 'is-unavailable',
         label: 'Site tools not active in this tab',
         title: 'Check browser and rollout availability',
         detail:
-          'Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Open Surface does not, this origin is not enabled for the current rollout yet.',
+          `Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Open Surface does not, this origin is not enabled for the current rollout yet.${providerDetail}`,
       };
     }
     if (connection.registered === 0 && connection.failed === 0) {
@@ -93,11 +108,14 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       };
     }
     if (connection.registered > 0 && connection.failed > 0) {
+      const failureDetail = connection.errors[0]
+        ? ` First rejection: ${connection.errors[0]}`
+        : '';
       return {
         className: 'is-partial',
         label: `${connection.registered} ready · ${connection.failed} failed`,
         title: 'Some Site tools are ready',
-        detail: `${connection.registered} canvas tools registered; ${connection.failed} could not register.`,
+        detail: `${connection.registered} canvas tools registered; ${connection.failed} could not register.${failureDetail}`,
       };
     }
     if (connection.registered > 0) {
@@ -113,8 +131,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       className: 'is-error',
       label: 'Site tool registration failed',
       title: 'Site tools could not connect',
-      detail:
-        'WebMCP is available, but none of the canvas tools registered. Reload the page before trying again.',
+      detail: connection.errors[0]
+        ? `WebMCP is available, but none of the canvas tools registered. First rejection: ${connection.errors[0]}`
+        : 'WebMCP is available, but none of the canvas tools registered. Reload the page before trying again.',
     };
   }, [connection]);
 
@@ -156,7 +175,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           shapeUtils={shapeUtils}
           licenseKey={licenseKey}
           persistenceKey="open-surface-local"
-          onMount={setEditor}
+          onMount={mountEditor}
         />
 
         <div className="surface-mark" aria-label="Open Surface">

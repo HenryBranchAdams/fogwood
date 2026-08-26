@@ -20,6 +20,14 @@ import {
   SurfaceBlockShape,
   SurfaceBlockTone,
 } from './surface-block';
+import {
+  ModelContext,
+  ToolConnection,
+  WebMcpTool,
+  registerWebMcpTools,
+} from './webmcp-registration';
+
+export type { ToolConnection } from './webmcp-registration';
 
 export type SurfaceBlockInput = {
   kind?: SurfaceBlockKind;
@@ -41,35 +49,9 @@ export type SurfaceBlockInput = {
   step?: number;
 };
 
-export type ToolConnection = {
-  checked: boolean;
-  available: boolean;
-  registered: number;
-  failed: number;
-};
-
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
-};
-
-type WebMcpTool = {
-  name: string;
-  title?: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  annotations?: {
-    readOnlyHint?: boolean;
-    untrustedContentHint?: boolean;
-  };
-  execute: (input: unknown) => ToolResult | Promise<ToolResult>;
-};
-
-type ModelContext = {
-  registerTool: (
-    tool: WebMcpTool,
-    options?: { signal?: AbortSignal },
-  ) => Promise<void> | void;
 };
 
 const DEFAULT_SIZES: Record<SurfaceBlockKind, { w: number; h: number }> = {
@@ -701,15 +683,6 @@ export function registerSurfaceTools(
   onConnection: (connection: ToolConnection) => void,
   onActivity?: (title: string, detail?: string) => void,
 ) {
-  const modelContext = (
-    editor.getContainerDocument() as Document & { modelContext?: ModelContext }
-  ).modelContext;
-  if (!modelContext) {
-    onConnection({ checked: true, available: false, registered: 0, failed: 0 });
-    return () => undefined;
-  }
-
-  const controller = new AbortController();
   const tools: WebMcpTool[] = [
     {
       name: 'surface-inspect',
@@ -994,23 +967,17 @@ export function registerSurfaceTools(
     },
   ];
 
-  onConnection({ checked: true, available: true, registered: 0, failed: 0 });
-  Promise.allSettled(
-    tools.map((tool) =>
-      Promise.resolve(modelContext.registerTool(tool, { signal: controller.signal })),
-    ),
-  ).then((results) => {
-    if (controller.signal.aborted) return;
-    const registered = results.filter((result) => result.status === 'fulfilled').length;
-    onConnection({
-      checked: true,
-      available: true,
-      registered,
-      failed: results.length - registered,
-    });
-  });
+  const containerDocument = editor.getContainerDocument() as Document & {
+    modelContext?: ModelContext;
+  };
+  const ContainerAbortController = editor.getContainerWindow().AbortController;
 
-  return () => controller.abort();
+  return registerWebMcpTools({
+    tools,
+    getModelContext: () => containerDocument.modelContext,
+    createAbortController: () => new ContainerAbortController(),
+    onConnection,
+  });
 }
 
 export type RecipeName = 'cockpit' | 'week' | 'decision';
