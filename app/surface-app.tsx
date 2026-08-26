@@ -32,7 +32,7 @@ function activityId() {
   return `activity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export default function SurfaceApp() {
+export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [shapeCount, setShapeCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(true);
@@ -106,6 +106,7 @@ export default function SurfaceApp() {
       <section className="canvas-pane" aria-label="Open Surface canvas">
         <Tldraw
           shapeUtils={shapeUtils}
+          licenseKey={licenseKey}
           persistenceKey="open-surface-local"
           onMount={setEditor}
         />

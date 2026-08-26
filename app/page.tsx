@@ -1,18 +1,5 @@
-'use client';
-
-import dynamic from 'next/dynamic';
-
-const SurfaceApp = dynamic(() => import('./surface-app'), {
-  ssr: false,
-  loading: () => (
-    <main className="surface-loading" aria-label="Loading Open Surface">
-      <span />
-      <strong>Open Surface</strong>
-      <p>Preparing the blank canvas…</p>
-    </main>
-  ),
-});
+import SurfaceLoader from './surface-loader';
 
 export default function Home() {
-  return <SurfaceApp />;
+  return <SurfaceLoader licenseKey={process.env.TLDRAW_LICENSE_KEY} />;
 }
