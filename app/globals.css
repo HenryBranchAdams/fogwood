@@ -561,6 +561,35 @@ select {
   color: #77613a;
 }
 
+.site-tools-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.site-tools-recovery a,
+.site-tools-recovery button {
+  min-height: 29px;
+  padding: 0 9px;
+  border: 1px solid rgba(134, 112, 65, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #5f481f;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 27px;
+  text-decoration: none;
+}
+
+.site-tools-recovery a:hover,
+.site-tools-recovery button:hover {
+  border-color: rgba(134, 112, 65, 0.5);
+  background: white;
+}
+
 .native-chat-handoff.is-partial,
 .native-chat-handoff.is-error {
   border-color: rgba(197, 83, 60, 0.24);

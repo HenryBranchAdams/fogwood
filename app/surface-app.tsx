@@ -78,9 +78,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       return {
         className: 'is-unavailable',
         label: 'Site tools not active in this tab',
-        title: 'ChatGPT is open; Site tools are not active',
+        title: 'Enable Site tools in ChatGPT',
         detail:
-          'This tab has not exposed WebMCP to the Site. Use a supported model and check Browser permissions to make sure Site tools are enabled.',
+          'Open Settings → Browser → Permissions and turn on Enable site tools, then reload this page. If that switch is missing, WebMCP has not reached this account yet.',
       };
     }
     if (connection.registered === 0 && connection.failed === 0) {
@@ -252,6 +252,20 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           <div>
             <strong>{connectionStatus.title}</strong>
             <p>{connectionStatus.detail}</p>
+            {connection.checked && !connection.available && (
+              <div className="site-tools-recovery">
+                <a
+                  href="https://learn.chatgpt.com/docs/webmcp"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open setup guide
+                </a>
+                <button type="button" onClick={() => window.location.reload()}>
+                  Reload check
+                </button>
+              </div>
+            )}
           </div>
         </section>
 
