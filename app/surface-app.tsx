@@ -37,6 +37,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const [shapeCount, setShapeCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(true);
   const [connection, setConnection] = useState<ToolConnection>({
+    checked: false,
     available: false,
     registered: 0,
     failed: 0,
@@ -63,11 +64,58 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     });
   }, [editor]);
 
-  const connectionLabel = useMemo(() => {
-    if (!connection.available) return 'Open in ChatGPT to connect';
-    if (connection.registered === 0 && connection.failed === 0) return 'Connecting tools';
-    if (connection.registered > 0) return `${connection.registered} Site tools ready`;
-    return 'Site tools unavailable';
+  const connectionStatus = useMemo(() => {
+    if (!connection.checked) {
+      return {
+        className: 'is-checking',
+        label: 'Checking for Site tools',
+        title: 'Checking this tab for Site tools',
+        detail:
+          'The canvas is ready. WebMCP availability is checked separately from whether ChatGPT is open.',
+      };
+    }
+    if (!connection.available) {
+      return {
+        className: 'is-unavailable',
+        label: 'Site tools not active in this tab',
+        title: 'ChatGPT is open; Site tools are not active',
+        detail:
+          'This tab has not exposed WebMCP to the Site. Use a supported model and check Browser permissions to make sure Site tools are enabled.',
+      };
+    }
+    if (connection.registered === 0 && connection.failed === 0) {
+      return {
+        className: 'is-connecting',
+        label: 'Registering Site tools',
+        title: 'Connecting the canvas tools',
+        detail:
+          'The WebMCP interface is available and Open Surface is registering its canvas tools.',
+      };
+    }
+    if (connection.registered > 0 && connection.failed > 0) {
+      return {
+        className: 'is-partial',
+        label: `${connection.registered} ready · ${connection.failed} failed`,
+        title: 'Some Site tools are ready',
+        detail: `${connection.registered} canvas tools registered; ${connection.failed} could not register.`,
+      };
+    }
+    if (connection.registered > 0) {
+      return {
+        className: 'is-ready',
+        label: `${connection.registered} Site tools ready`,
+        title: 'Continue in your ChatGPT conversation',
+        detail:
+          'Your subscription is the model connection. This Site only exposes the canvas tools ChatGPT can use—no second API key.',
+      };
+    }
+    return {
+      className: 'is-error',
+      label: 'Site tool registration failed',
+      title: 'Site tools could not connect',
+      detail:
+        'WebMCP is available, but none of the canvas tools registered. Reload the page before trying again.',
+    };
   }, [connection]);
 
   function makeRecipe(recipe: RecipeName) {
@@ -160,9 +208,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
             <span className="agent-avatar" aria-hidden="true">✦</span>
             <div>
               <h2>ChatGPT</h2>
-              <p className={connection.registered > 0 ? 'is-ready' : ''}>
+              <p className={connectionStatus.className} aria-live="polite">
                 <span />
-                {connectionLabel}
+                {connectionStatus.label}
               </p>
             </div>
           </div>
@@ -196,14 +244,14 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           <span>“Improve the hierarchy here without deleting my content.”</span>
         </div>
 
-        <section className="native-chat-handoff" aria-label="ChatGPT connection">
-          <span aria-hidden="true">↗</span>
+        <section
+          className={`native-chat-handoff ${connectionStatus.className}`}
+          aria-label="ChatGPT connection"
+        >
+          <span aria-hidden="true">{connection.registered > 0 ? '↗' : 'i'}</span>
           <div>
-            <strong>Continue in your ChatGPT conversation</strong>
-            <p>
-              Your subscription is the model connection. This Site only exposes
-              the canvas tools ChatGPT can use—no second API key.
-            </p>
+            <strong>{connectionStatus.title}</strong>
+            <p>{connectionStatus.detail}</p>
           </div>
         </section>
 

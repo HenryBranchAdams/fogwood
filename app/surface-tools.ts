@@ -42,6 +42,7 @@ export type SurfaceBlockInput = {
 };
 
 export type ToolConnection = {
+  checked: boolean;
   available: boolean;
   registered: number;
   failed: number;
@@ -700,10 +701,11 @@ export function registerSurfaceTools(
   onConnection: (connection: ToolConnection) => void,
   onActivity?: (title: string, detail?: string) => void,
 ) {
-  const modelContext = (document as Document & { modelContext?: ModelContext })
-    .modelContext;
+  const modelContext = (
+    editor.getContainerDocument() as Document & { modelContext?: ModelContext }
+  ).modelContext;
   if (!modelContext) {
-    onConnection({ available: false, registered: 0, failed: 0 });
+    onConnection({ checked: true, available: false, registered: 0, failed: 0 });
     return () => undefined;
   }
 
@@ -992,7 +994,7 @@ export function registerSurfaceTools(
     },
   ];
 
-  onConnection({ available: true, registered: 0, failed: 0 });
+  onConnection({ checked: true, available: true, registered: 0, failed: 0 });
   Promise.allSettled(
     tools.map((tool) =>
       Promise.resolve(modelContext.registerTool(tool, { signal: controller.signal })),
@@ -1001,6 +1003,7 @@ export function registerSurfaceTools(
     if (controller.signal.aborted) return;
     const registered = results.filter((result) => result.status === 'fulfilled').length;
     onConnection({
+      checked: true,
       available: true,
       registered,
       failed: results.length - registered,

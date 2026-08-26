@@ -334,6 +334,17 @@ select {
   box-shadow: 0 0 0 3px rgba(72, 162, 96, 0.12);
 }
 
+.agent-header p.is-unavailable > span {
+  background: #b18434;
+  box-shadow: 0 0 0 3px rgba(177, 132, 52, 0.12);
+}
+
+.agent-header p.is-partial > span,
+.agent-header p.is-error > span {
+  background: #c5533c;
+  box-shadow: 0 0 0 3px rgba(197, 83, 60, 0.12);
+}
+
 .agent-header > button {
   width: 32px;
   height: 32px;
@@ -523,6 +534,37 @@ select {
   color: #7a5147;
   font-size: 10px;
   line-height: 1.45;
+}
+
+.native-chat-handoff.is-checking,
+.native-chat-handoff.is-connecting,
+.native-chat-handoff.is-unavailable {
+  border-color: rgba(134, 112, 65, 0.24);
+  background: #fff8e9;
+}
+
+.native-chat-handoff.is-checking > span,
+.native-chat-handoff.is-connecting > span,
+.native-chat-handoff.is-unavailable > span {
+  background: #9b7530;
+}
+
+.native-chat-handoff.is-checking strong,
+.native-chat-handoff.is-connecting strong,
+.native-chat-handoff.is-unavailable strong {
+  color: #49391e;
+}
+
+.native-chat-handoff.is-checking p,
+.native-chat-handoff.is-connecting p,
+.native-chat-handoff.is-unavailable p {
+  color: #77613a;
+}
+
+.native-chat-handoff.is-partial,
+.native-chat-handoff.is-error {
+  border-color: rgba(197, 83, 60, 0.24);
+  background: #fff0ec;
 }
 
 .agent-footer {
