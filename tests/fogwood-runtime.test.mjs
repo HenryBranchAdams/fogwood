@@ -10,8 +10,61 @@ import {
   searchCapabilities,
   validateProposal,
 } from '../app/fogwood-runtime.ts';
+import { createCompareInstrumentScope } from '../app/fogwood-instrument-adapter.ts';
 
 const emptyContext = { current_revision: 'fogwood-agent-runtime/1-base', items: [] };
+
+const compareShapeIds = {
+  'compare:weight:cost': 'shape:weight-cost',
+  'compare:weight:impact': 'shape:weight-impact',
+  'compare:score-input:alpha-cost': 'shape:alpha-cost',
+  'compare:score-input:alpha-impact': 'shape:alpha-impact',
+  'compare:score-input:beta-cost': 'shape:beta-cost',
+  'compare:score-input:beta-impact': 'shape:beta-impact',
+  'compare:score:alpha': 'shape:score-alpha',
+  'compare:score:beta': 'shape:score-beta',
+  'compare:recommendation': 'shape:recommendation',
+  'compare:chart': 'shape:chart',
+};
+
+function compareContext() {
+  const scope = createCompareInstrumentScope('compare-and-decide:runtime', compareShapeIds);
+  return {
+    scope,
+    context: {
+      current_revision: 'rev-compare-runtime',
+      items: scope.blocks.map((block) => ({
+        id: block.shape_id,
+        type: 'surface-block',
+        kind: block.kind,
+        x: 0,
+        y: 0,
+        w: 280,
+        h: 150,
+        parent_id: 'page:main',
+        is_locked: false,
+        props: {
+          kind: block.kind,
+          title: {
+            'shape:weight-cost': 'Cost weight',
+            'shape:weight-impact': 'Impact weight',
+            'shape:alpha-cost': 'Alpha cost score',
+            'shape:alpha-impact': 'Alpha impact score',
+            'shape:beta-cost': 'Beta cost score',
+            'shape:beta-impact': 'Beta impact score',
+            'shape:score-alpha': 'Alpha weighted score',
+            'shape:score-beta': 'Beta weighted score',
+            'shape:recommendation': 'Recommendation',
+            'shape:chart': 'Weighted scores',
+          }[block.shape_id],
+          value: block.value,
+          data: JSON.parse(block.data),
+        },
+        meta: { recipe_instance_id: 'compare-and-decide:runtime' },
+      })),
+    },
+  };
+}
 
 test('revision canonicalization is stable and excludes camera and selection by construction', () => {
   const shapes = [
@@ -37,6 +90,8 @@ test('capability search is deterministic, bounded, and paginated', () => {
   assert.equal(second.results[0].id, CAPABILITY_REGISTRY[3].id);
   const recipes = searchCapabilities({ kind: 'recipe', query: 'architecture', page_size: 20 });
   assert.deepEqual(recipes.results.map((entry) => entry.id), ['static-architecture-map']);
+  const bazaar = searchCapabilities({ kind: 'tool', query: 'bazaar', page_size: 20 });
+  assert.deepEqual(bazaar.results.map((entry) => entry.id), ['fogwood-bazaar']);
   assert.equal(JSON.stringify(first).includes('function'), false);
 });
 
@@ -89,6 +144,7 @@ test('proposal validation normalizes bounded values and returns a structured dif
   assert.equal(result.diff.adds.blocks, 1);
   assert.equal(result.diff.counts.after, 1);
   assert.equal(result.diff.warnings.length > 0, true);
+  assert.deepEqual(result.diff.instrument_changes, []);
   assert.equal(result.proposal.actions[0].blocks[0].x, 100000);
   assert.equal(result.proposal.actions[0].blocks[0].w, 1400);
   assert.equal(result.diff.adds.specs[0].label, 'Research');
@@ -208,8 +264,8 @@ test('locked ancestors make update, place, remove, and clear proposals atomic', 
 
 test('proposal schema exposes all strict action variants and bounded nested values', () => {
   const actionItems = PROPOSAL_INPUT_SCHEMA.properties.actions.items.oneOf;
-  assert.equal(actionItems.length, 7);
-  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['add_blocks', 'add_shapes', 'update_blocks', 'place_items', 'remove_items', 'clear_surface', 'insert_recipe']);
+  assert.equal(actionItems.length, 8);
+  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['add_blocks', 'add_shapes', 'update_blocks', 'place_items', 'remove_items', 'clear_surface', 'insert_recipe', 'set_instrument_inputs']);
   const blockSchema = actionItems[0].properties.blocks.items;
   assert.equal(blockSchema.properties.items.items.additionalProperties, false);
   assert.equal(blockSchema.properties.series.items.additionalProperties, false);
@@ -223,6 +279,93 @@ test('proposal schema exposes all strict action variants and bounded nested valu
   }, emptyContext);
   assert.equal(injectedInstrument.ok, false);
   assert.equal(injectedInstrument.errors.some((error) => error.code === 'UNKNOWN_FIELD'), true);
+});
+
+test('set_instrument_inputs stages one same-scope scenario with exact deterministic instrument diff', () => {
+  const { context } = compareContext();
+  const result = validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Shift the decision weights',
+    actions: [{
+      type: 'set_instrument_inputs',
+      changes: [
+        { id: compareShapeIds['compare:weight:cost'], value: 0.8 },
+        { id: compareShapeIds['compare:weight:impact'], value: 0.2 },
+      ],
+    }],
+  }, context);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.proposal.actions, [{
+    type: 'set_instrument_inputs',
+    changes: [
+      { id: compareShapeIds['compare:weight:cost'], value: 0.8 },
+      { id: compareShapeIds['compare:weight:impact'], value: 0.2 },
+    ],
+  }]);
+  assert.equal(result.diff.instrument_changes.length, 1);
+  assert.equal(result.diff.instrument_changes[0].recipe_instance_id, 'compare-and-decide:runtime');
+  assert.deepEqual(result.diff.instrument_changes[0].controls, [
+    { id: 'shape:weight-cost', label: 'Cost weight', before: 0.4, after: 0.8 },
+    { id: 'shape:weight-impact', label: 'Impact weight', before: 0.6, after: 0.2 },
+  ]);
+  assert.deepEqual(result.diff.instrument_changes[0].derived, [
+    { id: 'shape:chart', label: 'Weighted scores', before: { kind: 'chart', series: [{ label: 'Alpha', value: 74 }, { label: 'Beta', value: 78 }] }, after: { kind: 'chart', series: [{ label: 'Alpha', value: 88 }, { label: 'Beta', value: 76 }] } },
+    { id: 'shape:recommendation', label: 'Recommendation', before: 'Beta', after: 'Alpha' },
+    { id: 'shape:score-alpha', label: 'Alpha weighted score', before: 74, after: 88 },
+    { id: 'shape:score-beta', label: 'Beta weighted score', before: 78, after: 76 },
+  ]);
+});
+
+test('set_instrument_inputs rejects invalid, locked, mixed-scope, and no-op targets atomically', () => {
+  const { context } = compareContext();
+  const valid = (changes, extra = {}) => validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Scenario',
+    actions: [{ type: 'set_instrument_inputs', changes }],
+  }, { ...context, ...extra });
+  assert.equal(valid([]).ok, false);
+  assert.equal(valid([{ id: 'shape:weight-cost', value: 0.8 }, { id: 'shape:weight-cost', value: 0.2 }]).ok, false);
+  assert.equal(valid([{ id: 'shape:weight-cost', value: Number.NaN }]).ok, false);
+  assert.equal(valid([{ id: 'shape:weight-cost', value: 2 }]).ok, false);
+  assert.equal(valid([{ id: 'shape:score-alpha', value: 88 }]).ok, false);
+  assert.equal(valid([{ id: 'shape:weight-cost', value: 0.4 }]).ok, false);
+  assert.equal(valid([{ id: 'shape:weight-cost', value: 0.8 }], {
+    items: context.items.map((item) => item.id === 'shape:weight-cost' ? { ...item, is_locked: true } : item),
+  }).ok, false);
+  const lockedDerived = valid([
+    { id: 'shape:weight-cost', value: 0.8 },
+    { id: 'shape:weight-impact', value: 0.2 },
+  ], {
+    items: context.items.map((item) => item.id === 'shape:score-alpha' ? { ...item, is_locked: true } : item),
+  });
+  assert.equal(lockedDerived.ok, false);
+  assert.equal(lockedDerived.errors.some((error) => error.code === 'LOCKED_PATCH_TARGET'), true);
+  assert.equal(valid([{ id: 'shape:weight-cost', value: 0.8 }, { id: 'shape:other-scope', value: 0.2 }]).ok, false);
+});
+
+test('proposal validation uses the raw page instrument payload and rejects malformed ranges before stage', () => {
+  const { context } = compareContext();
+  const instrumentShapes = context.items.map((item) => {
+    const data = structuredClone(item.props.data);
+    if (item.id === compareShapeIds['compare:weight:cost']) {
+      data.min = 'bad';
+      data.max = 'bad';
+    }
+    return {
+      id: item.id,
+      type: item.type,
+      parent_id: item.parent_id,
+      is_locked: item.is_locked,
+      props: { kind: item.kind, value: item.props.value, data: JSON.stringify(data) },
+    };
+  });
+  const result = validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Reject malformed raw control data',
+    actions: [{ type: 'set_instrument_inputs', changes: [{ id: compareShapeIds['compare:weight:cost'], value: 0.8 }] }],
+  }, { ...context, instrument_shapes: instrumentShapes });
+  assert.equal(result.ok, false);
+  assert.equal(result.errors.some((error) => error.code === 'INVALID_DECLARED_RANGE'), true);
 });
 
 test('structured diff includes bounded before/after changes and collateral descriptors', () => {
@@ -264,6 +407,11 @@ test('proposal controller rechecks stage/apply revisions and keeps reject a no-o
   const proposal = { base_revision: 'rev-1', summary: 'One transaction', actions: [] };
   const diff = { adds: { blocks: 0, shapes: 0, total: 0 }, updates: [], moves: [], removes: { ids: [], total: 0 }, recipe_expansions: [], counts: { before: 0, after: 0, adds: 0, updates: 0, moves: 0, removes: 0 }, warnings: [] };
   assert.equal(controller.stage(proposal, diff).status, 'STAGED');
+  const replacement = { ...proposal, summary: 'Do not replace the pending review' };
+  const replacementResult = controller.stage(replacement, diff);
+  assert.equal(replacementResult.status, 'ERROR');
+  assert.match(replacementResult.message, /already awaiting review/i);
+  assert.equal(controller.getState().proposal.summary, proposal.summary);
   assert.equal(controller.apply().status, 'APPLIED');
   assert.equal(applyCalls, 1);
   assert.equal(changes.at(-1), null);

@@ -17,8 +17,11 @@ type JsonRecord = Record<string, unknown>;
 export type InstrumentShapeLike = {
   id: string;
   type?: string;
+  parent_id?: string;
+  is_locked?: boolean;
   props?: {
     kind?: unknown;
+    title?: unknown;
     value?: unknown;
     data?: unknown;
     [key: string]: unknown;
@@ -39,6 +42,26 @@ export type InstrumentBlockPatch = {
   value: string;
   data: string;
   status: 'ok' | 'stale' | 'invalid';
+};
+
+export type InstrumentInputChange = {
+  id: string;
+  value: number;
+};
+
+export type InstrumentChangeValue = number | string | boolean | { kind: 'chart'; series: Array<{ label: string; value: number }> } | { kind: 'table'; columns: string[]; rows: string[][] } | null;
+
+export type InstrumentChangeEntry = {
+  id: string;
+  label: string;
+  before: InstrumentChangeValue;
+  after: InstrumentChangeValue;
+};
+
+export type InstrumentChangeScope = {
+  recipe_instance_id: string;
+  controls: readonly InstrumentChangeEntry[];
+  derived: readonly InstrumentChangeEntry[];
 };
 
 export type InstrumentScopeCollection =
@@ -76,6 +99,18 @@ export type InstrumentControlResult = {
   recipe_instance_id?: string;
   scope_shape_ids?: readonly string[];
   evaluation?: InstrumentGraphEvaluation;
+  instrument_changes?: readonly InstrumentChangeScope[];
+  patches: readonly InstrumentBlockPatch[];
+  errors: readonly InstrumentIssue[];
+};
+
+export type InstrumentInputChangeResult = {
+  status: 'legacy' | 'ok' | 'stale' | 'invalid';
+  recipe_instance_id?: string;
+  scope_shape_ids?: readonly string[];
+  before_evaluation?: InstrumentGraphEvaluation;
+  after_evaluation?: InstrumentGraphEvaluation;
+  instrument_changes: readonly InstrumentChangeScope[];
   patches: readonly InstrumentBlockPatch[];
   errors: readonly InstrumentIssue[];
 };
@@ -88,6 +123,10 @@ export const COMPARE_INSTRUMENT_INSTANCE_IDS = [...COMPARE_INSTANCE_IDS] as cons
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /** Collect at most limit + 1 own enumerable keys without an unbounded copy. */
@@ -111,6 +150,17 @@ function issue(code: string, message: string, path?: string): InstrumentIssue {
 }
 
 function parseData(value: unknown): JsonRecord {
+  if (isRecord(value)) {
+    const data: JsonRecord = {};
+    try {
+      for (const key of Object.keys(value).slice(0, 64)) {
+        Object.defineProperty(data, key, { configurable: true, enumerable: true, value: value[key], writable: true });
+      }
+    } catch {
+      return {};
+    }
+    return data;
+  }
   if (typeof value !== 'string') return {};
   try {
     const parsed: unknown = JSON.parse(value);
@@ -354,7 +404,8 @@ function buildBlockPatches(
     const currentValue = shape.props?.value;
     const display = outputDisplay(patch, kind, currentValue);
     const instrumentRecord = { ...record, ports: { inputs: [...record.ports.inputs], outputs: [...record.ports.outputs] } };
-    const nextData = { ...compareBlockDataFor(record, currentData), ...display.dataChanges };
+    const preservedData = typeof shape.props?.data === 'string' ? currentData : {};
+    const nextData = { ...preservedData, ...compareBlockDataFor(record, currentData), ...display.dataChanges };
     nextData.instrument = {
       protocol: INSTRUMENT_PROTOCOL,
       version: INSTRUMENT_DATA_VERSION,
@@ -433,6 +484,245 @@ export function collectInstrumentScope(shapes: readonly InstrumentShapeLike[], r
   return { status: 'ok', recipe_instance_id: selectedScope, shapes: matchingShapes, graph: validation.graph, errors: [] };
 }
 
+function shapeIsEffectivelyLocked(shapeId: string, shapes: readonly InstrumentShapeLike[]) {
+  const byId = new Map(shapes.map((shape) => [shape.id, shape]));
+  const direct = byId.get(shapeId);
+  if (direct?.is_locked === true) return true;
+  const visited = new Set<string>();
+  let parentId = direct?.parent_id;
+  while (typeof parentId === 'string' && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) break;
+    if (parent.is_locked === true) return true;
+    parentId = parent.parent_id;
+  }
+  return false;
+}
+
+function changeValue(value: unknown): InstrumentChangeValue {
+  if (isFiniteNumber(value)) return value;
+  if (typeof value === 'boolean' || typeof value === 'string') return typeof value === 'string' ? value.slice(0, FORMULA_LIMITS.max_string_length) : value;
+  if (isRecord(value) && value.kind === 'chart' && Array.isArray(value.series)) {
+    return {
+      kind: 'chart',
+      series: value.series.slice(0, FORMULA_LIMITS.max_collection_size).flatMap((point) => {
+        if (!isRecord(point) || typeof point.label !== 'string' || !isFiniteNumber(point.value)) return [];
+        return [{ label: point.label.slice(0, FORMULA_LIMITS.max_string_length), value: point.value }];
+      }),
+    };
+  }
+  if (isRecord(value) && value.kind === 'table' && Array.isArray(value.columns) && Array.isArray(value.rows)) {
+    return {
+      kind: 'table',
+      columns: value.columns.slice(0, FORMULA_LIMITS.max_collection_size).filter((column): column is string => typeof column === 'string').map((column) => column.slice(0, FORMULA_LIMITS.max_string_length)),
+      rows: value.rows.slice(0, FORMULA_LIMITS.max_collection_size).flatMap((row) => Array.isArray(row) ? [row.slice(0, FORMULA_LIMITS.max_collection_size).filter((cell): cell is string => typeof cell === 'string').map((cell) => cell.slice(0, FORMULA_LIMITS.max_string_length))] : []),
+    };
+  }
+  return null;
+}
+
+function shapeLabel(shape: InstrumentShapeLike | undefined, fallback: string, portName?: string, multiplePorts = false) {
+  const title = typeof shape?.props?.title === 'string' && shape.props.title.trim() ? shape.props.title.trim().slice(0, 180) : fallback;
+  return multiplePorts && portName ? `${title} · ${portName}`.slice(0, 200) : title;
+}
+
+function evaluationOutput(evaluation: InstrumentGraphEvaluation, instanceId: string, portName: string): InstrumentChangeValue {
+  const output = evaluation.results[instanceId]?.outputs[portName];
+  return output?.status === 'ok' && output.value !== undefined ? changeValue(output.value) : null;
+}
+
+function buildInstrumentChanges(
+  shapes: readonly InstrumentShapeLike[],
+  graph: InstrumentGraph,
+  before: InstrumentGraphEvaluation,
+  after: InstrumentGraphEvaluation,
+  changes: readonly InstrumentInputChange[],
+  recipeInstanceId: string,
+): InstrumentChangeScope[] {
+  const shapeById = new Map(shapes.map((shape) => [shape.id, shape]));
+  const recordByShapeId = new Map(graph.instances.flatMap((record) => record.shape_id ? [[record.shape_id, record] as const] : []));
+  const controls = changes
+    .map((change) => {
+      const record = recordByShapeId.get(change.id);
+      const port = record?.ports.inputs[0];
+      const beforeValue = record && port ? record.input_values?.[port.name] : undefined;
+      return {
+        id: change.id,
+        label: shapeLabel(shapeById.get(change.id), record?.id ?? change.id),
+        before: changeValue(beforeValue),
+        after: changeValue(change.value),
+      } satisfies InstrumentChangeEntry;
+    })
+    .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  const affected = new Set(after.affected_instance_ids);
+  const derived: InstrumentChangeEntry[] = [];
+  for (const record of graph.instances) {
+    if (!affected.has(record.id) || record.type === 'slider' || !record.shape_id) continue;
+    const shape = shapeById.get(record.shape_id);
+    const multiplePorts = record.ports.outputs.length > 1;
+    for (const port of record.ports.outputs) {
+      derived.push({
+        id: record.shape_id,
+        label: shapeLabel(shape, record.id, port.name, multiplePorts),
+        before: evaluationOutput(before, record.id, port.name),
+        after: evaluationOutput(after, record.id, port.name),
+      });
+    }
+  }
+  derived.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : left.label < right.label ? -1 : left.label > right.label ? 1 : 0);
+  return [{ recipe_instance_id: recipeInstanceId, controls, derived }];
+}
+
+function invalidInstrumentInputResult(
+  errors: readonly InstrumentIssue[],
+  recipeInstanceId?: string,
+  scopeShapeIds?: readonly string[],
+  beforeEvaluation?: InstrumentGraphEvaluation,
+  afterEvaluation?: InstrumentGraphEvaluation,
+  status: InstrumentInputChangeResult['status'] = 'invalid',
+): InstrumentInputChangeResult {
+  return {
+    status,
+    ...(recipeInstanceId ? { recipe_instance_id: recipeInstanceId } : {}),
+    ...(scopeShapeIds ? { scope_shape_ids: scopeShapeIds } : {}),
+    ...(beforeEvaluation ? { before_evaluation: beforeEvaluation } : {}),
+    ...(afterEvaluation ? { after_evaluation: afterEvaluation } : {}),
+    instrument_changes: [],
+    patches: [],
+    errors: [...errors],
+  };
+}
+
+function parseInputChanges(raw: unknown): { changes: InstrumentInputChange[]; errors: InstrumentIssue[] } {
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 12) {
+    return { changes: [], errors: [issue('INVALID_CHANGE_COUNT', 'Instrument input changes must contain 1-12 entries.', 'changes')] };
+  }
+  const changes: InstrumentInputChange[] = [];
+  const errors: InstrumentIssue[] = [];
+  const ids = new Set<string>();
+  raw.forEach((entry, index) => {
+    const path = `changes[${index}]`;
+    if (!isRecord(entry) || !Object.keys(entry).every((key) => key === 'id' || key === 'value')) {
+      errors.push(issue('INVALID_CHANGE', 'Each instrument input change needs only an exact id and finite numeric value.', path));
+      return;
+    }
+    if (typeof entry.id !== 'string' || entry.id.length === 0 || entry.id.length > 180) {
+      errors.push(issue('INVALID_CHANGE_ID', 'Instrument input change ids must be bounded non-empty strings.', `${path}.id`));
+      return;
+    }
+    if (ids.has(entry.id)) {
+      errors.push(issue('DUPLICATE_TARGET', 'An instrument input id may appear only once.', `${path}.id`));
+      return;
+    }
+    ids.add(entry.id);
+    if (!isFiniteNumber(entry.value)) {
+      errors.push(issue('INVALID_CONTROL_VALUE', 'Instrument input changes require finite numeric values.', `${path}.value`));
+      return;
+    }
+    changes.push({ id: entry.id, value: entry.value });
+  });
+  if (errors.length === 0 && changes.length !== raw.length) {
+    errors.push(issue('INVALID_CHANGE', 'Instrument input changes cannot contain omitted or sparse entries.', 'changes'));
+  }
+  return { changes, errors };
+}
+
+/** Preview a bounded all-or-nothing multi-input change without mutating shapes. */
+export function applyInstrumentInputChanges(
+  shapes: readonly InstrumentShapeLike[],
+  rawChanges: unknown,
+): InstrumentInputChangeResult {
+  const parsedChanges = parseInputChanges(rawChanges);
+  if (parsedChanges.errors.length > 0) return invalidInstrumentInputResult(parsedChanges.errors);
+  const changes = parsedChanges.changes;
+  const shapeById = new Map(shapes.map((shape) => [shape.id, shape]));
+  const owners = changes.map((change, index) => {
+    const path = `changes[${index}]`;
+    const shape = shapeById.get(change.id);
+    if (!shape) return { change, shape, errors: [issue('UNKNOWN_TARGET', 'Instrument input target does not exist on the current page.', `${path}.id`)] };
+    if (shape.type !== 'surface-block') return { change, shape, errors: [issue('TARGET_NOT_SURFACE_BLOCK', 'Instrument input targets must be surface-blocks.', `${path}.id`)] };
+    if (shape.props?.kind !== 'slider') return { change, shape, errors: [issue('TARGET_NOT_SLIDER', 'Instrument input targets must be slider surface-blocks.', `${path}.id`)] };
+    if (shapeIsEffectivelyLocked(change.id, shapes)) return { change, shape, errors: [issue('LOCKED_TARGET', 'Locked instrument controls or controls under a locked ancestor cannot change.', `${path}.id`)] };
+    const parsed = parseStoredInstrument(shape);
+    if (parsed.errors.length > 0 || !parsed.value || !parsed.scope) return { change, shape, errors: parsed.errors.length > 0 ? parsed.errors : [issue('INVALID_INSTRUMENT_DATA', 'Instrument input target does not contain validated instrument data.', `${path}.id`)] };
+    const data = parseData(shape.props?.data);
+    if (!isFiniteNumber(data.min) || !isFiniteNumber(data.max) || data.min > data.max) return { change, shape, scope: parsed.scope, parsed: parsed.value, errors: [issue('INVALID_DECLARED_RANGE', 'Instrument slider targets require finite declared min and max values.', `${path}.id`)] };
+    if (change.value < data.min || change.value > data.max) return { change, shape, scope: parsed.scope, parsed: parsed.value, errors: [issue('OUT_OF_RANGE', `Instrument input must remain between ${data.min} and ${data.max}.`, `${path}.value`)] };
+    return { change, shape, scope: parsed.scope, parsed: parsed.value, errors: [] };
+  });
+  const targetErrors = owners.flatMap((owner) => owner.errors);
+  if (targetErrors.length > 0) return invalidInstrumentInputResult(targetErrors);
+  const recipeInstanceId = owners[0].scope!;
+  if (owners.some((owner) => owner.scope !== recipeInstanceId)) return invalidInstrumentInputResult([issue('MIXED_SCOPE', 'All instrument input targets must belong to one recipe-instance scope.')]);
+  const collection = collectInstrumentScope(shapes, recipeInstanceId);
+  const scopeShapeIds = collection.shapes.map((shape) => shape.id);
+  if (collection.status !== 'ok') return invalidInstrumentInputResult(collection.errors.length > 0 ? collection.errors : [issue('INVALID_SCOPE', 'Instrument input scope is not valid.')], recipeInstanceId, scopeShapeIds);
+  const recordByShapeId = new Map(collection.graph.instances.flatMap((record) => record.shape_id ? [[record.shape_id, record] as const] : []));
+  const nextValues = new Map<string, number>();
+  for (const owner of owners) {
+    const record = recordByShapeId.get(owner.change.id);
+    if (!record || record.type !== 'slider' || record.ports.inputs.length !== 1 || record.ports.inputs[0].direction !== 'input' || record.ports.inputs[0].value_type !== 'number') {
+      return invalidInstrumentInputResult([issue('INVALID_INPUT_CONTROL', 'Instrument input targets require one declared numeric input port.', `changes[${changes.findIndex((change) => change.id === owner.change.id)}].id`)], recipeInstanceId, scopeShapeIds);
+    }
+    const input = record.ports.inputs[0];
+    if (collection.graph.bindings.some((binding) => binding.target.instance_id === record.id && binding.target.port === input.name)) {
+      return invalidInstrumentInputResult([issue('BOUND_INPUT_CONTROL', 'Instrument input targets cannot be driven by an inbound binding.', `changes[${changes.findIndex((change) => change.id === owner.change.id)}].id`)], recipeInstanceId, scopeShapeIds);
+    }
+    const beforeValue = record.input_values?.[input.name];
+    if (!isFiniteNumber(beforeValue)) return invalidInstrumentInputResult([issue('INVALID_CURRENT_VALUE', 'Instrument input controls require a finite current numeric value.', `changes[${changes.findIndex((change) => change.id === owner.change.id)}].id`)], recipeInstanceId, scopeShapeIds);
+    if (owner.change.value === beforeValue) return invalidInstrumentInputResult([issue('NO_OP', 'Instrument input change does not change the current value.', `changes[${changes.findIndex((change) => change.id === owner.change.id)}].value`)], recipeInstanceId, scopeShapeIds);
+    nextValues.set(record.id, owner.change.value);
+  }
+  const beforeEvaluation = evaluateInstrumentGraph(collection.graph);
+  if (beforeEvaluation.status !== 'ok') {
+    return invalidInstrumentInputResult(beforeEvaluation.errors, recipeInstanceId, scopeShapeIds, beforeEvaluation, undefined, beforeEvaluation.status);
+  }
+  const nextGraph: InstrumentGraph = {
+    instances: collection.graph.instances.map((record) => {
+      const nextValue = nextValues.get(record.id);
+      return nextValue === undefined ? record : { ...record, input_values: { ...(record.input_values ?? {}), [record.ports.inputs[0].name]: nextValue } };
+    }),
+    bindings: collection.graph.bindings,
+  };
+  const afterEvaluation = evaluateInstrumentGraph(nextGraph, { changed_instance_ids: [...nextValues.keys()] });
+  if (afterEvaluation.status !== 'ok') {
+    return invalidInstrumentInputResult(afterEvaluation.errors, recipeInstanceId, scopeShapeIds, beforeEvaluation, afterEvaluation, afterEvaluation.status);
+  }
+  const patches = buildBlockPatches(collection.shapes, nextGraph, afterEvaluation, recipeInstanceId);
+  const patchShapeIds = patches.map((patch) => patch.shape_id);
+  if (new Set(patchShapeIds).size !== patchShapeIds.length) {
+    return invalidInstrumentInputResult([issue('DUPLICATE_PATCH_TARGET', 'Instrument evaluation produced more than one patch for the same page shape.')], recipeInstanceId, scopeShapeIds, beforeEvaluation, afterEvaluation);
+  }
+  const lockedPatch = patches.find((patch) => shapeIsEffectivelyLocked(patch.shape_id, shapes));
+  if (lockedPatch) {
+    return invalidInstrumentInputResult(
+      [issue('LOCKED_PATCH_TARGET', 'Every affected instrument block must be unlocked and outside locked ancestors before this scenario can be staged.', `${lockedPatch.shape_id}.is_locked`)],
+      recipeInstanceId,
+      scopeShapeIds,
+      beforeEvaluation,
+      afterEvaluation,
+    );
+  }
+  if (patches.length === 0 || patches.some((patch) => patch.status !== 'ok')) {
+    return invalidInstrumentInputResult([issue('PATCH_SET_INVALID', 'Instrument evaluation did not produce a complete valid patch set.')], recipeInstanceId, scopeShapeIds, beforeEvaluation, afterEvaluation);
+  }
+  const instrumentChanges = buildInstrumentChanges(collection.shapes, collection.graph, beforeEvaluation, afterEvaluation, changes, recipeInstanceId);
+  return {
+    status: 'ok',
+    recipe_instance_id: recipeInstanceId,
+    scope_shape_ids: scopeShapeIds,
+    before_evaluation: beforeEvaluation,
+    after_evaluation: afterEvaluation,
+    instrument_changes: instrumentChanges,
+    patches,
+    errors: [],
+  };
+}
+
+/** Alias emphasizing that this seam is a side-effect-free scenario preview. */
+export const previewInstrumentInputChanges = applyInstrumentInputChanges;
+
 /** Apply a typed control change to one scope, returning deterministic block patches only. */
 export function applyInstrumentControlChange(
   shapes: readonly InstrumentShapeLike[],
@@ -452,6 +742,16 @@ export function applyInstrumentControlChange(
     if (typeof rawValue === 'number') value = rawValue;
     else if (typeof rawValue === 'string' && rawValue.trim() !== '' && Number.isFinite(Number(rawValue))) value = Number(rawValue);
     else return { status: 'invalid', recipe_instance_id: collection.recipe_instance_id, scope_shape_ids: collection.shapes.map((shape) => shape.id), patches: [], errors: [issue('INVALID_CONTROL_VALUE', 'Numeric instrument controls require a finite number.')] };
+    const scenario = applyInstrumentInputChanges(shapes, [{ id: shapeId, value }]);
+    return {
+      status: scenario.status,
+      ...(scenario.recipe_instance_id ? { recipe_instance_id: scenario.recipe_instance_id } : {}),
+      ...(scenario.scope_shape_ids ? { scope_shape_ids: scenario.scope_shape_ids } : {}),
+      ...(scenario.after_evaluation ? { evaluation: scenario.after_evaluation } : {}),
+      ...(scenario.instrument_changes.length > 0 ? { instrument_changes: scenario.instrument_changes } : {}),
+      patches: scenario.patches,
+      errors: scenario.errors,
+    };
   } else if (input.value_type === 'boolean') {
     if (typeof rawValue === 'boolean') value = rawValue;
     else if (rawValue === 'true' || rawValue === 'false') value = rawValue === 'true';

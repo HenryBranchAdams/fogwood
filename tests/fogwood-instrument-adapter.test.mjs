@@ -4,6 +4,7 @@ import {
   createCompareInstrumentScope,
   collectInstrumentScope,
   applyInstrumentControlChange,
+  applyInstrumentInputChanges,
   compareShapeIdsFromRecipeBlocks,
   inspectInstrumentData,
 } from '../app/fogwood-instrument-adapter.ts';
@@ -68,6 +69,132 @@ test('Compare scope builds distinct identities, exact results, and deterministic
   assert.equal(changed.patches.some((patch) => patch.shape_id === shapeIds['compare:score:alpha'] && patch.value === '98.00'), true);
   const chartPatch = changed.patches.find((patch) => patch.shape_id === shapeIds['compare:chart']);
   assert.deepEqual(JSON.parse(chartPatch.data).series, [{ label: 'Alpha', value: 98 }, { label: 'Beta', value: 78 }]);
+});
+
+test('Compare adapter previews and applies multiple numeric inputs as one deterministic patch set', () => {
+  const fixture = createCompareInstrumentScope('compare-and-decide:multi', shapeIds);
+  const shapes = shapesFromScope(fixture);
+  const result = applyInstrumentInputChanges(shapes, [
+    { id: shapeIds['compare:weight:cost'], value: 0.8 },
+    { id: shapeIds['compare:weight:impact'], value: 0.2 },
+  ]);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.before_evaluation.results['compare:score:alpha'].outputs.weighted_score.value, 74);
+  assert.equal(result.before_evaluation.results['compare:score:beta'].outputs.weighted_score.value, 78);
+  assert.equal(result.after_evaluation.results['compare:score:alpha'].outputs.weighted_score.value, 88);
+  assert.equal(result.after_evaluation.results['compare:score:beta'].outputs.weighted_score.value, 76);
+  assert.equal(result.after_evaluation.results['compare:recommendation'].outputs.recommended.value, 'Alpha');
+  assert.deepEqual(result.instrument_changes[0].controls.map(({ id, before, after }) => ({ id, before, after })), [
+    { id: shapeIds['compare:weight:cost'], before: 0.4, after: 0.8 },
+    { id: shapeIds['compare:weight:impact'], before: 0.6, after: 0.2 },
+  ]);
+  assert.equal(result.patches.length, 6);
+});
+
+test('Compare adapter refuses any invalid member with zero patches and no partial graph result', () => {
+  const fixture = createCompareInstrumentScope('compare-and-decide:atomic', shapeIds);
+  const shapes = shapesFromScope(fixture);
+  const invalid = applyInstrumentInputChanges(shapes, [
+    { id: shapeIds['compare:weight:cost'], value: 0.8 },
+    { id: shapeIds['compare:weight:impact'], value: 2 },
+  ]);
+  assert.equal(invalid.status, 'invalid');
+  assert.deepEqual(invalid.patches, []);
+  assert.equal(invalid.errors.length > 0, true);
+});
+
+test('instrument input preview rejects bound controls and ambiguous duplicate shape patches before staging', () => {
+  const fixture = createCompareInstrumentScope('compare-and-decide:preflight', shapeIds);
+
+  const boundShapes = shapesFromScope(fixture);
+  const boundData = JSON.parse(boundShapes[0].props.data);
+  boundData.instrument.bindings.push({
+    id: 'binding:bound-control',
+    source: { instance_id: 'compare:score-input:alpha-cost', port: 'value' },
+    target: { instance_id: 'compare:weight:cost', port: 'value' },
+  });
+  boundShapes[0].props.data = JSON.stringify(boundData);
+  const bound = applyInstrumentInputChanges(boundShapes, [{ id: shapeIds['compare:weight:cost'], value: 0.8 }]);
+  assert.equal(bound.status, 'invalid');
+  assert.deepEqual(bound.patches, []);
+  assert.equal(bound.errors.some((entry) => entry.code === 'BOUND_INPUT_CONTROL'), true);
+
+  const duplicateShapes = shapesFromScope(fixture);
+  const duplicateData = JSON.parse(duplicateShapes.find((shape) => shape.id === shapeIds['compare:weight:cost']).props.data);
+  duplicateData.instrument.record.ports.outputs.push({
+    direction: 'output',
+    name: 'alternate',
+    value_type: 'number',
+    formula: { type: 'ref', path: 'value' },
+  });
+  duplicateShapes.find((shape) => shape.id === shapeIds['compare:weight:cost']).props.data = JSON.stringify(duplicateData);
+  const duplicate = applyInstrumentInputChanges(duplicateShapes, [{ id: shapeIds['compare:weight:cost'], value: 0.8 }]);
+  assert.equal(duplicate.status, 'invalid');
+  assert.deepEqual(duplicate.patches, []);
+  assert.equal(duplicate.errors.some((entry) => entry.code === 'DUPLICATE_PATCH_TARGET'), true);
+});
+
+test('instrument input parser rejects sparse in-process arrays without throwing', () => {
+  const fixture = createCompareInstrumentScope('compare-and-decide:sparse', shapeIds);
+  const shapes = shapesFromScope(fixture);
+  let result;
+  assert.doesNotThrow(() => {
+    result = applyInstrumentInputChanges(shapes, new Array(1));
+  });
+  assert.equal(result.status, 'invalid');
+  assert.deepEqual(result.patches, []);
+});
+
+test('instrument input no-op reports the exact rejected value path', () => {
+  const scope = createCompareInstrumentScope('compare-and-decide:no-op', shapeIds);
+  const result = applyInstrumentInputChanges(shapesFromScope(scope), [
+    { id: shapeIds['compare:weight:cost'], value: 0.4 },
+  ]);
+  assert.equal(result.status, 'invalid');
+  assert.equal(result.errors.find((error) => error.code === 'NO_OP')?.path, 'changes[0].value');
+});
+
+test('instrument input patches preserve page-owned extension metadata', () => {
+  const scope = createCompareInstrumentScope('compare-and-decide:extensions', shapeIds);
+  const shapes = shapesFromScope(scope);
+  const target = shapes.find((shape) => shape.id === shapeIds['compare:weight:cost']);
+  const data = JSON.parse(target.props.data);
+  data.custom_meta = { origin: 'page', tags: ['keep'] };
+  target.props.data = JSON.stringify(data);
+
+  const result = applyInstrumentInputChanges(shapes, [
+    { id: shapeIds['compare:weight:cost'], value: 0.8 },
+  ]);
+  assert.equal(result.status, 'ok');
+  const patched = JSON.parse(result.patches.find((patch) => patch.shape_id === target.id).data);
+  assert.deepEqual(patched.custom_meta, { origin: 'page', tags: ['keep'] });
+});
+
+test('instrument input preview rejects locked downstream patch targets atomically', () => {
+  const scope = createCompareInstrumentScope('compare-and-decide:locked-output', shapeIds);
+  const shapes = shapesFromScope(scope);
+  const derived = shapes.find((shape) => shape.id === shapeIds['compare:score:alpha']);
+  derived.is_locked = true;
+
+  const result = applyInstrumentInputChanges(shapes, [
+    { id: shapeIds['compare:weight:cost'], value: 0.8 },
+    { id: shapeIds['compare:weight:impact'], value: 0.2 },
+  ]);
+  assert.equal(result.status, 'invalid');
+  assert.deepEqual(result.patches, []);
+  assert.equal(result.errors.some((error) => error.code === 'LOCKED_PATCH_TARGET' && error.path === `${derived.id}.is_locked`), true);
+
+  const nestedShapes = shapesFromScope(scope);
+  const nestedDerived = nestedShapes.find((shape) => shape.id === shapeIds['compare:score:alpha']);
+  nestedDerived.parent_id = 'shape:locked-frame';
+  nestedShapes.push({ id: 'shape:locked-frame', type: 'frame', is_locked: true });
+  const nestedResult = applyInstrumentInputChanges(nestedShapes, [
+    { id: shapeIds['compare:weight:cost'], value: 0.8 },
+    { id: shapeIds['compare:weight:impact'], value: 0.2 },
+  ]);
+  assert.equal(nestedResult.status, 'invalid');
+  assert.deepEqual(nestedResult.patches, []);
+  assert.equal(nestedResult.errors.some((error) => error.code === 'LOCKED_PATCH_TARGET'), true);
 });
 
 test('Compare adapter refuses malformed or cyclic scopes without updates and preserves legacy fallback', () => {

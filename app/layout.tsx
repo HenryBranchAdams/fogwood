@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://open-surface-lab.madebyhenry.chatgpt.site'),
+  metadataBase: new URL('https://fogwood.madebyhenry.chatgpt.site'),
   applicationName: 'Fogwood',
   title: {
     default: 'Fogwood',

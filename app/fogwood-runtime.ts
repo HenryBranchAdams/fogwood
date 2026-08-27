@@ -5,6 +5,12 @@
  * shared by the page adapter, WebMCP tools, and node-testable verification.
  */
 
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { applyInstrumentInputChanges } from './fogwood-instrument-adapter.ts';
+import type { InstrumentInputChange, InstrumentShapeLike } from './fogwood-instrument-adapter.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_BAZAAR_CAPABILITY } from './fogwood-bazaar.ts';
+
 export const FOGWOOD_PROTOCOL = 'fogwood-agent-runtime';
 export const FOGWOOD_PROTOCOL_VERSION = '1';
 export const FOGWOOD_REGISTRY_VERSION = '1';
@@ -111,6 +117,8 @@ export type InspectableItem = {
 export type ProposalContext = {
   current_revision: string;
   items: readonly InspectableItem[];
+  /** Page adapters may supply exact raw shape props so stage and Apply validate identical instrument bytes. */
+  instrument_shapes?: readonly InstrumentShapeLike[];
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -937,6 +945,28 @@ const exactActionSchemas: Record<string, CapabilitySchema> = {
     },
     required: ['type', 'recipe_id', 'version'],
   },
+  set_instrument_inputs: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: { const: 'set_instrument_inputs' },
+      changes: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 12,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', minLength: 1, maxLength: 180 },
+            value: { type: 'number' },
+          },
+          required: ['id', 'value'],
+        },
+      },
+    },
+    required: ['type', 'changes'],
+  },
 };
 
 /** The exact same schema is exposed by the registry and page WebMCP tool. */
@@ -984,6 +1014,7 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
       },
     },
   },
+  FOGWOOD_BAZAAR_CAPABILITY,
   {
     id: 'fogwood-propose',
     kind: 'tool',
@@ -1071,6 +1102,17 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     keywords: ['recipe', 'starter', 'compose', 'expand'],
     effect: 'page-apply',
     input_schema: exactActionSchemas.insert_recipe,
+  },
+  {
+    id: 'set_instrument_inputs',
+    kind: 'action',
+    version: 1,
+    title: 'Set instrument inputs',
+    summary: 'Stage bounded numeric changes to existing validated instrument slider controls.',
+    use_when: 'The proposal changes a known instrument scenario and the derived result should be reviewed before Apply.',
+    keywords: ['instrument', 'scenario', 'slider', 'input', 'preview'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.set_instrument_inputs,
   },
   {
     id: 'primitive.surface-block',
@@ -1180,6 +1222,10 @@ export type InsertRecipeAction = {
   version: 1;
   anchor?: { x?: number; y?: number };
 };
+export type SetInstrumentInputsAction = {
+  type: 'set_instrument_inputs';
+  changes: InstrumentInputChange[];
+};
 
 export type ProposalAction =
   | AddBlocksAction
@@ -1188,7 +1234,8 @@ export type ProposalAction =
   | PlaceItemsAction
   | RemoveItemsAction
   | ClearSurfaceAction
-  | InsertRecipeAction;
+  | InsertRecipeAction
+  | SetInstrumentInputsAction;
 
 export type ProposalV1 = {
   base_revision: string;
@@ -1200,6 +1247,19 @@ export type ProposalV1 = {
 export type ProposalError = { code: string; message: string; path?: string };
 
 export type ProposalDiffValue = unknown;
+
+export type ProposalInstrumentChange = {
+  id: string;
+  label: string;
+  before: ProposalDiffValue;
+  after: ProposalDiffValue;
+};
+
+export type ProposalInstrumentChangeScope = {
+  recipe_instance_id: string;
+  controls: readonly ProposalInstrumentChange[];
+  derived: readonly ProposalInstrumentChange[];
+};
 
 export type ProposalItemDescriptor = {
   id: string;
@@ -1228,6 +1288,7 @@ export type ProposalDiff = {
   }>;
   removes: { ids: string[]; total: number; collateral_ids: string[]; descriptors: ProposalItemDescriptor[] };
   recipe_expansions: Array<{ id: string; version: 1; title: string; expected_count: number; operations: number }>;
+  instrument_changes: ProposalInstrumentChangeScope[];
   counts: { before: number; after: number; adds: number; updates: number; moves: number; removes: number };
   warnings: string[];
 };
@@ -1476,6 +1537,23 @@ function addError(errors: ProposalError[], code: string, message: string, path?:
   errors.push({ code, message, ...(path ? { path } : {}) });
 }
 
+function instrumentShapesForContext(items: readonly InspectableItem[]): InstrumentShapeLike[] {
+  return items.map((item) => ({
+    id: item.id,
+    type: item.type,
+    ...(item.parent_id ? { parent_id: item.parent_id } : {}),
+    ...(item.is_locked !== undefined ? { is_locked: item.is_locked } : {}),
+    props: {
+      ...(item.props ?? {}),
+      ...(item.kind ? { kind: item.kind } : {}),
+    },
+  }));
+}
+
+function instrumentShapesForProposalContext(context: ProposalContext) {
+  return context.instrument_shapes ?? instrumentShapesForContext(context.items);
+}
+
 export function buildProposalDiff(
   actions: readonly ProposalAction[],
   context: ProposalContext,
@@ -1486,7 +1564,9 @@ export function buildProposalDiff(
   const moves: ProposalDiff['moves'] = [];
   const removes: ProposalDiff['removes'] = { ids: [], total: 0, collateral_ids: [], descriptors: [] };
   const recipe_expansions: ProposalDiff['recipe_expansions'] = [];
+  const instrument_changes: ProposalDiff['instrument_changes'] = [];
   const items = itemMap(context.items);
+  const instrumentShapes = instrumentShapesForProposalContext(context);
   const addLabel = (input: BlockInput | CanvasShapeInput) => {
     if ('title' in input && typeof input.title === 'string' && input.title.trim()) return input.title.trim().slice(0, 120);
     if ('text' in input && typeof input.text === 'string' && input.text.trim()) return input.text.trim().slice(0, 120);
@@ -1583,6 +1663,10 @@ export function buildProposalDiff(
       const recipe = getRecipe(action.recipe_id, action.version);
       if (recipe) recipe_expansions.push({ id: recipe.id, version: recipe.version, title: recipe.title, expected_count: recipe.expected_count, operations: recipe.operations.length });
     }
+    if (action.type === 'set_instrument_inputs') {
+      const result = applyInstrumentInputChanges(instrumentShapes, action.changes);
+      if (result.status === 'ok') instrument_changes.push(...result.instrument_changes);
+    }
   }
   adds.total = adds.blocks + adds.shapes + recipe_expansions.reduce((sum, recipe) => sum + recipe.expected_count, 0);
   removes.total = removes.ids.length;
@@ -1604,6 +1688,7 @@ export function buildProposalDiff(
     moves,
     removes,
     recipe_expansions,
+    instrument_changes,
     counts: {
       before: context.items.length,
       after: context.items.length + adds.total - removes.total,
@@ -1650,6 +1735,19 @@ export function validateProposal(input: unknown, context: ProposalContext): Prop
         }
       }
       normalizedActions.push({ type: 'clear_surface', confirmation: CLEAR_SURFACE_PHRASE });
+      continue;
+    }
+    if (raw.type === 'set_instrument_inputs') {
+      if (actionList.length !== 1) addError(errors, 'SET_INSTRUMENT_INPUTS_MUST_BE_ALONE', 'set_instrument_inputs must be the only action.', path);
+      if (!hasOnlyKeys(raw, ['type', 'changes'])) addError(errors, 'UNKNOWN_FIELD', 'set_instrument_inputs accepts only changes.', path);
+      const rawChanges = raw.changes;
+      if (!Array.isArray(rawChanges) || rawChanges.length < 1 || rawChanges.length > 12) addError(errors, 'INVALID_CHANGE_COUNT', 'changes must contain 1-12 entries.', `${path}.changes`);
+      const normalizedChanges = Array.isArray(rawChanges)
+        ? rawChanges.flatMap((change) => isRecord(change) && typeof change.id === 'string' && isFiniteNumber(change.value) ? [{ id: change.id, value: change.value }] : [])
+        : [];
+      const scenario = applyInstrumentInputChanges(instrumentShapesForProposalContext(context), rawChanges);
+      errors.push(...scenario.errors.map((entry) => ({ code: entry.code, message: entry.message, ...(entry.path ? { path: `${path}.${entry.path}` } : { path }) })));
+      normalizedActions.push({ type: 'set_instrument_inputs', changes: normalizedChanges });
       continue;
     }
     if (raw.type === 'add_blocks') {
@@ -1821,6 +1919,13 @@ export function createProposalController(
   return {
     getState: () => pending,
     stage(proposal: ProposalV1, diff: ProposalDiff): ProposalControllerResult {
+      if (pending) {
+        return {
+          status: 'ERROR',
+          state: pending,
+          message: 'A proposal is already awaiting review. Apply or Reject it before staging another.',
+        };
+      }
       if (adapter.getRevision() !== proposal.base_revision) {
         pending = { proposal, diff, status: 'stale', message: 'The page changed before this proposal was staged.' };
         publish();

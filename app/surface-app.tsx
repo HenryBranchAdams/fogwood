@@ -28,6 +28,10 @@ import {
   registerSurfaceTools,
 } from './surface-tools';
 import type { ProposalLifecycleEvent } from './fogwood-proposal-lifecycle';
+import {
+  buildGuidedDemoModel,
+  type InstrumentDiffScope,
+} from './fogwood-demo';
 
 type Activity = {
   id: string;
@@ -67,6 +71,12 @@ function proposalDiffEntries(diff: ProposalControllerState['diff']) {
   }
   for (const recipe of diff.recipe_expansions) entries.push(`Recipe ${recipe.title} · ${recipe.expected_count} items`);
   return entries;
+}
+
+function instrumentDiffLabel(scope: InstrumentDiffScope) {
+  return scope.recipeInstanceId === 'Compare & Decide'
+    ? 'Compare & Decide'
+    : `Compare & Decide · ${scope.recipeInstanceId}`;
 }
 
 const INTRO_ACTIVITY: Activity = {
@@ -118,6 +128,8 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const [controllerReady, setControllerReady] = useState(false);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [snapshotMessage, setSnapshotMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [copiedRequest, setCopiedRequest] = useState<string | null>(null);
   const [receiptLedger, receiptInitError, initialReceipts] = useMemo(() => {
     if (typeof window === 'undefined') {
       return [null, 'The local receipt ledger is only available in the browser.', []] as const;
@@ -160,8 +172,23 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const registrationCleanup = useRef<(() => void) | null>(null);
   const proposalController = useRef<SurfaceToolController | null>(null);
   const bazaarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const chatToggleRef = useRef<HTMLButtonElement | null>(null);
 
   const hasContent = shapeCount > 0;
+
+  const guidedModel = useMemo(
+    () => buildGuidedDemoModel({
+      hasContent,
+      controllerReady,
+      connection,
+      activities: activity,
+      proposal,
+      receipts,
+    }),
+    [activity, connection, controllerReady, hasContent, proposal, receipts],
+  );
+  const instrumentControlCount = guidedModel.instrumentChanges.reduce((sum, scope) => sum + scope.controls.length, 0);
+  const instrumentDerivedCount = guidedModel.instrumentChanges.reduce((sum, scope) => sum + scope.derived.length, 0);
 
   function addActivity(next: Omit<Activity, 'id'>) {
     setActivity((current) => [...current.slice(-24), { ...next, id: activityId() }]);
@@ -245,7 +272,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         label: 'Fogwood tools not active in this tab',
         title: 'Check browser and rollout availability',
         detail:
-          `Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Fogwood does not, this origin is not enabled for the current rollout yet.${providerDetail}`,
+          `Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Fogwood does not, this origin is not enabled for the current rollout yet.${providerDetail}${controllerReady ? ' Local recipe staging remains available on this page while host tools are unavailable.' : ''}`,
       };
     }
     if (connection.registered === 0 && connection.failed === 0) {
@@ -263,18 +290,18 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         : '';
       return {
         className: 'is-partial',
-        label: `${connection.registered} ready · ${connection.failed} failed`,
-        title: 'Some Site tools are ready',
-        detail: `${connection.registered} canvas tools registered; ${connection.failed} could not register.${failureDetail}`,
+        label: `${connection.registered} page-registered · ${connection.failed} failed`,
+        title: 'Page tool registration is partial',
+        detail: `${connection.registered} canvas tools registered on this page; ${connection.failed} could not register. Host inventory remains a separate check.${failureDetail}`,
       };
     }
     if (connection.registered > 0) {
       return {
         className: 'is-ready',
-        label: `${connection.registered} Fogwood tools ready`,
-        title: 'Continue in your ChatGPT conversation',
+        label: `${connection.registered} page tools registered`,
+        title: 'Verify the tools in your ChatGPT host',
         detail:
-          'Your subscription is the model connection. This Site only exposes the canvas tools ChatGPT can use—no second API key.',
+          'Fogwood has registered its page tools. Host inventory and a successful call are separate checks; no second API key is required.',
       };
     }
     return {
@@ -285,7 +312,31 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         ? `WebMCP is available, but none of the Fogwood tools registered. First rejection: ${connection.errors[0]}`
         : 'WebMCP is available, but none of the Fogwood tools registered. Reload the page before trying again.',
     };
-  }, [connection]);
+  }, [connection, controllerReady]);
+
+  async function copyRequest(request: string) {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(request);
+      } else {
+        const field = document.createElement('textarea');
+        field.value = request;
+        field.setAttribute('readonly', '');
+        field.style.position = 'fixed';
+        field.style.opacity = '0';
+        document.body.appendChild(field);
+        field.select();
+        const copied = document.execCommand('copy');
+        field.remove();
+        if (!copied) throw new Error('Clipboard access was not granted.');
+      }
+      setCopiedRequest(request);
+      setCopyFeedback(request === guidedModel.prompt ? 'Guided request copied.' : 'Suggested request copied.');
+    } catch {
+      setCopiedRequest(null);
+      setCopyFeedback('Copy is unavailable in this host. Select the request text manually.');
+    }
+  }
 
   function makeRecipe(recipe: RecipeId) {
     if (!proposalController.current) return;
@@ -316,6 +367,11 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   function closeBazaar() {
     setBazaarOpen(false);
     window.requestAnimationFrame(() => bazaarToggleRef.current?.focus());
+  }
+
+  function closeChat() {
+    setChatOpen(false);
+    window.requestAnimationFrame(() => chatToggleRef.current?.focus());
   }
 
   async function exportSnapshot() {
@@ -426,6 +482,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         <button
           type="button"
           className="chat-toggle"
+          ref={chatToggleRef}
           aria-expanded={chatOpen}
           aria-controls="agent-sidebar"
           onClick={() => setChatOpen((open) => !open)}
@@ -466,34 +523,58 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
 
         <BazaarPanel
           open={bazaarOpen}
-          canStage={controllerReady}
+          canStage={controllerReady && !proposal}
           onClose={closeBazaar}
           onStage={(recipeId) => stageBazaarRecipe(recipeId)}
         />
 
         {!hasContent && (
           <section className="empty-invitation" aria-labelledby="empty-title">
-            <p className="eyebrow">One canvas for people + agents</p>
-            <h1 id="empty-title">Start with nothing. Make anything.</h1>
+            <p className="eyebrow">First run · scenario review loop</p>
+            <h1 id="empty-title">Make a decision with a human in the loop.</h1>
             <p className="empty-copy">
-              Draw directly, or ask ChatGPT to compose the workspace, interface,
-              or diagram you need right now. Both of you work on the same artifact.
+              Start with Compare &amp; Decide: inspect the pinned recipe, review the
+              scorecard, and keep every Apply or Reject choice visible on the page.
             </p>
-            <div className="prompt-examples" aria-label="Starter surfaces">
-              <button type="button" onClick={() => makeRecipe('evidence-research-map')} disabled={!editor}>
-                Evidence map
+            <div className="guided-empty-actions">
+              <button
+                type="button"
+                className="guided-primary-action"
+                onClick={() => makeRecipe('compare-and-decide')}
+                disabled={!controllerReady || Boolean(proposal)}
+              >
+                <span aria-hidden="true">✦</span>
+                Stage Compare &amp; Decide
               </button>
-              <button type="button" onClick={() => makeRecipe('meeting-to-plan-wall')} disabled={!editor}>
-                Meeting wall
-              </button>
-              <button type="button" onClick={() => makeRecipe('static-architecture-map')} disabled={!editor}>
-                Architecture map
-              </button>
-              <button type="button" onClick={() => makeRecipe('compare-and-decide')} disabled={!editor}>
-                Compare &amp; Decide
+              <button
+                type="button"
+                className="guided-copy-action"
+                onClick={() => void copyRequest(guidedModel.prompt)}
+              >
+                {copiedRequest === guidedModel.prompt ? 'Copied guided request' : 'Copy guided request'}
               </button>
             </div>
-            <p className="empty-footnote">Or leave it completely blank. That is the point.</p>
+            <div className="guided-prompt-card">
+              <div className="guided-prompt-heading">
+                <span>Copyable request for ChatGPT</span>
+                <span>stage only</span>
+              </div>
+              <p>{guidedModel.prompt}</p>
+            </div>
+            {copyFeedback && !hasContent && <p className="copy-feedback" role="status" aria-live="polite">{copyFeedback}</p>}
+            <div className="starter-divider"><span>Other starters remain available</span></div>
+            <div className="prompt-examples" aria-label="Other starter surfaces">
+              <button type="button" onClick={() => makeRecipe('evidence-research-map')} disabled={!controllerReady || Boolean(proposal)}>
+                Evidence map
+              </button>
+              <button type="button" onClick={() => makeRecipe('meeting-to-plan-wall')} disabled={!controllerReady || Boolean(proposal)}>
+                Meeting wall
+              </button>
+              <button type="button" onClick={() => makeRecipe('static-architecture-map')} disabled={!controllerReady || Boolean(proposal)}>
+                Architecture map
+              </button>
+            </div>
+            <p className="empty-footnote">Local staging remains available if the ChatGPT host is not exposed in this tab.</p>
           </section>
         )}
       </section>
@@ -510,7 +591,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               </p>
             </div>
           </div>
-          <button type="button" aria-label="Close chat sidebar" onClick={() => setChatOpen(false)}>
+          <button type="button" aria-label="Close chat sidebar" onClick={closeChat}>
             ×
           </button>
         </header>
@@ -544,6 +625,37 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         </section>
 
         <div className="proposal-slot">
+          <section className="workflow-guide" aria-labelledby="workflow-guide-title">
+            <div className="workflow-guide-heading">
+              <div>
+                <span className="proposal-eyebrow">Real page contract</span>
+                <h3 id="workflow-guide-title">Inspect → Receipt</h3>
+              </div>
+              <span className="workflow-guide-boundary">human gate</span>
+            </div>
+            <ol className="workflow-steps">
+              {guidedModel.steps.map((step) => (
+                <li
+                  key={step.id}
+                  className={`workflow-step is-${step.status}`}
+                  aria-current={step.status === 'current' ? 'step' : undefined}
+                >
+                  <span className="workflow-step-marker" aria-hidden="true">
+                    {step.status === 'complete' ? '✓' : step.status === 'attention' ? '!' : step.id === 'decision' ? '↳' : '·'}
+                  </span>
+                  <div>
+                    <strong>{step.label}</strong>
+                    <p>{step.description}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <p className={`workflow-host ${guidedModel.host.className}`}>
+              <strong>{guidedModel.host.label}</strong>
+              <span>{guidedModel.host.detail}</span>
+            </p>
+          </section>
+
           {proposal && (
             <section className={`proposal-review proposal-${proposal.status}`} aria-label="Fogwood proposal review">
             <div className="proposal-review-header">
@@ -554,12 +666,60 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               <span className="proposal-status">{proposal.status === 'pending' ? 'Ready' : proposal.status === 'stale' ? 'Stale' : 'Error'}</span>
             </div>
             {proposal.proposal.rationale && <p className="proposal-rationale">{proposal.proposal.rationale}</p>}
+            <p className="proposal-revision">
+              <span>Based on page revision</span>
+              <code>{proposal.proposal.base_revision}</code>
+            </p>
             <div className="proposal-counts" aria-label="Proposal changes">
-              <span><strong>{proposal.diff.counts.adds}</strong> adds</span>
-              <span><strong>{proposal.diff.counts.updates}</strong> updates</span>
-              <span><strong>{proposal.diff.counts.moves}</strong> moves</span>
-              <span><strong>{proposal.diff.counts.removes}</strong> removes</span>
+              {guidedModel.instrumentChanges.length > 0 ? (
+                <>
+                  <span><strong>{instrumentControlCount}</strong> controls</span>
+                  <span><strong>{instrumentDerivedCount}</strong> predicted</span>
+                  <span><strong>{guidedModel.instrumentChanges.length}</strong> scope</span>
+                  <span><strong>0</strong> page items</span>
+                </>
+              ) : (
+                <>
+                  <span><strong>{proposal.diff.counts.adds}</strong> adds</span>
+                  <span><strong>{proposal.diff.counts.updates}</strong> updates</span>
+                  <span><strong>{proposal.diff.counts.moves}</strong> moves</span>
+                  <span><strong>{proposal.diff.counts.removes}</strong> removes</span>
+                </>
+              )}
             </div>
+            {guidedModel.instrumentChanges.length > 0 && (
+              <section className="proposal-instrument-diff" aria-label="Predicted instrument changes">
+                <div className="proposal-instrument-heading">
+                  <div>
+                    <span className="proposal-diff-title">Deterministic scenario preview</span>
+                    <strong>Compare &amp; Decide forecast</strong>
+                  </div>
+                  <span>before → after</span>
+                </div>
+                {guidedModel.instrumentChanges.map((scope) => (
+                  <div className="proposal-instrument-scope" key={scope.recipeInstanceId}>
+                    <span className="proposal-instrument-scope-label">{instrumentDiffLabel(scope)}</span>
+                    {scope.controls.length > 0 && (
+                      <div className="proposal-instrument-group">
+                        <span>Controls</span>
+                        <ul>
+                          {scope.controls.map((change) => <li key={`control-${change.id}`}>{change.plain}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {scope.derived.length > 0 && (
+                      <div className="proposal-instrument-group">
+                        <span>Predicted results</span>
+                        <ul>
+                          {scope.derived.map((change) => <li key={`derived-${change.id}`}>{change.plain}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <p className="proposal-instrument-note">These values are a bounded local preview. Applying still requires your page-owned choice.</p>
+              </section>
+            )}
             {proposalDiffEntries(proposal.diff).length > 0 && (
               <div className="proposal-diff" aria-label="Proposal details">
                 <span className="proposal-diff-title">Affected objects</span>
@@ -599,9 +759,20 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
 
         <div className="agent-suggestions" aria-label="Suggested requests">
           <p>Try asking ChatGPT</p>
-          <span>“Build me a lightweight CRM for five active relationships.”</span>
-          <span>“Turn this into a research board with sources, claims, and open questions.”</span>
-          <span>“Improve the hierarchy here without deleting my content.”</span>
+          {guidedModel.suggestedRequests.slice(0, 3).map((request, index) => (
+            <button
+              type="button"
+              className="suggested-request"
+              key={`suggested-request-${index}`}
+              onClick={() => void copyRequest(request)}
+              aria-label={`Copy suggested request: ${request}`}
+            >
+              <span aria-hidden="true">{index === 0 ? '✦' : '↗'}</span>
+              <span>{request}</span>
+              <small>{copiedRequest === request ? 'Copied' : 'Copy'}</small>
+            </button>
+          ))}
+          {copyFeedback && hasContent && <span className="copy-feedback" role="status" aria-live="polite">{copyFeedback}</span>}
         </div>
 
         <section

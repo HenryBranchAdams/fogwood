@@ -59,6 +59,24 @@ function packageNetwork(packageSummary: BazaarSearchSummary, read: BazaarReadSuc
   return manifest?.network ?? packageSummary.network;
 }
 
+function qualificationSummary(value: unknown) {
+  if (typeof value === 'string') return value;
+  if (!isRecord(value)) return 'Qualification details unavailable.';
+  const status = typeof value.status === 'string' ? value.status : 'status unavailable';
+  const date = typeof value.date === 'string' ? value.date : '';
+  const boundary = typeof value.tested_boundary === 'string' ? value.tested_boundary : '';
+  return [status, date, boundary].filter(Boolean).join(' · ');
+}
+
+function networkSummary(value: unknown) {
+  if (typeof value === 'string') return value;
+  if (!isRecord(value)) return 'Network boundary unavailable.';
+  const mode = typeof value.mode === 'string' ? value.mode : 'unspecified mode';
+  const endpoints = Array.isArray(value.endpoints) ? value.endpoints.length : 0;
+  const telemetry = value.telemetry === true ? 'telemetry enabled' : 'no telemetry';
+  return `${mode === 'none' ? 'No network endpoints' : `${endpoints} endpoint${endpoints === 1 ? '' : 's'}`} · ${telemetry}`;
+}
+
 function BazaarPackageCard({
   packageSummary,
   selected,
@@ -130,26 +148,7 @@ function ExactPreview({
         <span className="bazaar-preview-status">Pinned</span>
       </div>
 
-      <dl className="bazaar-identity-grid">
-        <div>
-          <dt>ID</dt>
-          <dd><code>{read.id}</code></dd>
-        </div>
-        <div>
-          <dt>Version</dt>
-          <dd>{read.version}</dd>
-        </div>
-        <div className="bazaar-identity-wide">
-          <dt>Full content hash</dt>
-          <dd><code className="bazaar-full-hash">{read.content_hash}</code></dd>
-        </div>
-        <div>
-          <dt>Locality</dt>
-          <dd>{packageSummary.locality}</dd>
-        </div>
-      </dl>
-
-      <div className="bazaar-copy-pair">
+      <div className="bazaar-decision-grid">
         <div>
           <h4>Use when</h4>
           <p>{useWhen}</p>
@@ -158,47 +157,67 @@ function ExactPreview({
           <h4>Not for</h4>
           <p>{notFor}</p>
         </div>
+        <div>
+          <h4>Qualification</h4>
+          <p>{qualificationSummary(qualification)}</p>
+        </div>
+        <div>
+          <h4>Network boundary</h4>
+          <p>{networkSummary(network)}</p>
+        </div>
+        <div>
+          <h4>Locality</h4>
+          <p>{packageSummary.locality}</p>
+        </div>
       </div>
 
-      <details className="bazaar-detail-block" open>
-        <summary>Qualification</summary>
-        <pre>{jsonText(qualification)}</pre>
-      </details>
-      <details className="bazaar-detail-block" open>
-        <summary>Network boundary</summary>
-        <pre>{jsonText(network)}</pre>
-      </details>
-      <details className="bazaar-detail-block" open>
-        <summary>Prompts ({prompts.length})</summary>
-        {prompts.length > 0 ? prompts.map((entry) => (
-          <div className="bazaar-source-entry" key={entry.path}>
-            <strong>{entry.path}</strong>
-            <pre>{typeof entry.content === 'string' ? entry.content : jsonText(entry.content)}</pre>
+      <details className="bazaar-detail-block">
+        <summary>Identity &amp; evidence</summary>
+        <dl className="bazaar-identity-grid">
+          <div>
+            <dt>Package ID</dt>
+            <dd><code>{read.id}</code></dd>
           </div>
-        )) : <p className="bazaar-empty-detail">No prompt assets in this package.</p>}
-      </details>
-      <details className="bazaar-detail-block" open>
-        <summary>Examples ({examples.length})</summary>
-        {examples.length > 0 ? examples.map((entry) => (
-          <div className="bazaar-source-entry" key={entry.path}>
-            <strong>{entry.path}</strong>
-            <pre>{jsonText(entry.content)}</pre>
+          <div>
+            <dt>Version</dt>
+            <dd>{read.version}</dd>
           </div>
-        )) : <p className="bazaar-empty-detail">No examples in this package.</p>}
-      </details>
-      <details className="bazaar-detail-block" open>
-        <summary>Recipe identity</summary>
-        <dl className="bazaar-recipe-identity">
-          <div><dt>ID</dt><dd><code>{recipeId || 'No recipe identity'}</code></dd></div>
-          <div><dt>Version</dt><dd>{packageSummary.version}</dd></div>
-          <div><dt>Package</dt><dd><code>{packageSummary.id}</code></dd></div>
+          <div className="bazaar-identity-wide">
+            <dt>Full content hash</dt>
+            <dd><code className="bazaar-full-hash">{read.content_hash}</code></dd>
+          </div>
         </dl>
-        {recipe !== undefined && <pre>{jsonText(recipe)}</pre>}
+        <details className="bazaar-nested-detail">
+          <summary>Raw prompts ({prompts.length})</summary>
+          {prompts.length > 0 ? prompts.map((entry) => (
+            <div className="bazaar-source-entry" key={entry.path}>
+              <strong>{entry.path}</strong>
+              <pre>{typeof entry.content === 'string' ? entry.content : jsonText(entry.content)}</pre>
+            </div>
+          )) : <p className="bazaar-empty-detail">No prompt assets in this package.</p>}
+        </details>
+        <details className="bazaar-nested-detail">
+          <summary>Examples ({examples.length})</summary>
+          {examples.length > 0 ? examples.map((entry) => (
+            <div className="bazaar-source-entry" key={entry.path}>
+              <strong>{entry.path}</strong>
+              <pre>{jsonText(entry.content)}</pre>
+            </div>
+          )) : <p className="bazaar-empty-detail">No examples in this package.</p>}
+        </details>
+        <details className="bazaar-nested-detail">
+          <summary>Recipe JSON</summary>
+          <dl className="bazaar-recipe-identity">
+            <div><dt>ID</dt><dd><code>{recipeId || 'No recipe identity'}</code></dd></div>
+            <div><dt>Version</dt><dd>{packageSummary.version}</dd></div>
+            <div><dt>Package</dt><dd><code>{packageSummary.id}</code></dd></div>
+          </dl>
+          {recipe !== undefined && <pre>{jsonText(recipe)}</pre>}
+        </details>
+        <p className="bazaar-read-note">
+          Catalog revision <code>{read.catalog_revision}</code>. Reading this package does not change the page.
+        </p>
       </details>
-
-      <p className="bazaar-read-note">
-        Catalog revision <code>{read.catalog_revision}</code>. Reading this package does not change the page.
-      </p>
     </section>
   );
 }
@@ -279,7 +298,7 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
             <BazaarPackageCard
               key={`${packageSummary.id}@${packageSummary.version}`}
               packageSummary={packageSummary}
-              selected={packageSummary.id === selectedId}
+              selected={packageSummary.id === selectedPackage?.id}
               canStage={canStage}
               onSelect={() => setSelectedId(packageSummary.id)}
               onStage={() => onStage(packageSummary.recipe_ids[0] ?? '', packageSummary)}

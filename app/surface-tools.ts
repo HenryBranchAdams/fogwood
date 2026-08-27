@@ -31,6 +31,7 @@ import type {
   ProposalAction,
   ProposalControllerResult,
   ProposalControllerState,
+  ProposalDiff,
   ProposalV1,
 } from './fogwood-runtime';
 import type { JsonObject } from '@tldraw/utils';
@@ -45,12 +46,14 @@ import {
 } from './fogwood-proposal-lifecycle.ts';
 import {
   COMPARE_INSTRUMENT_INSTANCE_IDS,
+  applyInstrumentInputChanges,
   applyInstrumentControlChange,
   compareShapeIdsFromRecipeBlocks,
   createCompareInstrumentScope,
   inspectInstrumentData,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-instrument-adapter.ts';
+import type { InstrumentShapeLike } from './fogwood-instrument-adapter.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { registerWebMcpTools } from './webmcp-registration.ts';
 import type { ModelContext, ToolConnection, WebMcpTool } from './webmcp-registration';
@@ -181,6 +184,16 @@ function textResult(value: unknown, isError = false): ToolResult {
     content: [{ type: 'text', text: JSON.stringify(value) }],
     ...(isError ? { isError: true } : {}),
   };
+}
+
+/** Keep the activity feed meaningful for semantic scenarios that change no item count. */
+export function proposalActivityDetail(diff: Pick<ProposalDiff, 'instrument_changes' | 'counts'>) {
+  const controlCount = diff.instrument_changes.reduce((sum, scope) => sum + scope.controls.length, 0);
+  const derivedCount = diff.instrument_changes.reduce((sum, scope) => sum + scope.derived.length, 0);
+  if (controlCount > 0 || derivedCount > 0) {
+    return `${controlCount} control change${controlCount === 1 ? '' : 's'} and ${derivedCount} predicted output${derivedCount === 1 ? '' : 's'} await review.`;
+  }
+  return `${diff.counts.adds} additions, ${diff.counts.updates} updates, ${diff.counts.moves} moves, ${diff.counts.removes} removals await review.`;
 }
 
 function positionFor(
@@ -538,6 +551,8 @@ export function updateInstrumentControl(
     editor.getCurrentPageShapes().map((shape) => ({
       id: shape.id,
       type: shape.type,
+      parent_id: String(shape.parentId),
+      is_locked: shape.isLocked,
       props: shape.type === 'surface-block' ? (shape as Extract<TLShape, { type: 'surface-block' }>).props : undefined,
     })),
     shapeId,
@@ -751,7 +766,23 @@ function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: st
 }
 
 function proposalContext(editor: Editor) {
-  return { current_revision: currentRevision(editor), items: pageContent(editor).shapes.map((shape) => inspectItem(editor, shape)) };
+  return {
+    current_revision: currentRevision(editor),
+    items: pageContent(editor).shapes.map((shape) => inspectItem(editor, shape)),
+    instrument_shapes: instrumentShapesForEditor(editor),
+  };
+}
+
+function instrumentShapesForEditor(editor: Editor): InstrumentShapeLike[] {
+  return editor.getCurrentPageShapes().map((shape) => ({
+    id: String(shape.id),
+    type: shape.type,
+    parent_id: String(shape.parentId),
+    is_locked: shape.isLocked,
+    props: shape.type === 'surface-block'
+      ? (shape as Extract<TLShape, { type: 'surface-block' }>).props
+      : undefined,
+  }));
 }
 
 function expandActions(actions: readonly ProposalAction[], recipeInstanceIdFor: (recipeId: string) => string) {
@@ -797,7 +828,7 @@ function nextRecipeInstanceId(editor: Editor, recipeId: string, used: Set<string
   return undefined;
 }
 
-function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
+export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
   if (currentRevision(editor) !== proposal.base_revision) return { ok: false as const, status: 'STALE_STATE' as const, message: 'The page changed; inspect again and re-propose before applying.' };
   const validation = validateProposal(proposal, proposalContext(editor));
   if (!validation.ok) {
@@ -816,6 +847,31 @@ function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
     return allocated ?? '';
   });
   if (scopeAllocationError) return { ok: false as const, status: 'ERROR' as const, message: 'The bounded recipe-instance scope is full; no changes were applied.' };
+  let instrumentUpdates: Array<{ id: TLShapeId; type: 'surface-block'; props: { value: string; data: string } }> = [];
+  for (const action of actions) {
+    if (action.type !== 'set_instrument_inputs') continue;
+    const scenario = applyInstrumentInputChanges(instrumentShapesForEditor(editor), action.changes);
+    if (scenario.status !== 'ok') {
+      const stale = scenario.status === 'stale';
+      return {
+        ok: false as const,
+        status: stale ? 'STALE_STATE' as const : 'ERROR' as const,
+        message: scenario.errors.map((error) => error.message).join(' ') || 'The instrument scenario was rejected; no changes were applied.',
+      };
+    }
+    const currentPageShapes = editor.getCurrentPageShapes();
+    const currentSurfaceBlockIds = new Set<string>(currentPageShapes.filter((shape) => shape.type === 'surface-block').map((shape) => String(shape.id)));
+    const scopeShapeIds = new Set(scenario.scope_shape_ids ?? []);
+    const patchIds = scenario.patches.map((patch) => patch.shape_id);
+    if (new Set(patchIds).size !== patchIds.length || patchIds.some((id) => !currentSurfaceBlockIds.has(id) || !scopeShapeIds.has(id))) {
+      return { ok: false as const, status: 'ERROR' as const, message: 'Instrument scenario patches were outside the current-page scope; no changes were applied.' };
+    }
+    instrumentUpdates = scenario.patches.map((patch) => ({
+      id: patch.shape_id as TLShapeId,
+      type: 'surface-block' as const,
+      props: { value: patch.value, data: patch.data },
+    }));
+  }
   const compareRecipeBlockCounts = new Map<string, number>();
   for (const action of actions) {
     if (action.type !== 'add_blocks' || !('recipeMeta' in action)) continue;
@@ -855,6 +911,9 @@ function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
           editor.deleteShapes(ids);
         } else if (action.type === 'clear_surface') {
           editor.deleteShapes(editor.getCurrentPageShapes().map((shape) => shape.id));
+        } else if (action.type === 'set_instrument_inputs') {
+          if (instrumentUpdates.length === 0) throw new Error('Instrument scenario patches were empty.');
+          editor.updateShapes(instrumentUpdates as never);
         }
       }
       for (const [recipeInstanceId, blockIds] of compareBlocksByScope) {
@@ -973,8 +1032,8 @@ export function registerSurfaceTools(
           return textResult({ status: stale ? 'STALE_STATE' : 'INVALID_PROPOSAL', errors: validation.errors }, true);
         }
         const staged = controller.stage(validation.proposal, validation.diff);
-        if (staged.status === 'STALE_STATE') return textResult({ status: 'STALE_STATE', message: staged.message }, true);
-        onActivity?.('Fogwood staged a proposal', `${validation.diff.counts.adds} additions, ${validation.diff.counts.updates} updates, ${validation.diff.counts.moves} moves, ${validation.diff.counts.removes} removals await review.`);
+        if (staged.status !== 'STAGED') return textResult({ status: staged.status, message: staged.message }, true);
+        onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
         return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
       },
     },
