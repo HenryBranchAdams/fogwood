@@ -1,0 +1,12 @@
+{
+  "id": "compare-loss",
+  "kind": "loss",
+  "description": "A missing Beta impact score remains visible as an unresolved input.",
+  "input": {
+    "alternatives": [{ "name": "Alpha" }, { "name": "Beta" }],
+    "criteria": ["cost", "impact"],
+    "weights": { "cost": 0.4, "impact": 0.6 },
+    "scores": { "alpha": { "cost": 95, "impact": 60 }, "beta": { "cost": 75 } }
+  },
+  "expected": { "warning": "CRITERION_VALUE_MISSING", "review_required": true }
+}

@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react';
 import {
   BaseBoxShapeUtil,
   Editor,
@@ -7,6 +8,10 @@ import {
   stopEventPropagation,
 } from 'tldraw';
 import { BLOCK_KINDS, BLOCK_TONES } from './fogwood-runtime';
+import {
+  createInstrumentControlGesture,
+  updateInstrumentControl,
+} from './surface-tools';
 
 declare module 'tldraw' {
   interface TLGlobalShapePropsMap {
@@ -88,6 +93,24 @@ function updateProps(
   });
 }
 
+function routeInstrumentControl(editor: Editor, shape: SurfaceBlockShape, value: unknown) {
+  const result = updateInstrumentControl(editor, shape.id, value);
+  return result.status !== 'legacy';
+}
+
+function isSliderKeyboardKey(key: string) {
+  return (
+    key === 'ArrowUp'
+    || key === 'ArrowDown'
+    || key === 'ArrowLeft'
+    || key === 'ArrowRight'
+    || key === 'Home'
+    || key === 'End'
+    || key === 'PageUp'
+    || key === 'PageDown'
+  );
+}
+
 function SurfaceBlockView({
   editor,
   shape,
@@ -95,6 +118,9 @@ function SurfaceBlockView({
   editor: Editor;
   shape: SurfaceBlockShape;
 }) {
+  const instrumentGesture = useMemo(() => createInstrumentControlGesture(editor), [editor]);
+  useEffect(() => () => instrumentGesture.end(), [instrumentGesture]);
+
   const { kind, title, body, value, data, tone } = shape.props;
   const parsed = parseData(data);
 
@@ -103,9 +129,8 @@ function SurfaceBlockView({
     const next = items.map((item, itemIndex) =>
       itemIndex === index ? { ...item, checked: !item.checked } : item,
     );
-    updateProps(editor, shape, {
-      data: JSON.stringify({ ...parsed, items: next }),
-    });
+    if (routeInstrumentControl(editor, shape, next[index]?.checked ?? false)) return;
+    updateProps(editor, shape, { data: JSON.stringify({ ...parsed, items: next }) });
   }
 
   let content: React.ReactNode;
@@ -215,9 +240,10 @@ function SurfaceBlockView({
             value={value}
             placeholder="Type here…"
             onPointerDown={stopEventPropagation}
-            onChange={(event) =>
-              updateProps(editor, shape, { value: event.target.value.slice(0, 500) })
-            }
+            onChange={(event) => {
+              const nextValue = event.target.value.slice(0, 500);
+              if (!routeInstrumentControl(editor, shape, nextValue)) updateProps(editor, shape, { value: nextValue });
+            }}
           />
         </label>
       );
@@ -232,9 +258,10 @@ function SurfaceBlockView({
           <select
             value={value}
             onPointerDown={stopEventPropagation}
-            onChange={(event) =>
-              updateProps(editor, shape, { value: event.target.value })
-            }
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              if (!routeInstrumentControl(editor, shape, nextValue)) updateProps(editor, shape, { value: nextValue });
+            }}
           >
             <option value="">Choose…</option>
             {options.map((option) => (
@@ -266,10 +293,40 @@ function SurfaceBlockView({
             max={max}
             step={step}
             value={sliderValue}
-            onPointerDown={stopEventPropagation}
-            onChange={(event) =>
-              updateProps(editor, shape, { value: event.target.value })
-            }
+            onPointerDown={(event) => {
+              stopEventPropagation(event);
+              instrumentGesture.end();
+              instrumentGesture.start(shape.id);
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId);
+              } catch {
+                // Pointer capture is a best-effort cleanup aid for releases outside the input.
+              }
+            }}
+            onPointerUp={(event) => {
+              stopEventPropagation(event);
+              instrumentGesture.end();
+            }}
+            onPointerCancel={(event) => {
+              stopEventPropagation(event);
+              instrumentGesture.end();
+            }}
+            onLostPointerCapture={() => instrumentGesture.end()}
+            onBlur={() => instrumentGesture.end()}
+            onKeyDown={(event) => {
+              if (!isSliderKeyboardKey(event.key)) return;
+              stopEventPropagation(event);
+              if (!event.repeat) instrumentGesture.end();
+              instrumentGesture.start(shape.id);
+            }}
+            onKeyUp={(event) => {
+              if (isSliderKeyboardKey(event.key)) instrumentGesture.end();
+            }}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              const result = instrumentGesture.update(shape.id, nextValue);
+              if (result.status === 'legacy') updateProps(editor, shape, { value: nextValue });
+            }}
           />
         </label>
       );
@@ -287,7 +344,7 @@ function SurfaceBlockView({
             onPointerDown={stopEventPropagation}
             onClick={(event) => {
               stopEventPropagation(event);
-              updateProps(editor, shape, { value: pressed ? '' : 'pressed' });
+              if (!routeInstrumentControl(editor, shape, !pressed)) updateProps(editor, shape, { value: pressed ? '' : 'pressed' });
             }}
           >
             <span>{pressed ? '✓' : '→'}</span>

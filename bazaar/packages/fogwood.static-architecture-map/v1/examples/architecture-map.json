@@ -1,0 +1,13 @@
+{
+  "id": "architecture-map-example",
+  "title": "Local authority boundary",
+  "input": {
+    "audience": "A team reviewing agent integration",
+    "focus": "Apply and Reject remain page-owned"
+  },
+  "expected": {
+    "artifact": "architecture-map",
+    "review_required": true
+  },
+  "notes": "The map describes authority; it does not grant authority."
+}

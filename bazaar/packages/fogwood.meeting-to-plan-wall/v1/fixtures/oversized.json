@@ -1,0 +1,7 @@
+{
+  "id": "meeting-oversized",
+  "kind": "oversized",
+  "description": "An attendee list beyond the package item bound is rejected atomically.",
+  "input": { "meeting_title": "Bounded meeting", "attendee_count": 21 },
+  "expected": { "error": "LIMIT_EXCEEDED" }
+}

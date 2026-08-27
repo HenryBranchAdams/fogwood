@@ -1,48 +1,59 @@
-import {
-  Editor,
-  TLParentId,
-  TLShape,
-  TLShapeId,
-  createShapeId,
-  toRichText,
-} from 'tldraw';
+import { createShapeId, toRichText } from 'tldraw';
+import type { Editor, TLParentId, TLShape, TLShapeId } from 'tldraw';
 import {
   BLOCK_KINDS,
   BLOCK_TONES,
   CANVAS_COLORS,
   CANVAS_FILLS,
   CANVAS_SHAPE_KINDS,
-  BlockInput,
-  BlockKind,
-  BlockTone,
-  CanvasShapeKind,
-  CapabilitySearchInput,
   computePageRevision,
   createProposalController,
   descendantClosure,
   expandRecipe,
-  FogwoodMeta,
   FOGWOOD_PROTOCOL,
   FOGWOOD_PROTOCOL_VERSION,
   FOGWOOD_REGISTRY_VERSION,
   getRecipe,
   INSPECT_INPUT_SCHEMA,
+  PROPOSAL_INPUT_SCHEMA,
+  searchCapabilities,
+  validateProposal,
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+} from './fogwood-runtime.ts';
+import type {
+  BlockInput,
+  BlockKind,
+  BlockTone,
+  CanvasShapeKind,
+  CapabilitySearchInput,
+  FogwoodMeta,
   InspectableItem,
   ProposalAction,
   ProposalControllerResult,
   ProposalControllerState,
   ProposalV1,
-  PROPOSAL_INPUT_SCHEMA,
-  searchCapabilities,
-  validateProposal,
 } from './fogwood-runtime';
 import type { JsonObject } from '@tldraw/utils';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_PERSISTENCE } from './fogwood-persistence.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_BAZAAR_TOOL } from './fogwood-bazaar.ts';
 import {
-  ModelContext,
-  ToolConnection,
-  WebMcpTool,
-  registerWebMcpTools,
-} from './webmcp-registration';
+  createProposalLifecycleController,
+  type ProposalLifecycleEvent,
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+} from './fogwood-proposal-lifecycle.ts';
+import {
+  COMPARE_INSTRUMENT_INSTANCE_IDS,
+  applyInstrumentControlChange,
+  compareShapeIdsFromRecipeBlocks,
+  createCompareInstrumentScope,
+  inspectInstrumentData,
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+} from './fogwood-instrument-adapter.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { registerWebMcpTools } from './webmcp-registration.ts';
+import type { ModelContext, ToolConnection, WebMcpTool } from './webmcp-registration';
 
 export type { ToolConnection } from './webmcp-registration';
 export type { BlockKind, BlockTone, CanvasShapeKind } from './fogwood-runtime';
@@ -203,6 +214,7 @@ function shapeMeta(id: string, fogwood?: FogwoodMeta): JsonObject {
     ...(fogwood?.role ? { role: fogwood.role } : {}),
     ...(fogwood?.recipe_id ? { recipe_id: fogwood.recipe_id } : {}),
     ...(fogwood?.recipe_version ? { recipe_version: fogwood.recipe_version } : {}),
+    ...(fogwood?.recipe_instance_id ? { recipe_instance_id: fogwood.recipe_instance_id } : {}),
   };
   return { fogwood: fogwoodMeta };
 }
@@ -450,11 +462,13 @@ function fogwoodMeta(shape: TLShape): FogwoodMeta {
     ...(typeof root.role === 'string' ? { role: root.role.slice(0, 120) } : {}),
     ...(typeof root.recipe_id === 'string' ? { recipe_id: root.recipe_id.slice(0, 120) } : {}),
     ...(typeof root.recipe_version === 'number' ? { recipe_version: root.recipe_version } : {}),
+    ...(typeof root.recipe_instance_id === 'string' ? { recipe_instance_id: root.recipe_instance_id.slice(0, 120) } : {}),
   };
 }
 
-function blockDataForInspection(data: string) {
+function blockDataForInspection(data: string, shapeId?: string) {
   const parsed = parseBlockData(data);
+  const instrument = shapeId ? inspectInstrumentData({ id: shapeId, type: 'surface-block', props: { data } }) : undefined;
   return {
     items: Array.isArray(parsed.items)
       ? parsed.items.slice(0, 20).flatMap((item) => (isRecord(item) && typeof item.label === 'string' ? [{ label: item.label.slice(0, 240), checked: item.checked === true }] : []))
@@ -468,6 +482,7 @@ function blockDataForInspection(data: string) {
     min: clampNumber(parsed.min, 0, -1_000_000, 1_000_000),
     max: clampNumber(parsed.max, 100, -1_000_000, 1_000_000),
     step: clampNumber(parsed.step, 1, 0.001, 100_000),
+    ...(instrument ? { instrument } : {}),
   };
 }
 
@@ -501,6 +516,115 @@ function pageContent(editor: Editor) {
 export function currentRevision(editor: Editor) {
   const { shapes, bindings } = pageContent(editor);
   return computePageRevision(editor.getCurrentPageId(), shapes, bindings);
+}
+
+export type InstrumentControlUpdateOptions = {
+  /** Skip the stopping point when an enclosing UI gesture already owns it. */
+  recordHistory?: boolean;
+};
+
+/**
+ * Page-owned adapter entrypoint for instrument controls. Legacy blocks return
+ * without mutation; instrument scopes are validated and patched as one history
+ * transaction after the pure adapter has accepted the change.
+ */
+export function updateInstrumentControl(
+  editor: Editor,
+  shapeId: string,
+  rawValue: unknown,
+  options: InstrumentControlUpdateOptions = {},
+) {
+  const result = applyInstrumentControlChange(
+    editor.getCurrentPageShapes().map((shape) => ({
+      id: shape.id,
+      type: shape.type,
+      props: shape.type === 'surface-block' ? (shape as Extract<TLShape, { type: 'surface-block' }>).props : undefined,
+    })),
+    shapeId,
+    rawValue,
+  );
+  if (result.status === 'legacy' || result.patches.length === 0) return result;
+  const currentPageShapes = editor.getCurrentPageShapes();
+  const currentSurfaceBlockIds = new Set<string>(currentPageShapes.filter((shape) => shape.type === 'surface-block').map((shape) => String(shape.id)));
+  const scopeShapeIds = new Set(result.scope_shape_ids ?? []);
+  const patchIds = result.patches.map((patch) => patch.shape_id);
+  const patchIdsUnique = new Set(patchIds);
+  if (
+    patchIdsUnique.size !== patchIds.length
+    || patchIds.some((id) => !currentSurfaceBlockIds.has(id) || !scopeShapeIds.has(id))
+  ) {
+    return {
+      ...result,
+      status: 'invalid' as const,
+      patches: [],
+      errors: [{ code: 'PATCH_SCOPE_VIOLATION', message: 'Instrument patches must target unique current-page surface blocks in the selected scope.' }],
+    };
+  }
+  const updates = result.patches.map((patch) => ({
+    id: patch.shape_id as TLShapeId,
+    type: 'surface-block' as const,
+    props: { value: patch.value, data: patch.data },
+  }));
+  try {
+    if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Update Fogwood instrument');
+    editor.run(() => {
+      editor.updateShapes(updates as never);
+    }, { history: 'record' });
+  } catch (error) {
+    return {
+      ...result,
+      status: 'invalid' as const,
+      patches: [],
+      errors: [{ code: 'EDITOR_UPDATE_FAILED', message: error instanceof Error ? error.message.slice(0, 180) : 'The page rejected the instrument update.' }],
+    };
+  }
+  return result;
+}
+
+export type InstrumentControlGesture = {
+  start: (shapeId: string) => void;
+  update: (shapeId: string, rawValue: unknown) => ReturnType<typeof updateInstrumentControl>;
+  end: () => void;
+};
+
+function isInstrumentControlShape(editor: Editor, shapeId: string) {
+  const shape = editor.getCurrentPageShapes().find((candidate) => candidate.id === shapeId);
+  if (!shape || shape.type !== 'surface-block') return false;
+  const block = shape as Extract<TLShape, { type: 'surface-block' }>;
+  return isRecord(parseBlockData(block.props.data).instrument);
+}
+
+/**
+ * Owns one bounded control gesture for one editor and shape. The session does
+ * not mutate the page itself: each update still passes through the validated
+ * page-owned adapter transaction. It only moves the history stopping point to
+ * the gesture boundary so live updates undo as one group.
+ */
+export function createInstrumentControlGesture(editor: Editor): InstrumentControlGesture {
+  let activeShapeId: string | undefined;
+
+  return {
+    start(shapeId) {
+      if (activeShapeId === shapeId) return;
+      activeShapeId = undefined;
+      if (!isInstrumentControlShape(editor, shapeId)) return;
+      editor.markHistoryStoppingPoint('Update Fogwood instrument');
+      activeShapeId = shapeId;
+    },
+    update(shapeId, rawValue) {
+      const inGesture = activeShapeId === shapeId;
+      if (!inGesture) activeShapeId = undefined;
+      return updateInstrumentControl(
+        editor,
+        shapeId,
+        rawValue,
+        inGesture ? { recordHistory: false } : {},
+      );
+    },
+    end() {
+      activeShapeId = undefined;
+    },
+  };
 }
 
 function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
@@ -537,7 +661,7 @@ function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
         title: block.props.title.slice(0, 180),
         body: block.props.body.slice(0, 2_000),
         value: block.props.value.slice(0, 500),
-        data: blockDataForInspection(block.props.data),
+        data: blockDataForInspection(block.props.data, shape.id),
       },
       text: [block.props.title, block.props.body, block.props.value].filter(Boolean).join(' ').slice(0, 500),
     };
@@ -577,7 +701,7 @@ function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: st
   const selectionComplete = selectedShapeIdsPage.length >= selectedShapeIds.length;
   return {
     protocol: { name: FOGWOOD_PROTOCOL, version: FOGWOOD_PROTOCOL_VERSION, registry_version: FOGWOOD_REGISTRY_VERSION },
-    persistence: { boundary: 'device-local', key: 'open-surface-local' },
+    persistence: FOGWOOD_PERSISTENCE,
     workflow: ['inspect', 'capability search', 'proposal', 'page Apply/Reject'],
     workflow_contract: 'inspect -> capability search -> proposal -> page Apply/Reject',
     authority: { agent: 'read current state, search local capabilities, and stage typed proposals', page: 'owns validation and Apply/Reject; only page Apply mutates content' },
@@ -630,16 +754,47 @@ function proposalContext(editor: Editor) {
   return { current_revision: currentRevision(editor), items: pageContent(editor).shapes.map((shape) => inspectItem(editor, shape)) };
 }
 
-function expandActions(actions: readonly ProposalAction[]) {
+function expandActions(actions: readonly ProposalAction[], recipeInstanceIdFor: (recipeId: string) => string) {
   return actions.flatMap((action) => {
     if (action.type !== 'insert_recipe') return [action];
     const recipe = getRecipe(action.recipe_id, action.version);
     if (!recipe) return [];
+    const recipeInstanceId = recipeInstanceIdFor(recipe.id);
     return expandRecipe(recipe, action.anchor).map((operation) => ({
       ...operation,
-      recipeMeta: { recipe_id: recipe.id, recipe_version: recipe.version },
+      recipeMeta: {
+        recipe_id: recipe.id,
+        recipe_version: recipe.version,
+        recipe_instance_id: recipeInstanceId,
+      },
     }));
   });
+}
+
+function recipeInstanceIds(editor: Editor) {
+  const ids = new Set<string>();
+  for (const shape of editor.getCurrentPageShapes()) {
+    const meta = fogwoodMeta(shape);
+    if (meta.recipe_instance_id) ids.add(meta.recipe_instance_id);
+    if (shape.type !== 'surface-block') continue;
+    const block = shape as Extract<TLShape, { type: 'surface-block' }>;
+    const data = parseBlockData(block.props.data);
+    if (!isRecord(data.instrument)) continue;
+    if (typeof data.instrument.recipe_instance_id === 'string') ids.add(data.instrument.recipe_instance_id);
+  }
+  return ids;
+}
+
+function nextRecipeInstanceId(editor: Editor, recipeId: string, used: Set<string>): string | undefined {
+  const existing = recipeInstanceIds(editor);
+  for (let index = 1; index <= 10_000; index += 1) {
+    const candidate = `${recipeId}:${index}`;
+    if (!existing.has(candidate) && !used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
@@ -649,18 +804,45 @@ function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
     const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
     return { ok: false as const, status: stale ? 'STALE_STATE' as const : 'ERROR' as const, message: validation.errors.map((error) => error.message).join(' ') };
   }
-  const actions = expandActions(validation.proposal.actions);
+  const maxShapes = editor.options.maxShapesPerPage;
+  if (Number.isFinite(maxShapes) && validation.diff.counts.after > maxShapes) {
+    return { ok: false as const, status: 'ERROR' as const, message: 'The proposal would exceed this page\'s bounded shape limit; no changes were applied.' };
+  }
+  const scopes = new Set<string>();
+  let scopeAllocationError = false;
+  const actions = expandActions(validation.proposal.actions, (recipeId) => {
+    const allocated = nextRecipeInstanceId(editor, recipeId, scopes);
+    if (!allocated) scopeAllocationError = true;
+    return allocated ?? '';
+  });
+  if (scopeAllocationError) return { ok: false as const, status: 'ERROR' as const, message: 'The bounded recipe-instance scope is full; no changes were applied.' };
+  const compareRecipeBlockCounts = new Map<string, number>();
+  for (const action of actions) {
+    if (action.type !== 'add_blocks' || !('recipeMeta' in action)) continue;
+    const recipeMeta = (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta;
+    if (recipeMeta?.recipe_id !== 'compare-and-decide' || !recipeMeta.recipe_instance_id) continue;
+    compareRecipeBlockCounts.set(recipeMeta.recipe_instance_id, (compareRecipeBlockCounts.get(recipeMeta.recipe_instance_id) ?? 0) + action.blocks.length);
+  }
+  if ([...compareRecipeBlockCounts.values()].some((count) => count !== COMPARE_INSTRUMENT_INSTANCE_IDS.length + 2)) {
+    return { ok: false as const, status: 'ERROR' as const, message: 'The immutable Compare recipe mapping was incomplete; no changes were applied.' };
+  }
+  const compareBlocksByScope = new Map<string, TLShapeId[]>();
   try {
     editor.markHistoryStoppingPoint('Apply agent proposal');
     editor.run(() => {
       for (const action of actions) {
-        const recipeMeta = 'recipeMeta' in action ? action.recipeMeta : undefined;
+        const recipeMeta = 'recipeMeta' in action
+          ? (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta
+          : undefined;
         const fogwood = {
           role: recipeMeta ? 'recipe-content' : 'proposal-content',
           ...(recipeMeta ?? {}),
         };
         if (action.type === 'add_blocks') {
-          addSurfaceBlocks(editor, action.blocks, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
+          const ids = addSurfaceBlocks(editor, action.blocks, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
+          if (recipeMeta?.recipe_id === 'compare-and-decide' && recipeMeta.recipe_instance_id) {
+            compareBlocksByScope.set(recipeMeta.recipe_instance_id, ids);
+          }
         } else if (action.type === 'add_shapes') {
           addCanvasShapes(editor, action.shapes, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
         } else if (action.type === 'update_blocks') {
@@ -674,6 +856,15 @@ function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
         } else if (action.type === 'clear_surface') {
           editor.deleteShapes(editor.getCurrentPageShapes().map((shape) => shape.id));
         }
+      }
+      for (const [recipeInstanceId, blockIds] of compareBlocksByScope) {
+        const shapeIds = compareShapeIdsFromRecipeBlocks(blockIds.map(String));
+        if (Object.keys(shapeIds).length !== COMPARE_INSTRUMENT_INSTANCE_IDS.length) throw new Error('Compare recipe block mapping was incomplete.');
+        const scope = createCompareInstrumentScope(recipeInstanceId, shapeIds);
+        if (scope.status !== 'ok') throw new Error('Compare recipe instrument scope was rejected.');
+        const updates = scope.blocks.map((patch) => ({ id: patch.shape_id as TLShapeId, type: 'surface-block' as const, props: { value: patch.value, data: patch.data } }));
+        if (updates.length !== COMPARE_INSTRUMENT_INSTANCE_IDS.length) throw new Error('Compare recipe instrument patches were incomplete.');
+        editor.updateShapes(updates as never);
       }
     }, { history: 'record' });
   } catch (error) {
@@ -692,13 +883,19 @@ export function registerSurfaceTools(
   onActivity?: (title: string, detail?: string) => void,
   onProposalChange?: (state: ProposalControllerState | null) => void,
   onController?: (controller: SurfaceToolController) => void,
+  onProposalLifecycle?: (event: ProposalLifecycleEvent) => void,
 ) {
   const baseController = createProposalController(
     { getRevision: () => currentRevision(editor), apply: (proposal) => applyProposalToEditor(editor, proposal) },
     onProposalChange,
   );
+  const lifecycleController = createProposalLifecycleController(baseController, {
+    get_revision: () => currentRevision(editor),
+    on_event: onProposalLifecycle,
+    on_event_error: (error) => onActivity?.('Receipt was not recorded', error.message.slice(0, 180)),
+  });
   const controller: SurfaceToolController = {
-    ...baseController,
+    ...lifecycleController,
     stageRecipe(recipeId) {
       const recipe = getRecipe(recipeId, 1);
       if (!recipe) return { status: 'ERROR', message: 'Unknown immutable recipe.' };
@@ -710,8 +907,9 @@ export function registerSurfaceTools(
       } satisfies ProposalV1;
       const validation = validateProposal(proposal, proposalContext(editor));
       if (!validation.ok) return { status: 'ERROR', message: validation.errors.map((error) => error.message).join(' ') };
-      onActivity?.('Staged a Fogwood recipe', `${recipe.title} is ready for page review.`);
-      return baseController.stage(validation.proposal, validation.diff);
+      const staged = lifecycleController.stage(validation.proposal, validation.diff);
+      if (staged.status === 'STAGED') onActivity?.('Staged a Fogwood recipe', `${recipe.title} is ready for page review.`);
+      return staged;
     },
   };
   onController?.(controller);
@@ -774,10 +972,22 @@ export function registerSurfaceTools(
           const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
           return textResult({ status: stale ? 'STALE_STATE' : 'INVALID_PROPOSAL', errors: validation.errors }, true);
         }
-        const staged = baseController.stage(validation.proposal, validation.diff);
+        const staged = controller.stage(validation.proposal, validation.diff);
         if (staged.status === 'STALE_STATE') return textResult({ status: 'STALE_STATE', message: staged.message }, true);
         onActivity?.('Fogwood staged a proposal', `${validation.diff.counts.adds} additions, ${validation.diff.counts.updates} updates, ${validation.diff.counts.moves} moves, ${validation.diff.counts.removes} removals await review.`);
         return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
+      },
+    },
+    {
+      ...FOGWOOD_BAZAAR_TOOL,
+      title: 'Browse the Fogwood Bazaar',
+      execute: (input) => {
+        const result = FOGWOOD_BAZAAR_TOOL.execute(input);
+        if (result.ok) {
+          const count = 'results' in result ? result.results.length : Object.keys(result.sections).length;
+          onActivity?.('Fogwood read the local Bazaar', `${count} bounded local catalog result${count === 1 ? '' : 's'} returned.`);
+        }
+        return textResult(result, !result.ok);
       },
     },
   ];

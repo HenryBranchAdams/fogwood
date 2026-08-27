@@ -8,8 +8,11 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "prebuild": "node scripts/compile-bazaar.mjs --check",
     "start": "vinext start",
+    "compile:bazaar": "node scripts/compile-bazaar.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "pretest": "node scripts/compile-bazaar.mjs --check",
     "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {

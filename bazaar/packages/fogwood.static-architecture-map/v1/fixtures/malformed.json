@@ -1,0 +1,7 @@
+{
+  "id": "architecture-malformed",
+  "kind": "malformed",
+  "description": "A request with a non-text audience is rejected by the input boundary.",
+  "input": { "audience": false },
+  "expected": { "error": "INVALID_INPUT" }
+}

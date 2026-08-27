@@ -85,6 +85,7 @@ export type FogwoodMeta = {
   role?: string;
   recipe_id?: string;
   recipe_version?: number;
+  recipe_instance_id?: string;
 };
 
 export type InspectableItem = {
@@ -259,6 +260,8 @@ export type RecipeDefinition = {
   semantic: string;
   provenance: { source: 'fogwood'; recipe_id: string; recipe_version: 1 };
   expected_count: number;
+  /** Host-owned behavior selected by recipe id; never supplied by proposals. */
+  instrument?: { kind: 'compare-and-decide'; version: 1 };
   operations: readonly RecipeOperation[];
 };
 
@@ -555,6 +558,177 @@ const architectureRecipe: RecipeDefinition = {
   ],
 };
 
+const compareRecipe: RecipeDefinition = {
+  id: 'compare-and-decide',
+  version: 1,
+  title: 'Compare & Decide',
+  purpose: 'Compare Alpha and Beta with visible criteria, bounded weights, and a reviewable scorecard.',
+  status: 'immutable',
+  bounds: { x: 0, y: 0, w: 1240, h: 820 },
+  semantic: 'alternatives-criteria-tradeoffs-scorecard-review',
+  provenance: { source: 'fogwood', recipe_id: 'compare-and-decide', recipe_version: 1 },
+  expected_count: 12,
+  instrument: { kind: 'compare-and-decide', version: 1 },
+  operations: [
+    {
+      type: 'add_blocks',
+      coordinate_space: 'page',
+      blocks: [
+        {
+          kind: 'heading',
+          tone: 'paper',
+          x: 0,
+          y: 0,
+          w: 1160,
+          h: 120,
+          value: 'Decision workspace',
+          title: 'Compare & Decide',
+          body: 'Compare Alpha and Beta across cost and impact. Scores are bounded aids, not conclusions.',
+        },
+        {
+          kind: 'panel',
+          tone: 'blue',
+          x: 0,
+          y: 150,
+          w: 350,
+          h: 190,
+          value: 'Criteria',
+          title: 'Make the tradeoffs explicit',
+          body: 'Cost and impact weights share one bounded scale. Record what would change your mind before deciding.',
+        },
+        {
+          kind: 'slider',
+          tone: 'green',
+          x: 390,
+          y: 150,
+          w: 260,
+          h: 150,
+          title: 'Cost weight',
+          body: 'Bounded weight used for both options.',
+          value: 0.4,
+          min: 0,
+          max: 1,
+          step: 0.1,
+        },
+        {
+          kind: 'slider',
+          tone: 'green',
+          x: 680,
+          y: 150,
+          w: 260,
+          h: 150,
+          title: 'Impact weight',
+          body: 'Bounded weight used for both options.',
+          value: 0.6,
+          min: 0,
+          max: 1,
+          step: 0.1,
+        },
+        {
+          kind: 'slider',
+          tone: 'paper',
+          x: 0,
+          y: 380,
+          w: 280,
+          h: 150,
+          title: 'Alpha cost score',
+          body: 'Local bounded input from 0 to 100.',
+          value: 95,
+          min: 0,
+          max: 100,
+          step: 1,
+        },
+        {
+          kind: 'slider',
+          tone: 'paper',
+          x: 300,
+          y: 380,
+          w: 280,
+          h: 150,
+          title: 'Alpha impact score',
+          body: 'Local bounded input from 0 to 100.',
+          value: 60,
+          min: 0,
+          max: 100,
+          step: 1,
+        },
+        {
+          kind: 'slider',
+          tone: 'paper',
+          x: 600,
+          y: 380,
+          w: 280,
+          h: 150,
+          title: 'Beta cost score',
+          body: 'Local bounded input from 0 to 100.',
+          value: 75,
+          min: 0,
+          max: 100,
+          step: 1,
+        },
+        {
+          kind: 'slider',
+          tone: 'paper',
+          x: 900,
+          y: 380,
+          w: 280,
+          h: 150,
+          title: 'Beta impact score',
+          body: 'Local bounded input from 0 to 100.',
+          value: 80,
+          min: 0,
+          max: 100,
+          step: 1,
+        },
+        {
+          kind: 'metric',
+          tone: 'accent',
+          x: 0,
+          y: 600,
+          w: 280,
+          h: 160,
+          title: 'Alpha weighted score',
+          body: 'Deterministic derived aid.',
+          value: '74.00',
+        },
+        {
+          kind: 'metric',
+          tone: 'accent',
+          x: 300,
+          y: 600,
+          w: 280,
+          h: 160,
+          title: 'Beta weighted score',
+          body: 'Deterministic derived aid.',
+          value: '78.00',
+        },
+        {
+          kind: 'metric',
+          tone: 'yellow',
+          x: 600,
+          y: 600,
+          w: 280,
+          h: 160,
+          title: 'Recommendation',
+          body: 'Review the inputs before deciding.',
+          value: 'Beta',
+        },
+        {
+          kind: 'chart',
+          tone: 'paper',
+          x: 900,
+          y: 600,
+          w: 280,
+          h: 180,
+          title: 'Weighted scores',
+          body: 'Alpha vs Beta, recomputed locally.',
+          series: [{ label: 'Alpha', value: 74 }, { label: 'Beta', value: 78 }],
+        },
+      ],
+    },
+  ],
+};
+
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== 'object') return value;
   Object.freeze(value);
@@ -566,6 +740,7 @@ export const RECIPE_REGISTRY: readonly RecipeDefinition[] = deepFreeze([
   researchRecipe,
   meetingRecipe,
   architectureRecipe,
+  compareRecipe,
 ]);
 
 export type RecipeId = (typeof RECIPE_REGISTRY)[number]['id'];

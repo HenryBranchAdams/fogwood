@@ -1,0 +1,7 @@
+{
+  "id": "meeting-malformed",
+  "kind": "malformed",
+  "description": "A request with a non-text title is rejected by the input boundary.",
+  "input": { "meeting_title": 42 },
+  "expected": { "error": "INVALID_INPUT" }
+}

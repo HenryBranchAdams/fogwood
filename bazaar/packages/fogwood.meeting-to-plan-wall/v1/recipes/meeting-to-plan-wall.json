@@ -1,0 +1,101 @@
+{
+  "id": "meeting-to-plan-wall",
+  "version": 1,
+  "title": "Meeting to plan wall",
+  "purpose": "Turn meeting notes into decisions, risks, actions, and clear owners.",
+  "status": "immutable",
+  "bounds": { "x": 0, "y": 0, "w": 1240, "h": 790 },
+  "semantic": "meeting-notes-decisions-risks-actions-owners",
+  "provenance": { "source": "fogwood", "recipe_id": "meeting-to-plan-wall", "recipe_version": 1 },
+  "expected_count": 9,
+  "operations": [
+    {
+      "type": "add_blocks",
+      "coordinate_space": "page",
+      "blocks": [
+        {
+          "kind": "heading",
+          "tone": "paper",
+          "x": 0,
+          "y": 0,
+          "w": 1160,
+          "h": 120,
+          "value": "Meeting workspace",
+          "title": "Meeting to plan wall",
+          "body": "Move from what was said to what happens next."
+        },
+        {
+          "kind": "text",
+          "tone": "blue",
+          "x": 0,
+          "y": 150,
+          "w": 360,
+          "h": 230,
+          "title": "Notes",
+          "body": "Capture the useful context, the disagreement, and the decision boundary."
+        },
+        {
+          "kind": "panel",
+          "tone": "green",
+          "x": 390,
+          "y": 150,
+          "w": 360,
+          "h": 230,
+          "value": "Decision",
+          "title": "What did we decide?",
+          "body": "State the decision and what remains deliberately undecided."
+        },
+        {
+          "kind": "panel",
+          "tone": "yellow",
+          "x": 780,
+          "y": 150,
+          "w": 360,
+          "h": 230,
+          "value": "Risks",
+          "title": "What could derail it?",
+          "body": "Name risks early enough that someone can respond to them."
+        },
+        {
+          "kind": "checklist",
+          "tone": "paper",
+          "x": 0,
+          "y": 415,
+          "w": 500,
+          "h": 300,
+          "title": "Actions and owners",
+          "body": "Every action has one clear next move.",
+          "items": [
+            { "label": "Draft the decision brief — owner to assign" },
+            { "label": "Confirm the next review date — owner to assign" },
+            { "label": "Write the risk response — owner to assign" }
+          ]
+        },
+        {
+          "kind": "table",
+          "tone": "paper",
+          "x": 535,
+          "y": 415,
+          "w": 605,
+          "h": 300,
+          "title": "Plan ledger",
+          "columns": ["Action", "Owner", "Due"],
+          "rows": [
+            ["Decision brief", "Unassigned", "Next review"],
+            ["Risk response", "Unassigned", "Before launch"],
+            ["Stakeholder note", "Unassigned", "This week"]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "add_shapes",
+      "coordinate_space": "page",
+      "shapes": [
+        { "kind": "arrow", "x": 180, "y": 380, "end_x": 180, "end_y": 415, "text": "notes -> actions" },
+        { "kind": "arrow", "x": 570, "y": 380, "end_x": 570, "end_y": 415, "text": "decisions -> plan" },
+        { "kind": "arrow", "x": 960, "y": 380, "end_x": 960, "end_y": 415, "text": "risks -> plan" }
+      ]
+    }
+  ]
+}

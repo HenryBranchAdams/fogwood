@@ -1,0 +1,7 @@
+{
+  "id": "evidence-loss",
+  "kind": "loss",
+  "description": "An omitted locator is preserved as a visible review warning.",
+  "input": { "topic": "A local review", "sources": ["Unnamed source"] },
+  "expected": { "warning": "SOURCE_LOCATOR_MISSING", "review_required": true }
+}

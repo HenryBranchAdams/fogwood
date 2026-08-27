@@ -1,0 +1,12 @@
+{
+  "sources": [
+    {
+      "id": "fogwood-product-definition",
+      "kind": "product-definition",
+      "title": "Fogwood Bazaar product definition",
+      "locator": "Fogwood Bazaar Product Definition.md",
+      "retrieved": "2026-08-26"
+    }
+  ],
+  "method": "The recipe is the source-controlled Fogwood v0.1 starter retained from the local runtime registry."
+}

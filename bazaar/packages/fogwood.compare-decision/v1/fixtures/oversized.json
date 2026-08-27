@@ -1,0 +1,7 @@
+{
+  "id": "compare-oversized",
+  "kind": "oversized",
+  "description": "More than two alternatives is rejected atomically by the fixed two-option composition.",
+  "input": { "alternative_count": 3 },
+  "expected": { "error": "LIMIT_EXCEEDED" }
+}

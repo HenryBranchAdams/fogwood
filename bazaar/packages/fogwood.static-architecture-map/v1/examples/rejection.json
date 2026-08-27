@@ -1,0 +1,7 @@
+{
+  "id": "architecture-rejection-example",
+  "title": "Reject an authority-expanding map",
+  "input": { "audience": "A team reviewer", "focus": "Automatic page changes" },
+  "expected": { "error": "AUTHORITY_BOUNDARY_VIOLATION", "outcome": "reject" },
+  "notes": "Reject when the proposed map implies automatic Apply or direct store authority."
+}

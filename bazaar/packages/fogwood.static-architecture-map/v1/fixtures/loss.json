@@ -1,0 +1,7 @@
+{
+  "id": "architecture-loss",
+  "kind": "loss",
+  "description": "An omitted focus is preserved as a visible review warning.",
+  "input": { "audience": "A team reviewer" },
+  "expected": { "warning": "FOCUS_UNSPECIFIED", "review_required": true }
+}

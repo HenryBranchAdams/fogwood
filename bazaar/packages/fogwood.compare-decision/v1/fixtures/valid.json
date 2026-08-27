@@ -1,0 +1,21 @@
+{
+  "id": "compare-valid",
+  "kind": "valid",
+  "description": "Alpha and Beta with the current bounded fixture inputs.",
+  "input": {
+    "alternatives": [{ "name": "Alpha" }, { "name": "Beta" }],
+    "criteria": ["cost", "impact"],
+    "weights": { "cost": 0.4, "impact": 0.6 },
+    "scores": {
+      "alpha": { "cost": 95, "impact": 60 },
+      "beta": { "cost": 75, "impact": 80 }
+    }
+  },
+  "expected": {
+    "artifact": "compare-decision",
+    "review_required": true,
+    "alpha_score": 74,
+    "beta_score": 78,
+    "recommendation": "Beta"
+  }
+}

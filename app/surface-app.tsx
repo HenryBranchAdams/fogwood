@@ -3,16 +3,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Editor, Tldraw } from 'tldraw';
 import 'tldraw/tldraw.css';
+import BazaarPanel from './bazaar-panel';
 import { SurfaceBlockUtil } from './surface-block';
 import {
   ProposalControllerState,
   RecipeId,
 } from './fogwood-runtime';
+import { FOGWOOD_PERSISTENCE_KEY } from './fogwood-persistence';
+import { createFogwoodReceiptRecorder } from './fogwood-receipt-recorder';
 import {
+  RECEIPT_STORAGE_KEY,
+  createReceiptLedger,
+  type Receipt,
+} from './fogwood-receipts';
+import {
+  SnapshotExportError,
+  createFogwoodSnapshot,
+  downloadFogwoodSnapshot,
+} from './fogwood-snapshot';
+import {
+  currentRevision,
   SurfaceToolController,
   ToolConnection,
   registerSurfaceTools,
 } from './surface-tools';
+import type { ProposalLifecycleEvent } from './fogwood-proposal-lifecycle';
 
 type Activity = {
   id: string;
@@ -66,10 +81,31 @@ function activityId() {
   return `activity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message.slice(0, 240) : 'An unexpected Fogwood page error occurred.';
+}
+
+function receiptListError(result: { ok: false; error: { message: string } }) {
+  return result.error.message.slice(0, 220);
+}
+
+function receiptLabel(event: Receipt['event']) {
+  const labels: Record<Receipt['event'], string> = {
+    'proposal-staged': 'Proposal staged',
+    'proposal-applied': 'Proposal applied',
+    'proposal-rejected': 'Proposal rejected',
+    'recipe-staged': 'Recipe staged',
+    'recipe-inserted': 'Recipe inserted',
+    'snapshot-exported': 'Snapshot exported',
+  };
+  return labels[event];
+}
+
 export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [shapeCount, setShapeCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(true);
+  const [bazaarOpen, setBazaarOpen] = useState(false);
   const [connection, setConnection] = useState<ToolConnection>({
     checked: false,
     available: false,
@@ -79,8 +115,51 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   });
   const [activity, setActivity] = useState<Activity[]>([INTRO_ACTIVITY]);
   const [proposal, setProposal] = useState<ProposalControllerState | null>(null);
+  const [controllerReady, setControllerReady] = useState(false);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotMessage, setSnapshotMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [receiptLedger, receiptInitError, initialReceipts] = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return [null, 'The local receipt ledger is only available in the browser.', []] as const;
+    }
+    try {
+      const ledger = createReceiptLedger({
+        storage: {
+          read: () => window.localStorage.getItem(RECEIPT_STORAGE_KEY),
+          write: (serialized) => window.localStorage.setItem(RECEIPT_STORAGE_KEY, serialized),
+        },
+        idSource: () => {
+          const randomUUID = window.crypto?.randomUUID;
+          if (typeof randomUUID !== 'function') throw new Error('This browser does not provide crypto.randomUUID for receipt IDs.');
+          return randomUUID.call(window.crypto);
+        },
+      });
+      const listed = ledger.list({ limit: 8, newest_first: true });
+      return [ledger, listed.ok ? null : receiptListError(listed), listed.ok ? listed.receipts : []] as const;
+    } catch (error) {
+      return [null, `Receipt ledger unavailable: ${errorMessage(error)}`, []] as const;
+    }
+  }, []);
+  const [receipts, setReceipts] = useState<readonly Receipt[]>(initialReceipts);
+  const [receiptError, setReceiptError] = useState<string | null>(receiptInitError);
+  const [receiptRecorder] = useState(() => {
+    if (!receiptLedger) return null;
+    return createFogwoodReceiptRecorder({
+      ledger: receiptLedger,
+      on_recorded: () => {
+        const listed = receiptLedger.list({ limit: 8, newest_first: true });
+        if (listed.ok) {
+          setReceipts(listed.receipts);
+          setReceiptError(null);
+        } else {
+          setReceiptError(`Receipt ledger could not refresh: ${receiptListError(listed)}`);
+        }
+      },
+    });
+  });
   const registrationCleanup = useRef<(() => void) | null>(null);
   const proposalController = useRef<SurfaceToolController | null>(null);
+  const bazaarToggleRef = useRef<HTMLButtonElement | null>(null);
 
   const hasContent = shapeCount > 0;
 
@@ -112,10 +191,40 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       setProposal,
       (controller) => {
         proposalController.current = controller;
+        setControllerReady(true);
         setProposal(controller.getState());
       },
+      (event: ProposalLifecycleEvent) => {
+        if (!receiptRecorder) {
+          const detail = receiptInitError ?? 'The local receipt ledger is not available.';
+          setReceiptError(detail);
+          setActivity((current) => [
+            ...current.slice(-24),
+            { kind: 'system', title: 'Receipt was not recorded', detail, id: activityId() },
+          ]);
+          return;
+        }
+        try {
+          const recorded = receiptRecorder.recordProposalLifecycle(event);
+          if (!recorded.ok) {
+            const detail = `${recorded.status}: ${recorded.error.message.slice(0, 200)}`;
+            setReceiptError(detail);
+            setActivity((current) => [
+              ...current.slice(-24),
+              { kind: 'system', title: 'Receipt was not recorded', detail, id: activityId() },
+            ]);
+          }
+        } catch (error) {
+          const detail = `Receipt recording failed: ${errorMessage(error)}`;
+          setReceiptError(detail);
+          setActivity((current) => [
+            ...current.slice(-24),
+            { kind: 'system', title: 'Receipt was not recorded', detail, id: activityId() },
+          ]);
+        }
+      },
     );
-  }, []);
+  }, [receiptInitError, receiptRecorder]);
 
   const connectionStatus = useMemo(() => {
     if (!connection.checked) {
@@ -186,6 +295,82 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     }
   }
 
+  function stageBazaarRecipe(recipeId: string) {
+    if (!recipeId) {
+      addActivity({ kind: 'system', title: 'Package has no recipe identity', detail: 'The exact local package could not be staged.' });
+      return;
+    }
+    if (!proposalController.current) {
+      addActivity({ kind: 'system', title: 'Recipe is not ready to stage', detail: 'The page controller is still connecting.' });
+      return;
+    }
+    const result = proposalController.current.stageRecipe(recipeId);
+    if (result.status === 'ERROR') {
+      addActivity({ kind: 'system', title: 'Recipe could not be staged', detail: result.message });
+      return;
+    }
+    setBazaarOpen(false);
+    window.requestAnimationFrame(() => bazaarToggleRef.current?.focus());
+  }
+
+  function closeBazaar() {
+    setBazaarOpen(false);
+    window.requestAnimationFrame(() => bazaarToggleRef.current?.focus());
+  }
+
+  async function exportSnapshot() {
+    if (!editor || !hasContent || snapshotBusy) return;
+    setSnapshotBusy(true);
+    setSnapshotMessage(null);
+    try {
+      const sourceRevision = currentRevision(editor);
+      const snapshot = await createFogwoodSnapshot(editor, sourceRevision, {
+        get_revision: () => currentRevision(editor),
+      });
+      if (!receiptRecorder) {
+        const detail = receiptInitError ?? 'The local receipt ledger is not available.';
+        setReceiptError(detail);
+        setSnapshotMessage({ kind: 'error', text: `Snapshot was not exported: ${detail}` });
+        addActivity({ kind: 'system', title: 'Snapshot was not exported', detail });
+        return;
+      }
+      const recorded = receiptRecorder.recordSnapshot({
+        source_revision: snapshot.source_revision,
+        artifact: snapshot.artifact,
+      });
+      if (!recorded.ok) {
+        const detail = `${recorded.status}: ${recorded.error.message.slice(0, 200)}`;
+        setReceiptError(detail);
+        setSnapshotMessage({ kind: 'error', text: `Snapshot receipt was not recorded; no download started. ${detail}` });
+        addActivity({ kind: 'system', title: 'Snapshot receipt was not recorded', detail });
+        return;
+      }
+      const latestRevision = currentRevision(editor);
+      if (latestRevision !== snapshot.source_revision) {
+        const detail = `The page changed after the snapshot receipt was recorded (source ${snapshot.source_revision}; current ${latestRevision}). The receipt was retained locally; no download started.`;
+        setSnapshotMessage({ kind: 'error', text: `Snapshot became stale; receipt retained and no download started. ${detail}` });
+        addActivity({ kind: 'system', title: 'Snapshot became stale before download', detail: 'The export receipt was retained locally; no file was downloaded.' });
+        return;
+      }
+      try {
+        downloadFogwoodSnapshot(snapshot);
+        setSnapshotMessage({ kind: 'success', text: `Local SVG exported · ${snapshot.file_name}` });
+        addActivity({ kind: 'action', title: 'Exported a local SVG snapshot', detail: `${snapshot.shape_count} items · ${snapshot.artifact.hash}` });
+      } catch (error) {
+        const detail = errorMessage(error);
+        setSnapshotMessage({ kind: 'error', text: `Snapshot receipt retained, but download failed: ${detail}` });
+        addActivity({ kind: 'system', title: 'Snapshot download failed', detail: 'The export receipt was retained locally.' });
+      }
+    } catch (error) {
+      const code = error instanceof SnapshotExportError ? ` [${error.code}]` : '';
+      const detail = `${errorMessage(error)}${code}`;
+      setSnapshotMessage({ kind: 'error', text: `Snapshot was not exported: ${detail}` });
+      addActivity({ kind: 'system', title: 'Snapshot was not exported', detail });
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
   function applyProposal() {
     const result = proposalController.current?.apply();
     if (result?.status === 'APPLIED') {
@@ -226,7 +411,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         <Tldraw
           shapeUtils={shapeUtils}
           licenseKey={licenseKey}
-          persistenceKey="open-surface-local"
+          persistenceKey={FOGWOOD_PERSISTENCE_KEY}
           onMount={mountEditor}
         />
 
@@ -249,6 +434,43 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           {chatOpen ? 'Hide chat' : 'ChatGPT'}
         </button>
 
+        <div className="canvas-actions" aria-label="Fogwood page actions">
+          <button
+            type="button"
+            className="bazaar-toggle"
+            ref={bazaarToggleRef}
+            aria-expanded={bazaarOpen}
+            aria-controls="fogwood-bazaar-panel"
+            onClick={() => setBazaarOpen((open) => !open)}
+          >
+            <span aria-hidden="true">✦</span>
+            {bazaarOpen ? 'Hide Bazaar' : 'Bazaar'}
+          </button>
+          <button
+            type="button"
+            className="snapshot-toggle"
+            disabled={!editor || !hasContent || snapshotBusy}
+            onClick={() => void exportSnapshot()}
+            title={hasContent ? 'Create, receipt, and download a local SVG snapshot' : 'Add content before exporting a snapshot'}
+          >
+            <span aria-hidden="true">↧</span>
+            {snapshotBusy ? 'Preparing…' : 'Export SVG'}
+          </button>
+        </div>
+
+        {snapshotMessage && (
+          <p className={`surface-export-status is-${snapshotMessage.kind}`} role={snapshotMessage.kind === 'error' ? 'alert' : 'status'} aria-live="polite">
+            {snapshotMessage.text}
+          </p>
+        )}
+
+        <BazaarPanel
+          open={bazaarOpen}
+          canStage={controllerReady}
+          onClose={closeBazaar}
+          onStage={(recipeId) => stageBazaarRecipe(recipeId)}
+        />
+
         {!hasContent && (
           <section className="empty-invitation" aria-labelledby="empty-title">
             <p className="eyebrow">One canvas for people + agents</p>
@@ -266,6 +488,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               </button>
               <button type="button" onClick={() => makeRecipe('static-architecture-map')} disabled={!editor}>
                 Architecture map
+              </button>
+              <button type="button" onClick={() => makeRecipe('compare-and-decide')} disabled={!editor}>
+                Compare &amp; Decide
               </button>
             </div>
             <p className="empty-footnote">Or leave it completely blank. That is the point.</p>
@@ -294,6 +519,29 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           <span>Shared artifact</span>
           <strong>{shapeCount === 0 ? 'Blank surface' : `${shapeCount} canvas items`}</strong>
         </div>
+
+        <section className="receipt-summary" aria-label="Recent local Fogwood receipts">
+          <div className="receipt-summary-header">
+            <div>
+              <span>Evidence ledger</span>
+              <strong>Recent receipts</strong>
+            </div>
+            <span>{receiptLedger ? `${receipts.length} shown` : 'Unavailable'}</span>
+          </div>
+          {receiptError && <p className="receipt-error" role="alert">{receiptError}</p>}
+          {receipts.length > 0 ? (
+            <ol className="receipt-list">
+              {receipts.slice(0, 4).map((receipt) => (
+                <li key={receipt.receipt_id}>
+                  <span><strong>#{receipt.sequence}</strong> {receiptLabel(receipt.event)}</span>
+                  <code>{receipt.receipt_id}</code>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="receipt-empty">Staging, Apply, Reject, and SVG export leave device-local evidence here.</p>
+          )}
+        </section>
 
         <div className="proposal-slot">
           {proposal && (

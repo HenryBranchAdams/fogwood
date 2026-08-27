@@ -1,0 +1,27 @@
+{
+  "id": "compare-decision-example",
+  "title": "Alpha versus Beta product choice",
+  "input": {
+    "alternatives": [
+      { "name": "Alpha", "notes": "Higher local cost score, lower impact score" },
+      { "name": "Beta", "notes": "Lower local cost score, higher impact score" }
+    ],
+    "criteria": ["cost", "impact"],
+    "weights": { "cost": 0.4, "impact": 0.6 },
+    "scores": {
+      "alpha": { "cost": 95, "impact": 60 },
+      "beta": { "cost": 75, "impact": 80 }
+    }
+  },
+  "expected": {
+    "artifact": "compare-decision",
+    "review_required": true,
+    "scorecard": {
+      "alpha_score": 74,
+      "beta_score": 78,
+      "recommendation": "Beta",
+      "chart": [{ "label": "Alpha", "value": 74 }, { "label": "Beta", "value": 78 }]
+    }
+  },
+  "notes": "The scorecard makes a tradeoff explicit; it does not decide for the person."
+}

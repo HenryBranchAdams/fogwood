@@ -1,0 +1,7 @@
+{
+  "id": "compare-malformed",
+  "kind": "malformed",
+  "description": "A comparison missing bounded weights and scores is rejected by the input boundary.",
+  "input": { "alternatives": [{ "name": "Alpha" }, { "name": "Beta" }], "criteria": ["cost", "impact"] },
+  "expected": { "error": "INVALID_INPUT" }
+}

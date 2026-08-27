@@ -1,0 +1,86 @@
+{
+  "id": "static-architecture-map",
+  "version": 1,
+  "title": "Static architecture map",
+  "purpose": "Explain the Fogwood people-agent-page-local-store boundary without external effects.",
+  "status": "immutable",
+  "bounds": { "x": 0, "y": 0, "w": 1320, "h": 760 },
+  "semantic": "people-agent-page-local-store-apply-reject-boundary",
+  "provenance": { "source": "fogwood", "recipe_id": "static-architecture-map", "recipe_version": 1 },
+  "expected_count": 11,
+  "operations": [
+    {
+      "type": "add_blocks",
+      "coordinate_space": "page",
+      "blocks": [
+        {
+          "kind": "heading",
+          "tone": "paper",
+          "x": 0,
+          "y": 0,
+          "w": 1240,
+          "h": 120,
+          "value": "Fogwood architecture",
+          "title": "People + agent, one page-local store",
+          "body": "The page owns state and the person owns the Apply or Reject decision."
+        },
+        {
+          "kind": "panel",
+          "tone": "blue",
+          "x": 0,
+          "y": 175,
+          "w": 300,
+          "h": 210,
+          "value": "Person",
+          "title": "Human authority",
+          "body": "Inspect the proposal, then choose Apply or Reject."
+        },
+        {
+          "kind": "panel",
+          "tone": "green",
+          "x": 360,
+          "y": 175,
+          "w": 300,
+          "h": 210,
+          "value": "Agent",
+          "title": "Bounded proposer",
+          "body": "Search capabilities and stage a typed proposal with a base revision."
+        },
+        {
+          "kind": "panel",
+          "tone": "yellow",
+          "x": 720,
+          "y": 175,
+          "w": 300,
+          "h": 210,
+          "value": "Page",
+          "title": "Fogwood page",
+          "body": "Checks the revision, shows the diff, and applies one transaction."
+        },
+        {
+          "kind": "panel",
+          "tone": "paper",
+          "x": 1080,
+          "y": 175,
+          "w": 240,
+          "h": 210,
+          "value": "Store",
+          "title": "Local only",
+          "body": "The device-local tldraw store persists the editable artifact."
+        }
+      ]
+    },
+    {
+      "type": "add_shapes",
+      "coordinate_space": "page",
+      "shapes": [
+        { "kind": "arrow", "x": 300, "y": 280, "end_x": 360, "end_y": 280, "text": "request" },
+        { "kind": "arrow", "x": 660, "y": 280, "end_x": 720, "end_y": 280, "text": "proposal" },
+        { "kind": "arrow", "x": 1020, "y": 280, "end_x": 1080, "end_y": 280, "text": "persist / load" },
+        { "kind": "note", "x": 0, "y": 480, "w": 360, "h": 180, "text": "No code execution, network fetch, raw store writes, or automatic Apply." },
+        { "kind": "note", "x": 400, "y": 480, "w": 400, "h": 180, "text": "Apply agent proposal is a single undoable transaction labelled Apply agent proposal." },
+        { "kind": "note", "x": 840, "y": 480, "w": 480, "h": 180, "text": "Page-owned Apply and Reject keep the human in control. Reject changes no canvas content." }
+      ]
+    }
+  ]
+}

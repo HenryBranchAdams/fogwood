@@ -1,0 +1,12 @@
+{
+  "id": "compare-rejection-example",
+  "title": "Reject a non-fit comparison",
+  "input": {
+    "alternatives": [{ "name": "Alpha" }, { "name": "Beta" }],
+    "criteria": ["unknown", "unbounded"],
+    "weights": { "cost": 0.5, "impact": 0.5 },
+    "scores": { "alpha": { "cost": 50, "impact": 50 }, "beta": { "cost": 50, "impact": 50 } }
+  },
+  "expected": { "error": "CRITERION_UNEXPLAINED", "outcome": "reject" },
+  "notes": "Reject when a score cannot be traced to the bounded cost and impact inputs."
+}

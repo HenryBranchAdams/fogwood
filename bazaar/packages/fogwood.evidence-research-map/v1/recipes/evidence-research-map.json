@@ -1,0 +1,103 @@
+{
+  "id": "evidence-research-map",
+  "version": 1,
+  "title": "Evidence research map",
+  "purpose": "Organize sources, claims, open questions, and a compact evidence ledger.",
+  "status": "immutable",
+  "bounds": { "x": 0, "y": 0, "w": 1240, "h": 760 },
+  "semantic": "sources-claims-open-questions-evidence-ledger",
+  "provenance": { "source": "fogwood", "recipe_id": "evidence-research-map", "recipe_version": 1 },
+  "expected_count": 9,
+  "operations": [
+    {
+      "type": "add_blocks",
+      "coordinate_space": "page",
+      "blocks": [
+        {
+          "kind": "heading",
+          "tone": "paper",
+          "x": 0,
+          "y": 0,
+          "w": 1160,
+          "h": 120,
+          "value": "Research workspace",
+          "title": "Evidence research map",
+          "body": "Keep sources, claims, and uncertainty visible together."
+        },
+        {
+          "kind": "panel",
+          "tone": "blue",
+          "x": 0,
+          "y": 150,
+          "w": 360,
+          "h": 190,
+          "value": "Sources",
+          "title": "What are we reading?",
+          "body": "Capture source names, dates, and the exact passage that matters."
+        },
+        {
+          "kind": "panel",
+          "tone": "green",
+          "x": 390,
+          "y": 150,
+          "w": 360,
+          "h": 190,
+          "value": "Claims",
+          "title": "What do we believe?",
+          "body": "Write claims narrowly enough that a source can support or weaken them."
+        },
+        {
+          "kind": "panel",
+          "tone": "yellow",
+          "x": 780,
+          "y": 150,
+          "w": 360,
+          "h": 190,
+          "value": "Open questions",
+          "title": "What remains unresolved?",
+          "body": "Name the missing evidence and the next question worth asking."
+        },
+        {
+          "kind": "checklist",
+          "tone": "paper",
+          "x": 0,
+          "y": 375,
+          "w": 410,
+          "h": 300,
+          "title": "Evidence ledger",
+          "body": "Review each claim before treating it as decision-ready.",
+          "items": [
+            { "label": "Source provenance captured", "checked": true },
+            { "label": "Claim wording is specific" },
+            { "label": "Counterevidence recorded" },
+            { "label": "Open question has an owner" }
+          ]
+        },
+        {
+          "kind": "table",
+          "tone": "paper",
+          "x": 445,
+          "y": 375,
+          "w": 695,
+          "h": 300,
+          "title": "Claim ledger",
+          "columns": ["Claim", "Source", "Confidence"],
+          "rows": [
+            ["Write the smallest defensible claim", "Source A", "Open"],
+            ["Record what would change our mind", "Source B", "Review"],
+            ["Separate observation from inference", "Source C", "Open"]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "add_shapes",
+      "coordinate_space": "page",
+      "shapes": [
+        { "kind": "arrow", "x": 360, "y": 245, "end_x": 390, "end_y": 245, "text": "sources -> claims" },
+        { "kind": "arrow", "x": 570, "y": 340, "end_x": 570, "end_y": 375, "text": "claims -> ledger" },
+        { "kind": "arrow", "x": 410, "y": 525, "end_x": 780, "end_y": 245, "text": "ledger -> open questions" }
+      ]
+    }
+  ]
+}

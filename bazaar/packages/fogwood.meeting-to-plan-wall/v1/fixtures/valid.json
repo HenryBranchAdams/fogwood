@@ -1,0 +1,7 @@
+{
+  "id": "meeting-valid",
+  "kind": "valid",
+  "description": "A bounded meeting title with two local attendee labels.",
+  "input": { "meeting_title": "Launch review", "attendees": ["Person A", "Person B"] },
+  "expected": { "artifact": "meeting-plan-wall", "review_required": true }
+}

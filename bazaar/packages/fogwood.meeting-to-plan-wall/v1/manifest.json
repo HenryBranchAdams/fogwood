@@ -1,0 +1,70 @@
+{
+  "id": "fogwood.meeting-to-plan-wall",
+  "version": 1,
+  "kind": "recipe",
+  "content_hash": "sha256:6f931f0112a0f6a8389237c1fe47cf4c029520471ea6cf8789e4a96917302492",
+  "title": "Meeting Wall",
+  "summary": "Turn meeting notes into decisions, risks, actions, and clear owners.",
+  "use_when": "Use when local meeting context needs a visible path from notes to owned next actions.",
+  "not_for": "Not for recording a meeting automatically, assigning people, or sending follow-up messages.",
+  "keywords": ["meeting", "notes", "decisions", "risks", "actions", "owners", "plan", "wall"],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "meeting_title": { "type": "string", "minLength": 1, "maxLength": 240 },
+      "attendees": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 120 } }
+    },
+    "required": []
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "artifact": { "type": "string", "enum": ["meeting-plan-wall"] },
+      "review_required": { "type": "boolean" }
+    },
+    "required": ["artifact", "review_required"]
+  },
+  "ports": { "inputs": [], "outputs": [] },
+  "permissions": ["read-local", "stage-proposal"],
+  "locality": "local",
+  "network": { "mode": "none", "endpoints": [], "telemetry": false },
+  "limits": {
+    "max_bytes": 49152,
+    "max_instances": 8,
+    "max_bindings": 16,
+    "max_depth": 8,
+    "max_operations": 8,
+    "max_items": 48,
+    "max_output_bytes": 49152
+  },
+  "recipes": ["recipes/meeting-to-plan-wall.json"],
+  "skill": "SKILL.md",
+  "prompts": ["prompts/meeting.md", "prompts/review.md"],
+  "examples": ["examples/meeting-wall.json", "examples/rejection.json"],
+  "fixtures": [
+    "fixtures/valid.json",
+    "fixtures/malformed.json",
+    "fixtures/oversized.json",
+    "fixtures/loss.json"
+  ],
+  "sources": ["provenance/sources.json"],
+  "license": "provenance/license.json",
+  "notices": ["provenance/NOTICE.md"],
+  "qualification": {
+    "status": "fixture-tested",
+    "evidence": ["provenance/qualification.json"],
+    "reviewer": "Fogwood local catalog review",
+    "date": "2026-08-26",
+    "tested_boundary": "Data-only recipe compilation and bounded local proposal staging contract."
+  },
+  "compatibility": {
+    "protocol": "fogwood-agent-runtime",
+    "protocol_version": "1",
+    "registry_version": "1",
+    "renderer_ids": ["primitive.surface-block.v1", "primitive.native-shapes.v1"],
+    "behavior_ids": [],
+    "adapter_ids": []
+  }
+}

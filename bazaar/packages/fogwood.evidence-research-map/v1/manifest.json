@@ -1,0 +1,70 @@
+{
+  "id": "fogwood.evidence-research-map",
+  "version": 1,
+  "kind": "recipe",
+  "content_hash": "sha256:5143c5a4a3e942777f67a131be2e095a12215cad804a3dcf52b3d5123777f6af",
+  "title": "Evidence Map",
+  "summary": "Organize sources, claims, open questions, and a compact evidence ledger.",
+  "use_when": "Use when local research needs sources, claims, uncertainty, and review visible together.",
+  "not_for": "Not for automatic source retrieval, citation verification, or an unattended decision.",
+  "keywords": ["evidence", "research", "sources", "claims", "review", "ledger", "map"],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "topic": { "type": "string", "minLength": 1, "maxLength": 240 },
+      "sources": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 500 } }
+    },
+    "required": []
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "artifact": { "type": "string", "enum": ["evidence-map"] },
+      "review_required": { "type": "boolean" }
+    },
+    "required": ["artifact", "review_required"]
+  },
+  "ports": { "inputs": [], "outputs": [] },
+  "permissions": ["read-local", "stage-proposal"],
+  "locality": "local",
+  "network": { "mode": "none", "endpoints": [], "telemetry": false },
+  "limits": {
+    "max_bytes": 49152,
+    "max_instances": 8,
+    "max_bindings": 16,
+    "max_depth": 8,
+    "max_operations": 8,
+    "max_items": 48,
+    "max_output_bytes": 49152
+  },
+  "recipes": ["recipes/evidence-research-map.json"],
+  "skill": "SKILL.md",
+  "prompts": ["prompts/research.md", "prompts/review.md"],
+  "examples": ["examples/evidence-map.json", "examples/rejection.json"],
+  "fixtures": [
+    "fixtures/valid.json",
+    "fixtures/malformed.json",
+    "fixtures/oversized.json",
+    "fixtures/loss.json"
+  ],
+  "sources": ["provenance/sources.json"],
+  "license": "provenance/license.json",
+  "notices": ["provenance/NOTICE.md"],
+  "qualification": {
+    "status": "fixture-tested",
+    "evidence": ["provenance/qualification.json"],
+    "reviewer": "Fogwood local catalog review",
+    "date": "2026-08-26",
+    "tested_boundary": "Data-only recipe compilation and bounded local proposal staging contract."
+  },
+  "compatibility": {
+    "protocol": "fogwood-agent-runtime",
+    "protocol_version": "1",
+    "registry_version": "1",
+    "renderer_ids": ["primitive.surface-block.v1", "primitive.native-shapes.v1"],
+    "behavior_ids": [],
+    "adapter_ids": []
+  }
+}

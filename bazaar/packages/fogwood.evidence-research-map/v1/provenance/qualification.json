@@ -1,0 +1,7 @@
+{
+  "status": "fixture-tested",
+  "evidence_id": "evidence-map-fixtures-v1",
+  "tested_boundary": "Compiler schema, package hash, and local read/stage data boundary.",
+  "reviewer": "Fogwood local catalog review",
+  "date": "2026-08-26"
+}

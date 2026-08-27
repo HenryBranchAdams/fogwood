@@ -1,0 +1,7 @@
+{
+  "id": "evidence-rejection-example",
+  "title": "Reject an unsupported claim map",
+  "input": { "topic": "Unsupported claim", "sources": [] },
+  "expected": { "error": "REVIEW_REQUIRED", "outcome": "reject" },
+  "notes": "Reject when the map would imply support that the local sources do not provide."
+}

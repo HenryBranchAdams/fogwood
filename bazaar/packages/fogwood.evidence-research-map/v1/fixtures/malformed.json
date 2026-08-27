@@ -1,0 +1,7 @@
+{
+  "id": "evidence-malformed",
+  "kind": "malformed",
+  "description": "A request with an absent topic is rejected by the input boundary.",
+  "input": { "sources": ["Source A"] },
+  "expected": { "error": "INVALID_INPUT" }
+}

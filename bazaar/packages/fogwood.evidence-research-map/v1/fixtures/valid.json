@@ -1,0 +1,13 @@
+{
+  "id": "evidence-valid",
+  "kind": "valid",
+  "description": "A bounded evidence-map request with three local source labels.",
+  "input": {
+    "topic": "A small product decision",
+    "sources": ["Source A", "Source B", "Source C"]
+  },
+  "expected": {
+    "artifact": "evidence-map",
+    "review_required": true
+  }
+}

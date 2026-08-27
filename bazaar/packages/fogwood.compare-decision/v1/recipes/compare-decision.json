@@ -1,0 +1,786 @@
+{
+  "id": "compare-and-decide",
+  "version": 1,
+  "title": "Compare & Decide",
+  "purpose": "Compare Alpha and Beta with visible criteria, bounded weights, and a reviewable scorecard.",
+  "status": "immutable",
+  "bounds": {
+    "x": 0,
+    "y": 0,
+    "w": 1240,
+    "h": 820
+  },
+  "semantic": "alternatives-criteria-tradeoffs-scorecard-review",
+  "provenance": {
+    "source": "fogwood",
+    "recipe_id": "compare-and-decide",
+    "recipe_version": 1
+  },
+  "expected_count": 12,
+  "capability_refs": [
+    "instrument.compare-decision.v1",
+    "behavior.transform.diff.v1",
+    "behavior.formula.bounded.v1",
+    "primitive.surface-block.v1",
+    "primitive.native-shapes.v1"
+  ],
+  "instrument": {
+    "kind": "compare-and-decide",
+    "version": 1
+  },
+  "instrument_projection": {
+    "schema_version": 1,
+    "source": "fogwood.compare-decision",
+    "instances": [
+      {
+        "id": "compare:weight:cost",
+        "shape_id": "shape:compare-weight-cost-random",
+        "type": "slider",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "value",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "value",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "ref",
+                "path": "value"
+              }
+            }
+          ]
+        },
+        "input_values": {
+          "value": 0.4
+        }
+      },
+      {
+        "id": "compare:weight:impact",
+        "shape_id": "shape:compare-weight-impact-random",
+        "type": "slider",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "value",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "value",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "ref",
+                "path": "value"
+              }
+            }
+          ]
+        },
+        "input_values": {
+          "value": 0.6
+        }
+      },
+      {
+        "id": "compare:score-input:alpha-cost",
+        "shape_id": "shape:compare-alpha-cost-random",
+        "type": "slider",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "value",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "value",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "ref",
+                "path": "value"
+              }
+            }
+          ]
+        },
+        "input_values": {
+          "value": 95
+        }
+      },
+      {
+        "id": "compare:score-input:alpha-impact",
+        "shape_id": "shape:compare-alpha-impact-random",
+        "type": "slider",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "value",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "value",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "ref",
+                "path": "value"
+              }
+            }
+          ]
+        },
+        "input_values": {
+          "value": 60
+        }
+      },
+      {
+        "id": "compare:score-input:beta-cost",
+        "shape_id": "shape:compare-beta-cost-random",
+        "type": "slider",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "value",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "value",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "ref",
+                "path": "value"
+              }
+            }
+          ]
+        },
+        "input_values": {
+          "value": 75
+        }
+      },
+      {
+        "id": "compare:score-input:beta-impact",
+        "shape_id": "shape:compare-beta-impact-random",
+        "type": "slider",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "value",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "value",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "ref",
+                "path": "value"
+              }
+            }
+          ]
+        },
+        "input_values": {
+          "value": 80
+        }
+      },
+      {
+        "id": "compare:score:alpha",
+        "shape_id": "shape:compare-score-alpha-random",
+        "type": "weighted-score",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "cost_weight",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "impact_weight",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "cost_score",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "impact_score",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "weighted_score",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "binary",
+                "op": "div",
+                "left": {
+                  "type": "binary",
+                  "op": "add",
+                  "left": {
+                    "type": "binary",
+                    "op": "mul",
+                    "left": {
+                      "type": "ref",
+                      "path": "cost_weight"
+                    },
+                    "right": {
+                      "type": "ref",
+                      "path": "cost_score"
+                    }
+                  },
+                  "right": {
+                    "type": "binary",
+                    "op": "mul",
+                    "left": {
+                      "type": "ref",
+                      "path": "impact_weight"
+                    },
+                    "right": {
+                      "type": "ref",
+                      "path": "impact_score"
+                    }
+                  }
+                },
+                "right": {
+                  "type": "binary",
+                  "op": "add",
+                  "left": {
+                    "type": "ref",
+                    "path": "cost_weight"
+                  },
+                  "right": {
+                    "type": "ref",
+                    "path": "impact_weight"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "compare:score:beta",
+        "shape_id": "shape:compare-score-beta-random",
+        "type": "weighted-score",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "cost_weight",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "impact_weight",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "cost_score",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "impact_score",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "weighted_score",
+              "direction": "output",
+              "value_type": "number",
+              "formula": {
+                "type": "binary",
+                "op": "div",
+                "left": {
+                  "type": "binary",
+                  "op": "add",
+                  "left": {
+                    "type": "binary",
+                    "op": "mul",
+                    "left": {
+                      "type": "ref",
+                      "path": "cost_weight"
+                    },
+                    "right": {
+                      "type": "ref",
+                      "path": "cost_score"
+                    }
+                  },
+                  "right": {
+                    "type": "binary",
+                    "op": "mul",
+                    "left": {
+                      "type": "ref",
+                      "path": "impact_weight"
+                    },
+                    "right": {
+                      "type": "ref",
+                      "path": "impact_score"
+                    }
+                  }
+                },
+                "right": {
+                  "type": "binary",
+                  "op": "add",
+                  "left": {
+                    "type": "ref",
+                    "path": "cost_weight"
+                  },
+                  "right": {
+                    "type": "ref",
+                    "path": "impact_weight"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "compare:recommendation",
+        "shape_id": "shape:compare-recommendation-random",
+        "type": "recommendation",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "alpha_score",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "beta_score",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "recommended",
+              "direction": "output",
+              "value_type": "string",
+              "formula": {
+                "type": "conditional",
+                "condition": {
+                  "type": "binary",
+                  "op": "gte",
+                  "left": {
+                    "type": "ref",
+                    "path": "alpha_score"
+                  },
+                  "right": {
+                    "type": "ref",
+                    "path": "beta_score"
+                  }
+                },
+                "then": {
+                  "type": "literal",
+                  "value": "Alpha"
+                },
+                "else": {
+                  "type": "literal",
+                  "value": "Beta"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "compare:chart",
+        "shape_id": "shape:compare-chart-random",
+        "type": "chart",
+        "version": 1,
+        "ports": {
+          "inputs": [
+            {
+              "name": "alpha_score",
+              "direction": "input",
+              "value_type": "number"
+            },
+            {
+              "name": "beta_score",
+              "direction": "input",
+              "value_type": "number"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "scores",
+              "direction": "output",
+              "value_type": "chart",
+              "formula": {
+                "type": "chart",
+                "points": [
+                  {
+                    "label": "Alpha",
+                    "value": {
+                      "type": "ref",
+                      "path": "alpha_score"
+                    }
+                  },
+                  {
+                    "label": "Beta",
+                    "value": {
+                      "type": "ref",
+                      "path": "beta_score"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "id": "binding:alpha-cost-weight",
+        "source": {
+          "instance_id": "compare:weight:cost",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:alpha",
+          "port": "cost_weight"
+        }
+      },
+      {
+        "id": "binding:alpha-impact-weight",
+        "source": {
+          "instance_id": "compare:weight:impact",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:alpha",
+          "port": "impact_weight"
+        }
+      },
+      {
+        "id": "binding:alpha-cost-score",
+        "source": {
+          "instance_id": "compare:score-input:alpha-cost",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:alpha",
+          "port": "cost_score"
+        }
+      },
+      {
+        "id": "binding:alpha-impact-score",
+        "source": {
+          "instance_id": "compare:score-input:alpha-impact",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:alpha",
+          "port": "impact_score"
+        }
+      },
+      {
+        "id": "binding:beta-cost-weight",
+        "source": {
+          "instance_id": "compare:weight:cost",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:beta",
+          "port": "cost_weight"
+        }
+      },
+      {
+        "id": "binding:beta-impact-weight",
+        "source": {
+          "instance_id": "compare:weight:impact",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:beta",
+          "port": "impact_weight"
+        }
+      },
+      {
+        "id": "binding:beta-cost-score",
+        "source": {
+          "instance_id": "compare:score-input:beta-cost",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:beta",
+          "port": "cost_score"
+        }
+      },
+      {
+        "id": "binding:beta-impact-score",
+        "source": {
+          "instance_id": "compare:score-input:beta-impact",
+          "port": "value"
+        },
+        "target": {
+          "instance_id": "compare:score:beta",
+          "port": "impact_score"
+        }
+      },
+      {
+        "id": "binding:recommendation-alpha",
+        "source": {
+          "instance_id": "compare:score:alpha",
+          "port": "weighted_score"
+        },
+        "target": {
+          "instance_id": "compare:recommendation",
+          "port": "alpha_score"
+        }
+      },
+      {
+        "id": "binding:recommendation-beta",
+        "source": {
+          "instance_id": "compare:score:beta",
+          "port": "weighted_score"
+        },
+        "target": {
+          "instance_id": "compare:recommendation",
+          "port": "beta_score"
+        }
+      },
+      {
+        "id": "binding:chart-alpha",
+        "source": {
+          "instance_id": "compare:score:alpha",
+          "port": "weighted_score"
+        },
+        "target": {
+          "instance_id": "compare:chart",
+          "port": "alpha_score"
+        }
+      },
+      {
+        "id": "binding:chart-beta",
+        "source": {
+          "instance_id": "compare:score:beta",
+          "port": "weighted_score"
+        },
+        "target": {
+          "instance_id": "compare:chart",
+          "port": "beta_score"
+        }
+      }
+    ],
+    "expected": {
+      "status": "ok",
+      "alpha_score": 74,
+      "beta_score": 78,
+      "recommendation": "Beta",
+      "chart": [
+        {
+          "label": "Alpha",
+          "value": 74
+        },
+        {
+          "label": "Beta",
+          "value": 78
+        }
+      ]
+    }
+  },
+  "operations": [
+    {
+      "type": "add_blocks",
+      "coordinate_space": "page",
+      "blocks": [
+        {
+          "kind": "heading",
+          "tone": "paper",
+          "x": 0,
+          "y": 0,
+          "w": 1160,
+          "h": 120,
+          "value": "Decision workspace",
+          "title": "Compare & Decide",
+          "body": "Compare Alpha and Beta across cost and impact. Scores are bounded aids, not conclusions."
+        },
+        {
+          "kind": "panel",
+          "tone": "blue",
+          "x": 0,
+          "y": 150,
+          "w": 350,
+          "h": 190,
+          "value": "Criteria",
+          "title": "Make the tradeoffs explicit",
+          "body": "Cost and impact weights share one bounded scale. Record what would change your mind before deciding."
+        },
+        {
+          "kind": "slider",
+          "tone": "green",
+          "x": 390,
+          "y": 150,
+          "w": 260,
+          "h": 150,
+          "title": "Cost weight",
+          "body": "Bounded weight used for both options.",
+          "value": 0.4,
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        {
+          "kind": "slider",
+          "tone": "green",
+          "x": 680,
+          "y": 150,
+          "w": 260,
+          "h": 150,
+          "title": "Impact weight",
+          "body": "Bounded weight used for both options.",
+          "value": 0.6,
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        {
+          "kind": "slider",
+          "tone": "paper",
+          "x": 0,
+          "y": 380,
+          "w": 280,
+          "h": 150,
+          "title": "Alpha cost score",
+          "body": "Local bounded input from 0 to 100.",
+          "value": 95,
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "kind": "slider",
+          "tone": "paper",
+          "x": 300,
+          "y": 380,
+          "w": 280,
+          "h": 150,
+          "title": "Alpha impact score",
+          "body": "Local bounded input from 0 to 100.",
+          "value": 60,
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "kind": "slider",
+          "tone": "paper",
+          "x": 600,
+          "y": 380,
+          "w": 280,
+          "h": 150,
+          "title": "Beta cost score",
+          "body": "Local bounded input from 0 to 100.",
+          "value": 75,
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "kind": "slider",
+          "tone": "paper",
+          "x": 900,
+          "y": 380,
+          "w": 280,
+          "h": 150,
+          "title": "Beta impact score",
+          "body": "Local bounded input from 0 to 100.",
+          "value": 80,
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "kind": "metric",
+          "tone": "accent",
+          "x": 0,
+          "y": 600,
+          "w": 280,
+          "h": 160,
+          "title": "Alpha weighted score",
+          "body": "Deterministic derived aid.",
+          "value": "74.00"
+        },
+        {
+          "kind": "metric",
+          "tone": "accent",
+          "x": 300,
+          "y": 600,
+          "w": 280,
+          "h": 160,
+          "title": "Beta weighted score",
+          "body": "Deterministic derived aid.",
+          "value": "78.00"
+        },
+        {
+          "kind": "metric",
+          "tone": "yellow",
+          "x": 600,
+          "y": 600,
+          "w": 280,
+          "h": 160,
+          "title": "Recommendation",
+          "body": "Review the inputs before deciding.",
+          "value": "Beta"
+        },
+        {
+          "kind": "chart",
+          "tone": "paper",
+          "x": 900,
+          "y": 600,
+          "w": 280,
+          "h": 180,
+          "title": "Weighted scores",
+          "body": "Alpha vs Beta, recomputed locally.",
+          "series": [
+            {
+              "label": "Alpha",
+              "value": 74
+            },
+            {
+              "label": "Beta",
+              "value": 78
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

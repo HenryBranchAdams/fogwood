@@ -1,0 +1,7 @@
+{
+  "id": "meeting-loss",
+  "kind": "loss",
+  "description": "An action without an owner is preserved as a visible review warning.",
+  "input": { "meeting_title": "Launch review", "action": "Draft the decision brief" },
+  "expected": { "warning": "OWNER_UNASSIGNED", "review_required": true }
+}

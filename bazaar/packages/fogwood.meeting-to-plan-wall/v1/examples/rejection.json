@@ -1,0 +1,7 @@
+{
+  "id": "meeting-rejection-example",
+  "title": "Reject an inferred action owner",
+  "input": { "meeting_title": "Launch review", "attendees": ["Person A"] },
+  "expected": { "error": "OWNER_UNCONFIRMED", "outcome": "reject" },
+  "notes": "Reject when the source material does not name the person who owns an action."
+}

@@ -1,0 +1,7 @@
+{
+  "id": "architecture-valid",
+  "kind": "valid",
+  "description": "A bounded audience and focus for an authority-boundary map.",
+  "input": { "audience": "A team reviewer", "focus": "Page-owned Apply or Reject" },
+  "expected": { "artifact": "architecture-map", "review_required": true }
+}

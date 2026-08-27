@@ -1,0 +1,7 @@
+{
+  "id": "architecture-oversized",
+  "kind": "oversized",
+  "description": "An audience label beyond the package text bound is rejected atomically.",
+  "input": { "audience_length": 241 },
+  "expected": { "error": "LIMIT_EXCEEDED" }
+}

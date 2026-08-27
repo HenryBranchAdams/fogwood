@@ -45,6 +45,7 @@ test('immutable recipes are versioned and their expected counts match their oper
     'evidence-research-map',
     'meeting-to-plan-wall',
     'static-architecture-map',
+    'compare-and-decide',
   ]);
   for (const recipe of RECIPE_REGISTRY) {
     const expandedCount = recipe.operations.reduce((count, operation) => count + (operation.blocks?.length ?? operation.shapes?.length ?? 0), 0);
@@ -56,6 +57,15 @@ test('immutable recipes are versioned and their expected counts match their oper
   }
   assert.equal(RECIPE_REGISTRY.find((recipe) => recipe.id === 'evidence-research-map').operations.some((operation) => operation.shapes?.some((shape) => shape.kind === 'arrow')), true);
   assert.equal(RECIPE_REGISTRY.find((recipe) => recipe.id === 'meeting-to-plan-wall').operations.some((operation) => operation.shapes?.some((shape) => shape.kind === 'arrow')), true);
+  const compare = RECIPE_REGISTRY.find((recipe) => recipe.id === 'compare-and-decide');
+  assert.deepEqual(compare.instrument, { kind: 'compare-and-decide', version: 1 });
+  const compareBlocks = compare.operations.flatMap((operation) => operation.blocks ?? []);
+  assert.equal(compareBlocks.filter((block) => block.kind === 'slider').length, 6);
+  assert.equal(compareBlocks.filter((block) => block.kind === 'metric').length, 3);
+  assert.equal(compareBlocks.filter((block) => block.kind === 'chart').length, 1);
+  assert.equal(compareBlocks.find((block) => block.title === 'Alpha weighted score').value, '74.00');
+  assert.equal(compareBlocks.find((block) => block.title === 'Beta weighted score').value, '78.00');
+  assert.equal(compareBlocks.find((block) => block.title === 'Recommendation').value, 'Beta');
   const invalid = validateProposal({
     base_revision: emptyContext.current_revision,
     summary: 'Unknown recipe',
@@ -206,6 +216,13 @@ test('proposal schema exposes all strict action variants and bounded nested valu
   assert.equal(blockSchema.properties.rows.items.items.type, 'string');
   assert.deepEqual(CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-propose').input_schema, PROPOSAL_INPUT_SCHEMA);
   assert.equal(CAPABILITY_REGISTRY.find((entry) => entry.id === 'primitive.surface-block').input_schema.type, 'string');
+  const injectedInstrument = validateProposal({
+    base_revision: emptyContext.current_revision,
+    summary: 'Inject instrument',
+    actions: [{ type: 'add_blocks', blocks: [{ kind: 'slider', instrument: { formulas: { value: 'nope' } } }] }],
+  }, emptyContext);
+  assert.equal(injectedInstrument.ok, false);
+  assert.equal(injectedInstrument.errors.some((error) => error.code === 'UNKNOWN_FIELD'), true);
 });
 
 test('structured diff includes bounded before/after changes and collateral descriptors', () => {

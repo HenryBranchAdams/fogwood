@@ -1,0 +1,13 @@
+{
+  "id": "evidence-map-example",
+  "title": "Three-source review",
+  "input": {
+    "topic": "A small product decision",
+    "sources": ["Source A", "Source B", "Source C"]
+  },
+  "expected": {
+    "artifact": "evidence-map",
+    "review_required": true
+  },
+  "notes": "The map provides structure; it does not establish source truth."
+}

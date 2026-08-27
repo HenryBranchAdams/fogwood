@@ -1,0 +1,13 @@
+{
+  "id": "meeting-wall-example",
+  "title": "Launch review",
+  "input": {
+    "meeting_title": "Launch review",
+    "attendees": ["Person A", "Person B"]
+  },
+  "expected": {
+    "artifact": "meeting-plan-wall",
+    "review_required": true
+  },
+  "notes": "The wall makes missing owners visible rather than guessing them."
+}

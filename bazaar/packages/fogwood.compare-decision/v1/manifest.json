@@ -1,0 +1,145 @@
+{
+  "id": "fogwood.compare-decision",
+  "version": 1,
+  "kind": "recipe",
+  "content_hash": "sha256:60225ee7de4b53151218f604c6d8c8dccd78a9bb6c28872ea702fc973f54ec7d",
+  "title": "Compare & Decide",
+  "summary": "Compare Alpha and Beta with typed criteria, bounded scores, and a reviewable scorecard.",
+  "use_when": "Use when a person needs a local Alpha-versus-Beta comparison with visible weights and reviewable derived scores.",
+  "not_for": "Not for making an unattended decision, importing remote data, or treating a score as truth.",
+  "keywords": ["compare", "decide", "criteria", "scenario", "scorecard", "tradeoffs", "review"],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "alternatives": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "notes": { "type": "string", "maxLength": 500 }
+          },
+          "required": ["name"]
+        }
+      },
+      "criteria": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "string", "maxLength": 120 } },
+      "weights": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cost": { "type": "number", "minimum": 0, "maximum": 1 },
+          "impact": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["cost", "impact"]
+      },
+      "scores": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "alpha": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "cost": { "type": "number", "minimum": 0, "maximum": 100 },
+              "impact": { "type": "number", "minimum": 0, "maximum": 100 }
+            },
+            "required": ["cost", "impact"]
+          },
+          "beta": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "cost": { "type": "number", "minimum": 0, "maximum": 100 },
+              "impact": { "type": "number", "minimum": 0, "maximum": 100 }
+            },
+            "required": ["cost", "impact"]
+          }
+        },
+        "required": ["alpha", "beta"]
+      }
+    },
+    "required": ["alternatives", "criteria", "weights", "scores"]
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "artifact": { "type": "string", "enum": ["compare-decision"] },
+      "review_required": { "type": "boolean" },
+      "scorecard": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "alpha_score": { "type": "number", "minimum": 0, "maximum": 100 },
+          "beta_score": { "type": "number", "minimum": 0, "maximum": 100 },
+          "recommendation": { "type": "string", "enum": ["Alpha", "Beta"] },
+          "chart": { "type": "array", "minItems": 2, "maxItems": 2 }
+        },
+        "required": ["alpha_score", "beta_score", "recommendation", "chart"]
+      }
+    },
+    "required": ["artifact", "review_required", "scorecard"]
+  },
+  "renderer_id": "instrument.compare-decision.v1",
+  "behavior_ids": ["behavior.transform.diff.v1", "behavior.formula.bounded.v1"],
+  "ports": {
+    "inputs": [
+      { "name": "weights.cost", "type": "number", "required": true, "description": "Bounded cost weight shared by Alpha and Beta." },
+      { "name": "weights.impact", "type": "number", "required": true, "description": "Bounded impact weight shared by Alpha and Beta." },
+      { "name": "scores.alpha.cost", "type": "number", "required": true, "description": "Bounded Alpha cost score." },
+      { "name": "scores.alpha.impact", "type": "number", "required": true, "description": "Bounded Alpha impact score." },
+      { "name": "scores.beta.cost", "type": "number", "required": true, "description": "Bounded Beta cost score." },
+      { "name": "scores.beta.impact", "type": "number", "required": true, "description": "Bounded Beta impact score." }
+    ],
+    "outputs": [
+      { "name": "scorecard.alpha", "type": "number", "required": true, "description": "Bounded Alpha weighted score." },
+      { "name": "scorecard.beta", "type": "number", "required": true, "description": "Bounded Beta weighted score." },
+      { "name": "scorecard.recommendation", "type": "string", "required": true, "description": "Reviewable recommendation aid." },
+      { "name": "scorecard.chart", "type": "object", "required": true, "description": "Bounded Alpha and Beta chart data." }
+    ]
+  },
+  "permissions": ["read-local", "stage-proposal"],
+  "locality": "local",
+  "network": { "mode": "none", "endpoints": [], "telemetry": false },
+  "limits": {
+    "max_bytes": 65536,
+    "max_instances": 10,
+    "max_bindings": 12,
+    "max_depth": 16,
+    "max_operations": 16,
+    "max_items": 64,
+    "max_output_bytes": 65536
+  },
+  "recipes": ["recipes/compare-decision.json"],
+  "skill": "SKILL.md",
+  "prompts": ["prompts/compare.md", "prompts/review.md"],
+  "examples": ["examples/compare-decision.json", "examples/rejection.json"],
+  "fixtures": [
+    "fixtures/valid.json",
+    "fixtures/malformed.json",
+    "fixtures/oversized.json",
+    "fixtures/loss.json"
+  ],
+  "sources": ["provenance/sources.json"],
+  "license": "provenance/license.json",
+  "notices": ["provenance/NOTICE.md"],
+  "qualification": {
+    "status": "fixture-tested",
+    "evidence": ["provenance/qualification.json"],
+    "reviewer": "Fogwood local catalog review",
+    "date": "2026-08-27",
+    "tested_boundary": "Local data-only preview includes the exact 12-block runtime composition, a bounded 10-instance typed fixture with 12 acyclic bindings, and the fixture-tested 74/78/Beta result after runtime integration; it does not qualify live host exposure or unattended decisions."
+  },
+  "compatibility": {
+    "protocol": "fogwood-agent-runtime",
+    "protocol_version": "1",
+    "registry_version": "1",
+    "renderer_ids": ["instrument.compare-decision.v1"],
+    "behavior_ids": ["behavior.transform.diff.v1", "behavior.formula.bounded.v1"],
+    "adapter_ids": []
+  }
+}

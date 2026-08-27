@@ -1,0 +1,7 @@
+{
+  "id": "evidence-oversized",
+  "kind": "oversized",
+  "description": "A source list beyond the package item bound is rejected atomically.",
+  "input": { "topic": "Bounded topic", "source_count": 21 },
+  "expected": { "error": "LIMIT_EXCEEDED" }
+}
