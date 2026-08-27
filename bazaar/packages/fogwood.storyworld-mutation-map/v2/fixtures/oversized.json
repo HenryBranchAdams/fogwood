@@ -1,0 +1,1 @@
+{ "id": "storyworld-oversized", "kind": "oversized", "description": "An oversized branch is rejected.", "input": { "items": "bounded-fixture" }, "expected": { "status": "rejected" } }

@@ -1,0 +1,1 @@
+{ "id": "evidence-constellation-oversized", "kind": "oversized", "description": "An oversized constellation is rejected.", "input": { "items": "bounded-fixture" }, "expected": { "status": "rejected" } }

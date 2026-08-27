@@ -1,0 +1,1 @@
+Begin by inspecting the live page. Keep the three primary source notes as observed evidence, and label any city-network comparison as analogy. Ask what should be moved, connected, questioned, or left open before staging a proposal.

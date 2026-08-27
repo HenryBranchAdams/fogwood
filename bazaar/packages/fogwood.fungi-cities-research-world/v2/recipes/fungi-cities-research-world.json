@@ -1,0 +1,112 @@
+{
+  "id": "fogwood.fungi-cities-research-world",
+  "version": 2,
+  "format": "composition.v2",
+  "title": "Fungi and cities research world",
+  "purpose": "Hold fungal observations, a clearly marked city analogy, questions, and a spacious image provocation as one editable world.",
+  "status": "immutable",
+  "bounds": { "x": 0, "y": 0, "w": 1640, "h": 1080 },
+  "semantic": "fungal-observation-city-analogy-open-research-world",
+  "provenance": { "source": "fogwood", "recipe_id": "fogwood.fungi-cities-research-world", "recipe_version": 2 },
+  "expected_count": 22,
+  "regions": [
+    { "id": "region:fungal", "label": "Fungal cluster · observed", "x": 40, "y": 100, "w": 650, "h": 500 },
+    { "id": "region:urban", "label": "Urban cluster · analogy", "x": 900, "y": 80, "w": 650, "h": 520 },
+    { "id": "region:bridge", "label": "Bridge · keep the distinction visible", "x": 540, "y": 650, "w": 940, "h": 320 },
+    { "id": "region:open", "label": "Open space · next question", "x": 40, "y": 690, "w": 420, "h": 280 }
+  ],
+  "materials": [
+    { "id": "material:fungi-root", "kind": "native", "item_id": "item:fungi-root", "role": "observed-source", "semantic_id": "fungi:root" },
+    { "id": "material:fungi-network", "kind": "native", "item_id": "item:fungi-network", "role": "observed-structure", "semantic_id": "fungi:network" },
+    { "id": "material:fungi-spore", "kind": "native", "item_id": "item:fungi-spore", "role": "observed-detail", "semantic_id": "fungi:spore" },
+    { "id": "material:fungi-quote", "kind": "native", "item_id": "item:fungi-quote", "role": "quotation", "semantic_id": "fungi:quote" },
+    { "id": "material:city-street", "kind": "native", "item_id": "item:city-street", "role": "analogy-anchor", "semantic_id": "city:street" },
+    { "id": "material:city-mesh", "kind": "native", "item_id": "item:city-mesh", "role": "analogy-network", "semantic_id": "city:mesh" },
+    { "id": "material:city-question", "kind": "native", "item_id": "item:city-question", "role": "analogy-question", "semantic_id": "city:question" },
+    { "id": "material:city-timeline", "kind": "native", "item_id": "item:city-timeline", "role": "speculative-timeline", "semantic_id": "city:timeline" },
+    { "id": "material:bridge-observed", "kind": "native", "item_id": "item:bridge-observed", "role": "boundary-note", "semantic_id": "bridge:observed" },
+    { "id": "material:bridge-analogy", "kind": "native", "item_id": "item:bridge-analogy", "role": "boundary-note", "semantic_id": "bridge:analogy" },
+    { "id": "material:bridge-speculation", "kind": "native", "item_id": "item:bridge-speculation", "role": "speculative-timeline", "semantic_id": "bridge:speculation" },
+    { "id": "material:image-portal", "kind": "native", "item_id": "item:image-portal", "role": "image-provocation", "semantic_id": "portal:image" }
+  ],
+  "items": [
+    { "id": "item:fungi-root", "semantic_id": "fungi:root", "kind": "ellipse", "role": "observed-source", "region_id": "region:fungal", "x": 90, "y": 190, "w": 220, "h": 150, "text": "Observed · host roots and fungal partners", "color": "green", "fill": "semi" },
+    { "id": "item:fungi-network", "semantic_id": "fungi:network", "kind": "cloud", "role": "observed-structure", "region_id": "region:fungal", "x": 360, "y": 120, "w": 260, "h": 190, "text": "Observed · branching exchange", "color": "violet", "fill": "semi" },
+    { "id": "item:fungi-spore", "semantic_id": "fungi:spore", "kind": "ellipse", "role": "observed-detail", "region_id": "region:fungal", "x": 250, "y": 410, "w": 150, "h": 110, "text": "Observed · spore / soil detail", "color": "orange", "fill": "solid" },
+    { "id": "item:fungi-quote", "semantic_id": "fungi:quote", "kind": "note", "role": "quotation", "region_id": "region:fungal", "x": 505, "y": 370, "w": 190, "h": 150, "text": "Quotation to verify\nKeep the passage attached to its source.", "color": "yellow", "fill": "solid" },
+    { "id": "item:city-street", "semantic_id": "city:street", "kind": "rectangle", "role": "analogy-anchor", "region_id": "region:urban", "x": 970, "y": 180, "w": 260, "h": 135, "text": "Analogy · streets as a comparison", "color": "blue", "fill": "semi" },
+    { "id": "item:city-mesh", "semantic_id": "city:mesh", "kind": "diamond", "role": "analogy-network", "region_id": "region:urban", "x": 1280, "y": 105, "w": 220, "h": 180, "text": "Analogy · civic mesh\nnot observed fungal evidence", "color": "blue", "fill": "semi" },
+    { "id": "item:city-question", "semantic_id": "city:question", "kind": "note", "role": "analogy-question", "region_id": "region:urban", "x": 1120, "y": 390, "w": 235, "h": 150, "text": "Question · where does the analogy break?", "color": "red", "fill": "solid" },
+    { "id": "item:city-timeline", "semantic_id": "city:timeline", "kind": "text", "role": "speculative-timeline", "region_id": "region:urban", "x": 1370, "y": 360, "w": 220, "h": 150, "text": "Speculative timeline\nnow → maybe → test", "color": "violet" },
+    { "id": "item:bridge-observed", "semantic_id": "bridge:observed", "kind": "rectangle", "role": "boundary-note", "region_id": "region:bridge", "x": 600, "y": 700, "w": 240, "h": 110, "text": "Observed\nwhat the sources actually say", "color": "green", "fill": "semi" },
+    { "id": "item:bridge-analogy", "semantic_id": "bridge:analogy", "kind": "cloud", "role": "boundary-note", "region_id": "region:bridge", "x": 940, "y": 680, "w": 260, "h": 145, "text": "Analogy\nuseful, not a finding", "color": "yellow", "fill": "semi" },
+    { "id": "item:bridge-speculation", "semantic_id": "bridge:speculation", "kind": "triangle", "role": "speculative-timeline", "region_id": "region:bridge", "x": 1290, "y": 760, "w": 180, "h": 150, "text": "Speculate\nthen name a test", "color": "violet", "fill": "semi" },
+    { "id": "item:image-portal", "semantic_id": "portal:image", "kind": "note", "role": "portal", "region_id": "region:open", "x": 95, "y": 740, "w": 310, "h": 155, "text": "Image portal / provocation\nIf a live image capability is actually available, bring bytes through add_materials for review. Never bundle or fake an image.", "color": "orange", "fill": "solid" }
+  ],
+  "edges": [
+    { "id": "edge:root-network", "kind": "supports", "source_semantic_id": "fungi:root", "target_semantic_id": "fungi:network", "label": "supports" },
+    { "id": "edge:network-spore", "kind": "depends_on", "source_semantic_id": "fungi:network", "target_semantic_id": "fungi:spore", "label": "depends on" },
+    { "id": "edge:quote-network", "kind": "echoes", "source_semantic_id": "fungi:quote", "target_semantic_id": "fungi:network", "label": "quotation echoes" },
+    { "id": "edge:street-mesh", "kind": "supports", "source_semantic_id": "city:street", "target_semantic_id": "city:mesh", "label": "analogy supports" },
+    { "id": "edge:mesh-question", "kind": "causes", "source_semantic_id": "city:mesh", "target_semantic_id": "city:question", "label": "opens question" },
+    { "id": "edge:observed-analogy", "kind": "contradicts", "source_semantic_id": "bridge:observed", "target_semantic_id": "bridge:analogy", "label": "keep separate" },
+    { "id": "edge:analogy-speculation", "kind": "depends_on", "source_semantic_id": "bridge:speculation", "target_semantic_id": "bridge:analogy", "label": "depends on analogy" },
+    { "id": "edge:network-observed", "kind": "supports", "source_semantic_id": "fungi:network", "target_semantic_id": "bridge:observed", "label": "source note" },
+    { "id": "edge:question-portal", "kind": "causes", "source_semantic_id": "city:question", "target_semantic_id": "portal:image", "label": "asks for a new view" },
+    { "id": "edge:timeline-speculation", "kind": "echoes", "source_semantic_id": "city:timeline", "target_semantic_id": "bridge:speculation", "label": "speculative path" }
+  ],
+  "placements": [
+    { "id": "place:fungi-root", "target_semantic_id": "fungi:root", "x": 90, "y": 190 },
+    { "id": "place:fungi-network", "target_semantic_id": "fungi:network", "x": 360, "y": 120 },
+    { "id": "place:fungi-spore", "target_semantic_id": "fungi:spore", "x": 250, "y": 410 },
+    { "id": "place:fungi-quote", "target_semantic_id": "fungi:quote", "x": 505, "y": 370 },
+    { "id": "place:city-street", "target_semantic_id": "city:street", "x": 970, "y": 180 },
+    { "id": "place:city-mesh", "target_semantic_id": "city:mesh", "x": 1280, "y": 105 },
+    { "id": "place:city-question", "target_semantic_id": "city:question", "x": 1120, "y": 390 },
+    { "id": "place:city-timeline", "target_semantic_id": "city:timeline", "x": 1370, "y": 360 },
+    { "id": "place:bridge-observed", "target_semantic_id": "bridge:observed", "x": 600, "y": 700 },
+    { "id": "place:bridge-analogy", "target_semantic_id": "bridge:analogy", "x": 940, "y": 680 },
+    { "id": "place:bridge-speculation", "target_semantic_id": "bridge:speculation", "x": 1290, "y": 760 },
+    { "id": "place:image-portal", "target_semantic_id": "portal:image", "x": 95, "y": 740 }
+  ],
+  "moves": [
+    { "id": "move:fungal-cluster", "kind": "cluster", "target_semantic_ids": ["fungi:root", "fungi:network", "fungi:spore", "fungi:quote"], "algorithm_id": "algorithm:cluster", "data": { "gap": 28 } },
+    { "id": "move:urban-branch", "kind": "branch", "target_semantic_ids": ["city:street", "city:mesh", "city:question", "city:timeline"], "algorithm_id": "algorithm:branch", "data": { "levels": 3 } }
+  ],
+  "adapters": [
+    { "id": "adapter:materials", "capability_id": "adapter.materials.v1", "locality": "local", "purpose": "Bring observed local image bytes through the page proposal bridge when a live capability is observed.", "loss": "annotated" },
+    { "id": "adapter:image-portal", "capability_id": "adapter.live-image-material.v1", "locality": "local", "purpose": "Describe a conditional image handoff without claiming provider availability.", "loss": "bounded" }
+  ],
+  "aesthetics": [
+    { "id": "aesthetic:fungi-cities", "token_id": "aesthetic.fungi-cities.v1", "purpose": "Irregular clusters, quiet ink, fungal violet, and generous open space." }
+  ],
+  "algorithms": [
+    { "id": "algorithm:cluster", "capability_id": "algorithm.cluster.v1", "data": { "gap": 28 } },
+    { "id": "algorithm:branch", "capability_id": "algorithm.branch.v1", "data": { "levels": 3 } }
+  ],
+  "provocations": [
+    { "id": "provocation:break", "kind": "question", "text": "Where does the city analogy break, and what observation would tell us?", "target_semantic_id": "city:question" },
+    { "id": "provocation:image", "kind": "portal", "text": "If a live image capability is actually available, bring bytes through add_materials for review; do not bundle or fake an image.", "target_semantic_id": "portal:image" },
+    { "id": "provocation:quote", "kind": "quotation", "text": "Place a short verified quotation beside the exact observed structure.", "target_semantic_id": "fungi:quote" }
+  ],
+  "variants": [],
+  "source_notes": [
+    { "id": "source:nature-network", "title": "Nature · fungal network paper", "locator": "https://www.nature.com/articles/s41563-021-01123-y", "status": "observed", "summary": "Primary paper note; use its claims narrowly and retain the exact passage when quoting." },
+    { "id": "source:nature-signals", "title": "Nature · mycorrhizal signaling paper", "locator": "https://www.nature.com/articles/s41563-022-01429-5", "status": "observed", "summary": "Primary paper note; distinguish measured signaling from any broader network interpretation." },
+    { "id": "source:naturalis-review", "title": "Naturalis · arbuscular mycorrhiza review", "locator": "https://repository.naturalis.nl/pub/800999/Verbeek-2025-Arbuscular-mycorrhiza-A.pdf", "status": "observed", "summary": "Repository PDF note; verify context before turning a review statement into a claim." },
+    { "id": "source:city-analogy", "title": "City-network comparison", "locator": "https://www.nature.com/articles/s41563-021-01123-y", "status": "analogy", "summary": "A creative comparison only; this package does not present city-network similarity as observed fact." }
+  ],
+  "qualification": {
+    "default_surface_blocks": 0,
+    "native_material_ratio": 1,
+    "typed_edge_ratio": 1,
+    "deterministic_repeat": true,
+    "stable_ids": true,
+    "variant_preservation": true,
+    "edit_inspect_mutation": true,
+    "no_live_provider": true,
+    "fixtures": ["fixtures/valid.json", "fixtures/malformed.json", "fixtures/oversized.json", "fixtures/loss.json"],
+    "examples": ["examples/world.json", "examples/rejection.json"],
+    "expected_counts": { "items": 12, "edges": 10, "native_materials": 12, "typed_edges": 10 }
+  }
+}

@@ -6,19 +6,21 @@
  * bounded model returned here.
  */
 
-export const GUIDED_COMPARE_PROMPT = [
-  'Use fogwood-inspect to read the current Fogwood page first.',
-  'Use fogwood-bazaar search/read to find and read the pinned local package for Compare & Decide (fogwood.compare-decision@1).',
-  'Use fogwood-propose to stage its recipe proposal, then stop and wait for my human page-owned Apply or Reject decision.',
-  'Only after I choose Apply, inspect the page again and use fogwood-propose to stage (without applying) this exact typed scenario change: set Cost weight to 0.8 and Impact weight to 0.2, using the exact current-page control IDs.',
-  '{"type":"set_instrument_inputs","changes":[{"id":"<exact Cost weight control id>","value":0.8},{"id":"<exact Impact weight control id>","value":0.2}]}',
-  'Use the exact current-page control IDs from the second inspection. Show the predicted diff and wait for my Apply or Reject decision; never apply either proposal yourself.',
+export const GUIDED_COMPOSITION_PROMPT = [
+  'Use fogwood-inspect to read the live canvas and spatial state first; do not assume that a host tool is available.',
+  'Use fogwood-bazaar search/read to find the exact locally pinned fogwood.fungi-cities-research-world@2 composition.v2 and inspect its bounded materials, moves, source notes, and image provocation.',
+  'Inspect the actual host capability inventory just in time. Keep page registration, host exposure, conversation inventory, and successful call evidence separate; only use a live image capability if the host actually exposes and successfully calls one.',
+  'Use fogwood-propose to stage the entire composition through the existing review bridge. If an image capability is genuinely available, bring only its bounded bytes through add_materials; otherwise keep the visible portal as an open provocation. Stop for the page-owned Apply or Reject decision; do not apply on your own.',
+  'After I move or edit the canvas, inspect again and stage a bounded branch, mutation, annotation, or remix that preserves the existing matter and shows a different diff; do not overwrite it.',
 ].join(' ');
 
+/** Compatibility export retained for callers that named the former guided copy. */
+export const GUIDED_COMPARE_PROMPT = GUIDED_COMPOSITION_PROMPT;
+
 export const SUGGESTED_REQUESTS = [
-  'Inspect this page, find and read the pinned Compare & Decide package, stage it, then wait for my Apply or Reject decision.',
-  'After Compare & Decide is applied, inspect again and stage the 0.8 cost / 0.2 impact scenario without applying it.',
-  'Search the local Bazaar for an evidence map, read the pinned package, and stage it for review. Do not apply it.',
+  'Inspect this page, then find and read the pinned fungi-and-cities research world. Stage the composition for review and wait for my Apply or Reject decision.',
+  'Find the pinned evidence constellation, inspect its claims, sources, and typed edges, and stage it without applying it.',
+  'Find the pinned storyworld mutation map, preserve its existing branch lineage, and stage the composition for review without overwriting anything.',
 ] as const;
 
 export type DemoConnection = {
@@ -189,8 +191,8 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
       className: 'is-unavailable',
       label: 'ChatGPT host tools unavailable',
       detail: controllerReady
-        ? 'WebMCP is not exposed in this tab. You can still stage local recipes from the page; copy the request for a ChatGPT host that can inspect and propose.'
-        : 'WebMCP is not exposed in this tab yet. Wait for the page controller, then local recipe staging remains available even without host tools.',
+        ? 'WebMCP is not exposed in this tab. You can still stage local compositions from the page; a host must separately expose and successfully call the four page tools.'
+        : 'WebMCP is not exposed in this tab yet. Wait for the page controller, then local composition staging remains available even without host tools.',
       canStageLocally: controllerReady,
     };
   }
@@ -198,7 +200,7 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
     return {
       className: 'is-connecting',
       label: 'Registering Fogwood tools',
-      detail: 'The WebMCP interface is available. Fogwood is registering its bounded inspect, search, proposal, and Bazaar tools.',
+      detail: 'The WebMCP interface is available. Fogwood is registering its four bounded inspect, capability, proposal, and Bazaar tools.',
       canStageLocally: controllerReady,
     };
   }
@@ -206,7 +208,7 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
     return {
       className: 'is-partial',
       label: `${connection.registered} page-registered · ${connection.failed} failed`,
-      detail: `Page registration is partial; host inventory and successful calls remain separate checks. Local staging stays page-owned.${errors[0] ? ` First rejection: ${errors[0].slice(0, 180)}` : ''}`,
+      detail: `Page registration is partial; host exposure, conversation inventory, and successful calls remain separate checks. Local staging stays page-owned.${errors[0] ? ` First rejection: ${errors[0].slice(0, 180)}` : ''}`,
       canStageLocally: controllerReady,
     };
   }
@@ -214,7 +216,7 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
     return {
       className: 'is-ready',
       label: `${connection.registered} page tools registered`,
-      detail: 'Page registration succeeded. Host inventory and a successful tool call are separate checks; the page still owns Apply and Reject.',
+      detail: 'Page registration succeeded. Host exposure, conversation inventory, and a successful tool call are separate checks; the page still owns Apply and Reject.',
       canStageLocally: controllerReady,
     };
   }
@@ -222,8 +224,8 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
     className: 'is-error',
     label: 'Site tool registration failed',
     detail: errors[0]
-      ? `WebMCP is available, but no Fogwood tool registered. First rejection: ${errors[0].slice(0, 180)}`
-      : 'WebMCP is available, but no Fogwood tool registered. Reload the page before trying again.',
+        ? `WebMCP is available, but no Fogwood tool registered. First rejection: ${errors[0].slice(0, 180)}`
+        : 'WebMCP is available, but no Fogwood tool registered. Reload the page before trying again.',
     canStageLocally: controllerReady,
   };
 }

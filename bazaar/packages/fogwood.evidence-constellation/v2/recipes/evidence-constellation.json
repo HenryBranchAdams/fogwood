@@ -1,0 +1,89 @@
+{
+  "id": "fogwood.evidence-constellation",
+  "version": 2,
+  "format": "composition.v2",
+  "title": "Evidence constellation",
+  "purpose": "Arrange claims, sources, counterarguments, and questions as a loose editable constellation with meaning-bearing edges.",
+  "status": "immutable",
+  "bounds": { "x": 0, "y": 0, "w": 1500, "h": 980 },
+  "semantic": "claims-sources-counterarguments-open-questions",
+  "provenance": { "source": "fogwood", "recipe_id": "fogwood.evidence-constellation", "recipe_version": 2 },
+  "expected_count": 16,
+  "regions": [
+    { "id": "region:claims", "label": "Claims", "x": 420, "y": 90, "w": 480, "h": 330 },
+    { "id": "region:sources", "label": "Sources", "x": 70, "y": 160, "w": 300, "h": 500 },
+    { "id": "region:counters", "label": "Counterarguments", "x": 950, "y": 120, "w": 430, "h": 500 },
+    { "id": "region:questions", "label": "Questions left open", "x": 350, "y": 590, "w": 900, "h": 280 }
+  ],
+  "materials": [
+    { "id": "material:claim-core", "kind": "native", "item_id": "item:claim-core", "role": "claim", "semantic_id": "claim:core" },
+    { "id": "material:claim-scope", "kind": "native", "item_id": "item:claim-scope", "role": "claim", "semantic_id": "claim:scope" },
+    { "id": "material:source-paper", "kind": "native", "item_id": "item:source-paper", "role": "source", "semantic_id": "source:paper" },
+    { "id": "material:source-field", "kind": "native", "item_id": "item:source-field", "role": "source", "semantic_id": "source:field" },
+    { "id": "material:counter-alt", "kind": "native", "item_id": "item:counter-alt", "role": "counterargument", "semantic_id": "counter:alternative" },
+    { "id": "material:counter-gap", "kind": "native", "item_id": "item:counter-gap", "role": "counterargument", "semantic_id": "counter:gap" },
+    { "id": "material:question-next", "kind": "native", "item_id": "item:question-next", "role": "question", "semantic_id": "question:next" },
+    { "id": "material:question-boundary", "kind": "native", "item_id": "item:question-boundary", "role": "question", "semantic_id": "question:boundary" }
+  ],
+  "items": [
+    { "id": "item:claim-core", "semantic_id": "claim:core", "kind": "ellipse", "role": "claim", "region_id": "region:claims", "x": 490, "y": 130, "w": 260, "h": 150, "text": "Claim · name the smallest defensible idea", "color": "blue", "fill": "solid" },
+    { "id": "item:claim-scope", "semantic_id": "claim:scope", "kind": "cloud", "role": "claim", "region_id": "region:claims", "x": 700, "y": 315, "w": 240, "h": 130, "text": "Claim boundary · what this does not say", "color": "violet", "fill": "semi" },
+    { "id": "item:source-paper", "semantic_id": "source:paper", "kind": "rectangle", "role": "source", "region_id": "region:sources", "x": 95, "y": 220, "w": 245, "h": 135, "text": "Source · exact passage", "color": "green", "fill": "semi" },
+    { "id": "item:source-field", "semantic_id": "source:field", "kind": "note", "role": "source", "region_id": "region:sources", "x": 130, "y": 470, "w": 220, "h": 145, "text": "Source · field note\nprovenance still open", "color": "yellow", "fill": "solid" },
+    { "id": "item:counter-alt", "semantic_id": "counter:alternative", "kind": "diamond", "role": "counterargument", "region_id": "region:counters", "x": 1020, "y": 180, "w": 245, "h": 170, "text": "Counterargument · another reading", "color": "red", "fill": "semi" },
+    { "id": "item:counter-gap", "semantic_id": "counter:gap", "kind": "triangle", "role": "counterargument", "region_id": "region:counters", "x": 1110, "y": 440, "w": 210, "h": 140, "text": "Gap · evidence still missing", "color": "orange", "fill": "solid" },
+    { "id": "item:question-next", "semantic_id": "question:next", "kind": "note", "role": "question", "region_id": "region:questions", "x": 430, "y": 680, "w": 290, "h": 145, "text": "Question · what would change our mind?", "color": "yellow", "fill": "solid" },
+    { "id": "item:question-boundary", "semantic_id": "question:boundary", "kind": "text", "role": "question", "region_id": "region:questions", "x": 830, "y": 610, "w": 330, "h": 160, "text": "Question · which edge needs another source?", "color": "violet" }
+  ],
+  "edges": [
+    { "id": "edge:paper-claim", "kind": "supports", "source_semantic_id": "source:paper", "target_semantic_id": "claim:core", "label": "supports" },
+    { "id": "edge:field-scope", "kind": "supports", "source_semantic_id": "source:field", "target_semantic_id": "claim:scope", "label": "supports" },
+    { "id": "edge:alt-claim", "kind": "contradicts", "source_semantic_id": "counter:alternative", "target_semantic_id": "claim:core", "label": "contradicts" },
+    { "id": "edge:gap-scope", "kind": "contradicts", "source_semantic_id": "counter:gap", "target_semantic_id": "claim:scope", "label": "challenges" },
+    { "id": "edge:claim-paper", "kind": "depends_on", "source_semantic_id": "claim:core", "target_semantic_id": "source:paper", "label": "depends on" },
+    { "id": "edge:next-gap", "kind": "depends_on", "source_semantic_id": "question:next", "target_semantic_id": "counter:gap", "label": "depends on" },
+    { "id": "edge:scope-question", "kind": "depends_on", "source_semantic_id": "claim:scope", "target_semantic_id": "question:boundary", "label": "opens" },
+    { "id": "edge:field-alt", "kind": "supports", "source_semantic_id": "source:field", "target_semantic_id": "counter:alternative", "label": "echoes" }
+  ],
+  "placements": [
+    { "id": "place:claim-core", "target_semantic_id": "claim:core", "x": 490, "y": 130 },
+    { "id": "place:claim-scope", "target_semantic_id": "claim:scope", "x": 700, "y": 315 },
+    { "id": "place:source-paper", "target_semantic_id": "source:paper", "x": 95, "y": 220 },
+    { "id": "place:source-field", "target_semantic_id": "source:field", "x": 130, "y": 470 },
+    { "id": "place:counter-alt", "target_semantic_id": "counter:alternative", "x": 1020, "y": 180 },
+    { "id": "place:counter-gap", "target_semantic_id": "counter:gap", "x": 1110, "y": 440 },
+    { "id": "place:question-next", "target_semantic_id": "question:next", "x": 430, "y": 680 },
+    { "id": "place:question-boundary", "target_semantic_id": "question:boundary", "x": 830, "y": 610 }
+  ],
+  "moves": [
+    { "id": "move:constellation-scatter", "kind": "scatter", "target_semantic_ids": ["claim:core", "claim:scope", "counter:alternative", "counter:gap"], "algorithm_id": "algorithm:scatter", "data": { "seed": "evidence-constellation" } }
+  ],
+  "adapters": [
+    { "id": "adapter:evidence-materials", "capability_id": "adapter.materials.v1", "locality": "local", "purpose": "Accept bounded local evidence bytes only when separately prepared and staged.", "loss": "annotated" }
+  ],
+  "aesthetics": [
+    { "id": "aesthetic:constellation", "token_id": "aesthetic.evidence-constellation.v1", "purpose": "Irregular distances and color-coded semantic roles keep uncertainty visible." }
+  ],
+  "algorithms": [
+    { "id": "algorithm:scatter", "capability_id": "algorithm.scatter.v1", "data": { "seed": "evidence-constellation" } }
+  ],
+  "provocations": [
+    { "id": "provocation:counter", "kind": "question", "text": "Which counterargument deserves a source before this claim travels?", "target_semantic_id": "counter:alternative" },
+    { "id": "provocation:question", "kind": "question", "text": "Leave one honest question open instead of filling the gap.", "target_semantic_id": "question:next" }
+  ],
+  "variants": [],
+  "source_notes": [],
+  "qualification": {
+    "default_surface_blocks": 0,
+    "native_material_ratio": 1,
+    "typed_edge_ratio": 1,
+    "deterministic_repeat": true,
+    "stable_ids": true,
+    "variant_preservation": true,
+    "edit_inspect_mutation": true,
+    "no_live_provider": true,
+    "fixtures": ["fixtures/valid.json", "fixtures/malformed.json", "fixtures/oversized.json", "fixtures/loss.json"],
+    "examples": ["examples/constellation.json", "examples/rejection.json"],
+    "expected_counts": { "items": 8, "edges": 8, "native_materials": 8, "typed_edges": 8 }
+  }
+}

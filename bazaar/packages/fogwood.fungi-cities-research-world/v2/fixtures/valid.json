@@ -1,0 +1,1 @@
+{ "id": "fungi-cities-valid", "kind": "valid", "description": "The bounded composition validates with native items and typed edges.", "input": {}, "expected": { "status": "ok" } }

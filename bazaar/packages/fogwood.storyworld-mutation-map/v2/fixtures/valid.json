@@ -1,0 +1,1 @@
+{ "id": "storyworld-valid", "kind": "valid", "description": "The branching map validates with a preserved variant lineage.", "input": {}, "expected": { "status": "ok" } }

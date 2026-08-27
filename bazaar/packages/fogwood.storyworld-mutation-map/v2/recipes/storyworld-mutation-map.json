@@ -1,0 +1,101 @@
+{
+  "id": "fogwood.storyworld-mutation-map",
+  "version": 2,
+  "format": "composition.v2",
+  "title": "Storyworld mutation map",
+  "purpose": "Give places, rules, factions, portals, tensions, and scenes a branching native map with preserved mutation lineage.",
+  "status": "immutable",
+  "bounds": { "x": 0, "y": 0, "w": 1500, "h": 1000 },
+  "semantic": "places-rules-factions-portals-tensions-scenes-branching-lineage",
+  "provenance": { "source": "fogwood", "recipe_id": "fogwood.storyworld-mutation-map", "recipe_version": 2 },
+  "expected_count": 21,
+  "regions": [
+    { "id": "region:root", "label": "Origin branch", "x": 70, "y": 110, "w": 470, "h": 730 },
+    { "id": "region:west", "label": "West branch", "x": 590, "y": 80, "w": 390, "h": 430 },
+    { "id": "region:east", "label": "East branch", "x": 1060, "y": 100, "w": 380, "h": 470 },
+    { "id": "region:deep", "label": "Deep branch · preserved mutation", "x": 570, "y": 610, "w": 850, "h": 290 }
+  ],
+  "materials": [
+    { "id": "material:harbor", "kind": "native", "item_id": "item:harbor", "role": "place", "semantic_id": "place:harbor" },
+    { "id": "material:tide", "kind": "native", "item_id": "item:tide", "role": "rule", "semantic_id": "rule:tide" },
+    { "id": "material:cartographers", "kind": "native", "item_id": "item:cartographers", "role": "faction", "semantic_id": "faction:cartographers" },
+    { "id": "material:underpass", "kind": "native", "item_id": "item:underpass", "role": "portal", "semantic_id": "portal:underpass" },
+    { "id": "material:debt", "kind": "native", "item_id": "item:debt", "role": "tension", "semantic_id": "tension:debt" },
+    { "id": "material:arrival", "kind": "native", "item_id": "item:arrival", "role": "scene", "semantic_id": "scene:arrival" },
+    { "id": "material:marsh", "kind": "native", "item_id": "item:marsh", "role": "place", "semantic_id": "place:glass-marsh" },
+    { "id": "material:lantern-kin", "kind": "native", "item_id": "item:lantern-kin", "role": "faction", "semantic_id": "faction:lantern-kin" },
+    { "id": "material:departure", "kind": "native", "item_id": "item:departure", "role": "scene", "semantic_id": "scene:departure" },
+    { "id": "material:arrival-night", "kind": "native", "item_id": "item:arrival-night", "role": "scene-variant", "semantic_id": "scene:arrival-night" }
+  ],
+  "items": [
+    { "id": "item:harbor", "semantic_id": "place:harbor", "kind": "rectangle", "role": "place", "region_id": "region:root", "x": 120, "y": 190, "w": 280, "h": 150, "text": "Place · The listening harbor", "color": "blue", "fill": "semi" },
+    { "id": "item:tide", "semantic_id": "rule:tide", "kind": "note", "role": "rule", "region_id": "region:root", "x": 280, "y": 430, "w": 220, "h": 150, "text": "Rule · The tide remembers names", "color": "yellow", "fill": "solid" },
+    { "id": "item:cartographers", "semantic_id": "faction:cartographers", "kind": "cloud", "role": "faction", "region_id": "region:west", "x": 610, "y": 145, "w": 260, "h": 145, "text": "Faction · Unfinished cartographers", "color": "violet", "fill": "semi" },
+    { "id": "item:underpass", "semantic_id": "portal:underpass", "kind": "diamond", "role": "portal", "region_id": "region:west", "x": 735, "y": 360, "w": 190, "h": 125, "text": "Portal · The underpass door", "color": "orange", "fill": "solid" },
+    { "id": "item:debt", "semantic_id": "tension:debt", "kind": "triangle", "role": "tension", "region_id": "region:east", "x": 1090, "y": 180, "w": 220, "h": 145, "text": "Tension · A debt no faction owns", "color": "red", "fill": "semi" },
+    { "id": "item:arrival", "semantic_id": "scene:arrival", "kind": "ellipse", "role": "scene", "region_id": "region:west", "x": 595, "y": 620, "w": 250, "h": 145, "text": "Scene · Arrival before the bell", "color": "green", "fill": "solid" },
+    { "id": "item:marsh", "semantic_id": "place:glass-marsh", "kind": "cloud", "role": "place", "region_id": "region:east", "x": 1250, "y": 385, "w": 240, "h": 155, "text": "Place · Glass marsh", "color": "blue", "fill": "semi" },
+    { "id": "item:lantern-kin", "semantic_id": "faction:lantern-kin", "kind": "rectangle", "role": "faction", "region_id": "region:east", "x": 985, "y": 420, "w": 220, "h": 130, "text": "Faction · Lantern kin", "color": "yellow", "fill": "semi" },
+    { "id": "item:departure", "semantic_id": "scene:departure", "kind": "ellipse", "role": "scene", "region_id": "region:deep", "x": 1080, "y": 700, "w": 245, "h": 145, "text": "Scene · Departure with a borrowed rule", "color": "green", "fill": "solid" },
+    { "id": "item:arrival-night", "semantic_id": "scene:arrival-night", "kind": "note", "role": "scene-variant", "region_id": "region:deep", "x": 650, "y": 735, "w": 250, "h": 145, "text": "Variant · Arrival at night\nsource branch remains intact", "color": "violet", "fill": "solid", "variant_id": "variant:arrival-night", "lineage_source_id": "scene:arrival" }
+  ],
+  "edges": [
+    { "id": "edge:harbor-tide", "kind": "depends_on", "source_semantic_id": "rule:tide", "target_semantic_id": "place:harbor", "label": "depends on" },
+    { "id": "edge:tide-cartographers", "kind": "causes", "source_semantic_id": "rule:tide", "target_semantic_id": "faction:cartographers", "label": "draws them" },
+    { "id": "edge:cartographers-underpass", "kind": "supports", "source_semantic_id": "faction:cartographers", "target_semantic_id": "portal:underpass", "label": "opens" },
+    { "id": "edge:underpass-arrival", "kind": "causes", "source_semantic_id": "portal:underpass", "target_semantic_id": "scene:arrival", "label": "leads to" },
+    { "id": "edge:harbor-debt", "kind": "echoes", "source_semantic_id": "place:harbor", "target_semantic_id": "tension:debt", "label": "echoes" },
+    { "id": "edge:debt-marsh", "kind": "supports", "source_semantic_id": "tension:debt", "target_semantic_id": "place:glass-marsh", "label": "pulls toward" },
+    { "id": "edge:marsh-lantern", "kind": "supports", "source_semantic_id": "place:glass-marsh", "target_semantic_id": "faction:lantern-kin", "label": "shelters" },
+    { "id": "edge:lantern-departure", "kind": "causes", "source_semantic_id": "faction:lantern-kin", "target_semantic_id": "scene:departure", "label": "sets in motion" },
+    { "id": "edge:arrival-night", "kind": "mutates_into", "source_semantic_id": "scene:arrival", "target_semantic_id": "scene:arrival-night", "label": "preserved mutation" },
+    { "id": "edge:night-departure", "kind": "depends_on", "source_semantic_id": "scene:departure", "target_semantic_id": "scene:arrival-night", "label": "carries the variant" },
+    { "id": "edge:underpass-debt", "kind": "contradicts", "source_semantic_id": "portal:underpass", "target_semantic_id": "tension:debt", "label": "refuses the debt" }
+  ],
+  "placements": [
+    { "id": "place:harbor", "target_semantic_id": "place:harbor", "x": 120, "y": 190 },
+    { "id": "place:tide", "target_semantic_id": "rule:tide", "x": 280, "y": 430 },
+    { "id": "place:cartographers", "target_semantic_id": "faction:cartographers", "x": 610, "y": 145 },
+    { "id": "place:underpass", "target_semantic_id": "portal:underpass", "x": 735, "y": 360 },
+    { "id": "place:debt", "target_semantic_id": "tension:debt", "x": 1090, "y": 180 },
+    { "id": "place:arrival", "target_semantic_id": "scene:arrival", "x": 595, "y": 620 },
+    { "id": "place:marsh", "target_semantic_id": "place:glass-marsh", "x": 1250, "y": 385 },
+    { "id": "place:lantern-kin", "target_semantic_id": "faction:lantern-kin", "x": 985, "y": 420 },
+    { "id": "place:departure", "target_semantic_id": "scene:departure", "x": 1080, "y": 700 },
+    { "id": "place:arrival-night", "target_semantic_id": "scene:arrival-night", "x": 650, "y": 735 }
+  ],
+  "moves": [
+    { "id": "move:branch", "kind": "branch", "target_semantic_ids": ["place:harbor", "rule:tide", "faction:cartographers", "portal:underpass", "tension:debt", "scene:arrival", "place:glass-marsh", "faction:lantern-kin", "scene:departure", "scene:arrival-night"], "algorithm_id": "algorithm:branch", "data": { "levels": 4, "preserve_lineage": true } }
+  ],
+  "adapters": [
+    { "id": "adapter:storyworld", "capability_id": "adapter.materials.v1", "locality": "local", "purpose": "Accept bounded local reference material without granting canon or replacement authority.", "loss": "annotated" }
+  ],
+  "aesthetics": [
+    { "id": "aesthetic:storyworld", "token_id": "aesthetic.storyworld-mutation.v1", "purpose": "Uneven branch spacing and violet variants keep the source and mutation legible together." }
+  ],
+  "algorithms": [
+    { "id": "algorithm:branch", "capability_id": "algorithm.branch.v1", "data": { "levels": 4, "preserve_lineage": true } }
+  ],
+  "provocations": [
+    { "id": "provocation:canon", "kind": "question", "text": "Which branch changes if the tide remembers a different name?", "target_semantic_id": "rule:tide" },
+    { "id": "provocation:portal", "kind": "portal", "text": "Leave the underpass open: the next scene may arrive from either branch.", "target_semantic_id": "portal:underpass" },
+    { "id": "provocation:variant", "kind": "instruction", "text": "Mutate the arrival while preserving its source; do not replace the earlier branch.", "target_semantic_id": "scene:arrival-night" }
+  ],
+  "variants": [
+    { "id": "variant-record:arrival-night", "variant_id": "variant:arrival-night", "lineage_source_id": "scene:arrival", "label": "Arrival at night · preserved mutation" }
+  ],
+  "source_notes": [],
+  "qualification": {
+    "default_surface_blocks": 0,
+    "native_material_ratio": 1,
+    "typed_edge_ratio": 1,
+    "deterministic_repeat": true,
+    "stable_ids": true,
+    "variant_preservation": true,
+    "edit_inspect_mutation": true,
+    "no_live_provider": true,
+    "fixtures": ["fixtures/valid.json", "fixtures/malformed.json", "fixtures/oversized.json", "fixtures/loss.json"],
+    "examples": ["examples/storyworld.json", "examples/rejection.json"],
+    "expected_counts": { "items": 10, "edges": 11, "native_materials": 10, "typed_edges": 11 }
+  }
+}

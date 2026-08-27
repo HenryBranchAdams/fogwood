@@ -19,7 +19,7 @@ import { packageHash } from '../scripts/compile-bazaar.mjs';
 
 const compiler = path.resolve('scripts/compile-bazaar.mjs');
 
-test('local Bazaar exposes four pinned packages and deterministic paginated search', () => {
+test('local Bazaar exposes pinned legacy and composition packages with deterministic paginated search', () => {
   const first = searchBazaar({ limit: 2 });
   assert.equal(first.ok, true);
   assert.equal(first.catalog_source, BAZAAR_CATALOG_SOURCE);
@@ -31,16 +31,21 @@ test('local Bazaar exposes four pinned packages and deterministic paginated sear
   const second = searchBazaar({ limit: 2, cursor: first.next_cursor });
   assert.equal(second.ok, true);
   assert.equal(second.results.length, 2);
-  assert.deepEqual(
-    [...first.results, ...second.results].map((entry) => entry.id),
-    ['fogwood.compare-decision', 'fogwood.evidence-research-map', 'fogwood.meeting-to-plan-wall', 'fogwood.static-architecture-map'],
-  );
+  assert.deepEqual([...first.results, ...second.results].map((entry) => entry.id), [
+    'fogwood.compare-decision',
+    'fogwood.evidence-constellation',
+    'fogwood.evidence-research-map',
+    'fogwood.fungi-cities-research-world',
+  ]);
   const all = searchBazaar({ limit: 20 });
   assert.deepEqual(all.results.map((entry) => entry.id), [
     'fogwood.compare-decision',
+    'fogwood.evidence-constellation',
     'fogwood.evidence-research-map',
+    'fogwood.fungi-cities-research-world',
     'fogwood.meeting-to-plan-wall',
     'fogwood.static-architecture-map',
+    'fogwood.storyworld-mutation-map',
   ]);
 });
 
@@ -157,7 +162,7 @@ test('fogwood-bazaar tool is a separate read-only exact-input seam', () => {
   assert.equal(unknownOperation.code, 'INVALID_OPERATION');
 });
 
-test('compiler output is deterministic and records all four package hashes', () => {
+test('compiler output is deterministic and records all legacy and composition package hashes', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'fogwood-bazaar-'));
   const indexA = path.join(temp, 'a-index.json');
   const moduleA = path.join(temp, 'a-catalog.ts');
@@ -170,8 +175,8 @@ test('compiler output is deterministic and records all four package hashes', () 
   assert.equal(fs.readFileSync(indexA, 'utf8'), fs.readFileSync(indexB, 'utf8'));
   assert.equal(fs.readFileSync(moduleA, 'utf8'), fs.readFileSync(moduleB, 'utf8'));
   const index = JSON.parse(fs.readFileSync(indexA, 'utf8'));
-  assert.equal(index.packages.length, 4);
-  assert.equal(new Set(index.packages.map((entry) => entry.content_hash)).size, 4);
+  assert.equal(index.packages.length, 7);
+  assert.equal(new Set(index.packages.map((entry) => entry.content_hash)).size, 7);
   assert.match(index.catalog_revision, /^sha256:[0-9a-f]{64}$/);
 });
 
@@ -319,5 +324,45 @@ test('compiler rejects case-variant executable and network payloads after a vali
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }
+  }
+});
+
+test('compiler rejects executable formula fields in composition algorithm data after hash recomputation', () => {
+  const source = path.resolve('bazaar/packages');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'fogwood-bazaar-composition-invalid-'));
+  try {
+    const copy = path.join(temp, 'packages');
+    fs.cpSync(source, copy, { recursive: true });
+    const packageRoot = path.join(copy, 'fogwood.evidence-constellation', 'v2');
+    const recipePath = path.join(packageRoot, 'recipes', 'evidence-constellation.json');
+    const recipe = JSON.parse(fs.readFileSync(recipePath, 'utf8'));
+    recipe.algorithms[0].data.formula = 'item => item';
+    fs.writeFileSync(recipePath, `${JSON.stringify(recipe, null, 2)}\n`);
+    const manifestPath = path.join(packageRoot, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const fileMap = {};
+    const collectFiles = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) collectFiles(entryPath);
+        else {
+          const relativePath = path.relative(packageRoot, entryPath).split(path.sep).join('/');
+          const text = fs.readFileSync(entryPath, 'utf8');
+          fileMap[relativePath] = relativePath.endsWith('.json') ? JSON.parse(text) : text;
+        }
+      }
+    };
+    collectFiles(packageRoot);
+    manifest.content_hash = packageHash(fileMap, manifest);
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = spawnSync(
+      process.execPath,
+      [compiler, '--packages', copy, '--index', path.join(temp, 'index.json'), '--module', path.join(temp, 'catalog.ts')],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(result.status, 0, 'Executable formula data was accepted by the compiler');
+    assert.match(result.stderr, /FORBIDDEN_FIELD/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
   }
 });

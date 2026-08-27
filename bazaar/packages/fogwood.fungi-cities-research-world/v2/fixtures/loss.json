@@ -1,0 +1,1 @@
+{ "id": "fungi-cities-loss", "kind": "loss", "description": "External image bytes remain outside the package and are annotated as a boundary.", "input": { "provider": "unavailable" }, "expected": { "status": "annotated" } }

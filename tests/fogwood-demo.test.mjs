@@ -13,15 +13,17 @@ const readyConnection = {
   errors: [],
 };
 
-test('first-run Compare request preserves the stage-only human gate', () => {
+test('first-run composition request preserves the stage-only human gate', () => {
   assert.match(GUIDED_COMPARE_PROMPT, /inspect/i);
-  assert.match(GUIDED_COMPARE_PROMPT, /pinned.*Compare/i);
+  assert.match(GUIDED_COMPARE_PROMPT, /fungi.*cities/i);
+  assert.match(GUIDED_COMPARE_PROMPT, /composition\.v2/i);
   assert.match(GUIDED_COMPARE_PROMPT, /read/i);
-  assert.match(GUIDED_COMPARE_PROMPT, /stage.*without applying/i);
-  assert.match(GUIDED_COMPARE_PROMPT, /set_instrument_inputs/);
-  assert.match(GUIDED_COMPARE_PROMPT, /0\.8/);
-  assert.match(GUIDED_COMPARE_PROMPT, /0\.2/);
+  assert.match(GUIDED_COMPARE_PROMPT, /stage.*(?:review|proposal)/i);
+  assert.match(GUIDED_COMPARE_PROMPT, /add_materials/);
+  assert.match(GUIDED_COMPARE_PROMPT, /host.*capability|capability.*host/i);
+  assert.match(GUIDED_COMPARE_PROMPT, /branch|mutat|remix/i);
   assert.match(GUIDED_COMPARE_PROMPT, /Apply|Reject/);
+  assert.doesNotMatch(GUIDED_COMPARE_PROMPT, /auto-Apply|auto apply/i);
 });
 
 test('guided model exposes the real review sequence and local fallback', () => {

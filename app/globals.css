@@ -407,6 +407,37 @@ select {
   overscroll-behavior: contain;
 }
 
+.bazaar-vocabulary {
+  margin: 0 0 10px;
+  color: #85877f;
+  font-size: 9px;
+  line-height: 1.45;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bazaar-legacy-group {
+  margin-top: 16px;
+  padding-top: 11px;
+  border-top: 1px solid #e7e0d6;
+}
+
+.bazaar-legacy-group > summary {
+  color: #75776f;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bazaar-legacy-group > p {
+  margin: 7px 0 9px;
+  color: #85877f;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .bazaar-card-list {
   display: grid;
   gap: 7px;
@@ -491,6 +522,7 @@ select {
   cursor: pointer;
   font-size: 10px;
   font-weight: 760;
+  line-height: 1.2;
 }
 
 .bazaar-stage-button:hover:not(:disabled) {
@@ -957,6 +989,46 @@ select {
   margin: 0;
   color: #92948d;
   font-size: 11px;
+}
+
+.legacy-starter {
+  max-width: 430px;
+  margin: 3px auto 0;
+  color: #777a71;
+  text-align: left;
+}
+
+.legacy-starter summary {
+  color: #777a71;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.legacy-starter > p {
+  margin: 8px 0;
+  color: #8c8e86;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.legacy-starter > button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d7d5cd;
+  border-radius: 8px;
+  background: #faf9f5;
+  color: #656861;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.legacy-starter > button:hover:not(:disabled) {
+  border-color: rgba(239, 84, 53, 0.45);
+  background: white;
 }
 
 /* Chat-shaped connection and action rail, inspired by tldraw's agent starter. */
@@ -1439,6 +1511,92 @@ select {
   display: block;
   color: #353731;
   font-size: 13px;
+}
+
+.proposal-material-diff {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(61, 97, 67, 0.24);
+  border-radius: 10px;
+  background: #f2f7f1;
+}
+
+.proposal-material-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.proposal-material-heading strong {
+  display: block;
+  margin-top: 3px;
+  color: #3f6c45;
+  font-size: 11px;
+}
+
+.proposal-material-heading > span {
+  flex: 0 0 auto;
+  color: #6f8170;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.proposal-material-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.proposal-material-card {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(61, 97, 67, 0.16);
+}
+
+.proposal-material-visual {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d9e4d8;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #7d8b7d;
+  font-size: 8px;
+}
+
+.proposal-material-visual img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.proposal-material-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #4d5e4f;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.proposal-material-copy > strong {
+  color: #3f6c45;
+  font-size: 10px;
+}
+
+.proposal-material-copy code {
+  overflow-wrap: anywhere;
+  color: #526753;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 8px;
 }
 
 .proposal-instrument-diff {

@@ -1,0 +1,1 @@
+{ "id": "evidence-constellation-loss", "kind": "loss", "description": "Unverified evidence stays marked as open rather than silently promoted.", "input": { "status": "open" }, "expected": { "status": "annotated" } }

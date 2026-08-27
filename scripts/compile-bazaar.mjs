@@ -19,6 +19,7 @@ export const BAZAAR_CATALOG_SOURCE = 'local-snapshot';
 export const BAZAAR_PROTOCOL = 'fogwood-agent-runtime';
 export const BAZAAR_PROTOCOL_VERSION = '1';
 export const BAZAAR_REGISTRY_VERSION = '1';
+export const COMPOSITION_FORMAT = 'composition.v2';
 
 export const MAX_PACKAGE_BYTES = 512 * 1024;
 export const MAX_FILE_BYTES = 96 * 1024;
@@ -39,6 +40,18 @@ export const TRUSTED_HOST_IDS = new Set([
   'instrument.compare-decision.v1',
   'behavior.transform.diff.v1',
   'behavior.formula.bounded.v1',
+  'adapter.materials.v1',
+  'adapter.live-image-material.v1',
+  'aesthetic.fungi-cities.v1',
+  'aesthetic.evidence-constellation.v1',
+  'aesthetic.storyworld-mutation.v1',
+  'algorithm.scatter.v1',
+  'algorithm.cluster.v1',
+  'algorithm.branch.v1',
+  'algorithm.orbit.v1',
+  'algorithm.montage.v1',
+  'algorithm.trace.v1',
+  'algorithm.place.v1',
 ]);
 
 const ROOT_FIELDS = [
@@ -95,6 +108,7 @@ const SCHEMA_FIELDS = [
 const RECIPE_FIELDS = [
   'id',
   'version',
+  'format',
   'title',
   'purpose',
   'status',
@@ -106,6 +120,19 @@ const RECIPE_FIELDS = [
   'capability_refs',
   'instrument',
   'instrument_projection',
+  'regions',
+  'materials',
+  'items',
+  'edges',
+  'placements',
+  'moves',
+  'adapters',
+  'aesthetics',
+  'algorithms',
+  'provocations',
+  'variants',
+  'source_notes',
+  'qualification',
 ];
 
 const BLOCK_FIELDS = [
@@ -714,6 +741,302 @@ function validateShape(value, targetPath) {
   if (shape.text !== undefined) assertString(shape.text, `${targetPath}.text`, 1, 2_000);
 }
 
+const COMPOSITION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$/u;
+const COMPOSITION_RELATIONSHIP_KINDS = new Set(['supports', 'contradicts', 'depends_on', 'causes', 'blocks', 'echoes', 'mutates_into']);
+const COMPOSITION_MOVE_KINDS = new Set(['scatter', 'cluster', 'branch', 'orbit', 'montage', 'trace', 'annotate', 'mutate']);
+const COMPOSITION_SHAPE_KINDS = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'cloud', 'note', 'text', 'frame']);
+const COMPOSITION_MATERIAL_KINDS = new Set(['native', 'asset']);
+const COMPOSITION_PROVOCATION_KINDS = new Set(['question', 'portal', 'quotation', 'instruction']);
+const COMPOSITION_SOURCE_STATUSES = new Set(['observed', 'analogy', 'inference', 'open']);
+const COMPOSITION_TEXT_DANGER = /(?:https?:\/\/|ftp:\/\/|blob:\/\/|data:|<\/?[a-z]|javascript\s*:|vbscript\s*:|\b(?:fetch|eval|function|import|require)\s*\()/iu;
+const COMPOSITION_DATA_FORBIDDEN_KEYS = new Set([
+  'code', 'exec', 'execute', 'eval', 'function', 'script', 'formula', 'expression',
+  'html', 'css', 'style', 'url', 'href', 'src', 'fetch', 'remote', 'embed', 'iframe',
+]);
+
+function validateCompositionId(value, targetPath) {
+  assertString(value, targetPath, 1, 180);
+  if (!COMPOSITION_ID_PATTERN.test(value)) fail('INVALID_ID', 'Composition IDs must use the bounded stable lexical form.', targetPath);
+  return value;
+}
+
+function validateCompositionText(value, targetPath, max = 500) {
+  assertString(value, targetPath, 1, max);
+  if (COMPOSITION_TEXT_DANGER.test(value)) fail('SUSPICIOUS_CONTENT', 'Composition text cannot contain code, HTML, or remote references.', targetPath);
+  return value;
+}
+
+function validateCompositionData(value, targetPath, depth = 0, state = { entries: 0 }) {
+  const data = assertRecord(value, targetPath);
+  if (depth > 4) fail('DATA_DEPTH', 'Composition algorithm data exceeds the depth bound.', targetPath);
+  for (const [key, child] of Object.entries(data)) {
+    state.entries += 1;
+    if (state.entries > 32) fail('DATA_LIMIT', 'Composition algorithm data exceeds the entry bound.', targetPath);
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) fail('INVALID_DATA', 'Algorithm data keys must be bounded names.', `${targetPath}.${key}`);
+    if (COMPOSITION_DATA_FORBIDDEN_KEYS.has(key.toLowerCase())) fail('FORBIDDEN_FIELD', 'Algorithm data cannot contain executable, network, markup, or formula fields.', `${targetPath}.${key}`);
+    if (typeof child === 'string') validateCompositionText(child, `${targetPath}.${key}`);
+    else if (typeof child === 'number') assertNumber(child, `${targetPath}.${key}`, -1_000_000, 1_000_000);
+    else if (typeof child === 'boolean' || child === null) continue;
+    else if (Array.isArray(child)) {
+      if (child.length > 32) fail('DATA_LIMIT', 'Composition algorithm arrays are bounded.', `${targetPath}.${key}`);
+      child.forEach((entry, index) => {
+        if (typeof entry === 'string') validateCompositionText(entry, `${targetPath}.${key}[${index}]`);
+        else if (typeof entry === 'number') assertNumber(entry, `${targetPath}.${key}[${index}]`, -1_000_000, 1_000_000);
+        else if (typeof entry !== 'boolean' && entry !== null) fail('INVALID_DATA', 'Algorithm arrays contain only scalar values.', `${targetPath}.${key}[${index}]`);
+      });
+    } else if (isRecord(child)) validateCompositionData(child, `${targetPath}.${key}`, depth + 1, state);
+    else fail('INVALID_DATA', 'Algorithm data contains an unsupported value.', `${targetPath}.${key}`);
+  }
+}
+
+function validateCompositionRecipe(value, targetPath, manifest, limits) {
+  const recipe = assertRecord(value, targetPath);
+  assertOnlyKeys(recipe, RECIPE_FIELDS, targetPath);
+  assertString(recipe.id, `${targetPath}.id`, 1, 180);
+  if (!COMPOSITION_ID_PATTERN.test(recipe.id)) fail('INVALID_ID', 'Composition recipe id is not stable.', `${targetPath}.id`);
+  if (recipe.version !== 2) fail('INVALID_VERSION', 'Composition recipes must use version 2.', `${targetPath}.version`);
+  if (recipe.format !== COMPOSITION_FORMAT) fail('INVALID_FORMAT', `Composition recipes must use ${COMPOSITION_FORMAT}.`, `${targetPath}.format`);
+  validateCompositionText(recipe.title, `${targetPath}.title`, 180);
+  validateCompositionText(recipe.purpose, `${targetPath}.purpose`, 500);
+  if (recipe.status !== 'immutable') fail('INVALID_RECIPE', 'Composition recipes must be immutable.', `${targetPath}.status`);
+  const bounds = assertRecord(recipe.bounds, `${targetPath}.bounds`);
+  assertOnlyKeys(bounds, ['x', 'y', 'w', 'h'], `${targetPath}.bounds`);
+  if (bounds.x !== 0 || bounds.y !== 0) fail('INVALID_RECIPE', 'Composition bounds must start at 0,0.', `${targetPath}.bounds`);
+  assertNumber(bounds.w, `${targetPath}.bounds.w`, 1, 2_000);
+  assertNumber(bounds.h, `${targetPath}.bounds.h`, 1, 2_000);
+  validateCompositionText(recipe.semantic, `${targetPath}.semantic`, 180);
+  const provenance = assertRecord(recipe.provenance, `${targetPath}.provenance`);
+  assertOnlyKeys(provenance, ['source', 'recipe_id', 'recipe_version'], `${targetPath}.provenance`);
+  if (provenance.source !== 'fogwood' || provenance.recipe_id !== recipe.id || provenance.recipe_version !== 2) fail('INVALID_PROVENANCE', 'Composition provenance must pin its exact identity.', `${targetPath}.provenance`);
+
+  const regions = assertArray(recipe.regions, `${targetPath}.regions`, 1, 24);
+  const regionIds = new Set();
+  regions.forEach((region, index) => {
+    const regionPath = `${targetPath}.regions[${index}]`;
+    assertOnlyKeys(region, ['id', 'label', 'x', 'y', 'w', 'h'], regionPath);
+    const id = validateCompositionId(region.id, `${regionPath}.id`);
+    if (regionIds.has(id)) fail('DUPLICATE_REGION_ID', 'Composition region IDs must be unique.', `${regionPath}.id`);
+    regionIds.add(id);
+    validateCompositionText(region.label, `${regionPath}.label`, 180);
+    for (const field of ['x', 'y']) assertNumber(region[field], `${regionPath}.${field}`, -100_000, 100_000);
+    for (const field of ['w', 'h']) assertNumber(region[field], `${regionPath}.${field}`, 1, 2_000);
+  });
+
+  const items = assertArray(recipe.items, `${targetPath}.items`, 1, 64);
+  const itemIds = new Set();
+  const semanticIds = new Set();
+  items.forEach((item, index) => {
+    const itemPath = `${targetPath}.items[${index}]`;
+    assertOnlyKeys(item, ['id', 'semantic_id', 'kind', 'role', 'region_id', 'x', 'y', 'w', 'h', 'text', 'color', 'fill', 'variant_id', 'parent_variant_id', 'lineage_source_id'], itemPath);
+    const id = validateCompositionId(item.id, `${itemPath}.id`);
+    const semanticId = validateCompositionId(item.semantic_id, `${itemPath}.semantic_id`);
+    if (itemIds.has(id)) fail('DUPLICATE_ITEM_ID', 'Composition item IDs must be unique.', `${itemPath}.id`);
+    if (semanticIds.has(semanticId)) fail('DUPLICATE_SEMANTIC_ID', 'Composition semantic IDs must be unique.', `${itemPath}.semantic_id`);
+    itemIds.add(id); semanticIds.add(semanticId);
+    if (!COMPOSITION_SHAPE_KINDS.has(item.kind)) fail('INVALID_RECIPE', 'Composition items must be native shape kinds.', `${itemPath}.kind`);
+    validateCompositionText(item.role, `${itemPath}.role`, 180);
+    const regionId = validateCompositionId(item.region_id, `${itemPath}.region_id`);
+    if (!regionIds.has(regionId)) fail('UNKNOWN_REGION', 'Composition item references an unknown region.', `${itemPath}.region_id`);
+    for (const field of ['x', 'y']) assertNumber(item[field], `${itemPath}.${field}`, -100_000, 100_000);
+    for (const field of ['w', 'h']) assertNumber(item[field], `${itemPath}.${field}`, 40, field === 'w' ? 2_000 : 1_600);
+    if (item.text !== undefined) validateCompositionText(item.text, `${itemPath}.text`);
+    if (item.color !== undefined && !['black', 'grey', 'violet', 'blue', 'light-blue', 'yellow', 'orange', 'green', 'light-green', 'light-red', 'red', 'white'].includes(item.color)) fail('INVALID_COLOR', 'Composition color is not host-owned.', `${itemPath}.color`);
+    if (item.fill !== undefined && !['none', 'semi', 'solid', 'pattern'].includes(item.fill)) fail('INVALID_FILL', 'Composition fill is not host-owned.', `${itemPath}.fill`);
+    for (const field of ['variant_id', 'parent_variant_id', 'lineage_source_id']) if (item[field] !== undefined) validateCompositionId(item[field], `${itemPath}.${field}`);
+  });
+
+  const materials = assertArray(recipe.materials, `${targetPath}.materials`, 1, 96);
+  const materialIds = new Set();
+  const materialItems = new Set();
+  const materialSemanticIds = new Set();
+  materials.forEach((material, index) => {
+    const materialPath = `${targetPath}.materials[${index}]`;
+    assertOnlyKeys(material, ['id', 'kind', 'item_id', 'role', 'semantic_id'], materialPath);
+    const id = validateCompositionId(material.id, `${materialPath}.id`);
+    const itemId = validateCompositionId(material.item_id, `${materialPath}.item_id`);
+    const semanticId = validateCompositionId(material.semantic_id, `${materialPath}.semantic_id`);
+    if (materialIds.has(id)) fail('DUPLICATE_MATERIAL_ID', 'Composition material IDs must be unique.', `${materialPath}.id`);
+    if (materialItems.has(itemId)) fail('DUPLICATE_MATERIAL_ITEM', 'Each composition item must have one material record.', `${materialPath}.item_id`);
+    if (materialSemanticIds.has(semanticId)) fail('DUPLICATE_SEMANTIC_ID', 'Composition material semantic IDs must be unique.', `${materialPath}.semantic_id`);
+    if (!COMPOSITION_MATERIAL_KINDS.has(material.kind)) fail('INVALID_MATERIAL_KIND', 'Composition material kind is unsupported.', `${materialPath}.kind`);
+    if (!itemIds.has(itemId) || !semanticIds.has(semanticId)) fail('UNKNOWN_TARGET', 'Composition material must reference a known item.', materialPath);
+    validateCompositionText(material.role, `${materialPath}.role`, 180);
+    materialIds.add(id); materialItems.add(itemId); materialSemanticIds.add(semanticId);
+  });
+  if (materialItems.size !== itemIds.size) fail('MATERIAL_COVERAGE', 'Every composition item needs exactly one material.', `${targetPath}.materials`);
+
+  const edges = assertArray(recipe.edges, `${targetPath}.edges`, 1, 256);
+  const edgeIds = new Set();
+  edges.forEach((edge, index) => {
+    const edgePath = `${targetPath}.edges[${index}]`;
+    assertOnlyKeys(edge, ['id', 'kind', 'source_semantic_id', 'target_semantic_id', 'label'], edgePath);
+    const id = validateCompositionId(edge.id, `${edgePath}.id`);
+    const source = validateCompositionId(edge.source_semantic_id, `${edgePath}.source_semantic_id`);
+    const target = validateCompositionId(edge.target_semantic_id, `${edgePath}.target_semantic_id`);
+    if (edgeIds.has(id)) fail('DUPLICATE_EDGE_ID', 'Composition edge IDs must be unique.', `${edgePath}.id`);
+    if (!COMPOSITION_RELATIONSHIP_KINDS.has(edge.kind)) fail('INVALID_EDGE_KIND', 'Composition edge kind is unsupported.', `${edgePath}.kind`);
+    if (!semanticIds.has(source) || !semanticIds.has(target)) fail('UNKNOWN_ENDPOINT', 'Composition edge endpoints must reference known semantic IDs.', edgePath);
+    if (source === target) fail('SELF_RELATIONSHIP', 'Composition edges cannot point to themselves.', edgePath);
+    if (edge.label !== undefined) validateCompositionText(edge.label, `${edgePath}.label`, 180);
+    edgeIds.add(id);
+  });
+
+  const placements = assertArray(recipe.placements, `${targetPath}.placements`, items.length, 96);
+  if (placements.length !== items.length) fail('PLACEMENT_MISMATCH', 'Every composition item needs exactly one placement.', `${targetPath}.placements`);
+  const placementIds = new Set();
+  const placementTargets = new Set();
+  placements.forEach((placement, index) => {
+    const placementPath = `${targetPath}.placements[${index}]`;
+    assertOnlyKeys(placement, ['id', 'target_semantic_id', 'x', 'y', 'rotation'], placementPath);
+    const placementId = validateCompositionId(placement.id, `${placementPath}.id`);
+    if (placementIds.has(placementId)) fail('DUPLICATE_PLACEMENT_ID', 'Composition placement IDs must be unique.', `${placementPath}.id`);
+    const target = validateCompositionId(placement.target_semantic_id, `${placementPath}.target_semantic_id`);
+    if (placementTargets.has(target) || !semanticIds.has(target)) fail('PLACEMENT_MISMATCH', 'Placement targets must be unique known semantic IDs.', `${placementPath}.target_semantic_id`);
+    placementIds.add(placementId); placementTargets.add(target);
+    assertNumber(placement.x, `${placementPath}.x`, -100_000, 100_000);
+    assertNumber(placement.y, `${placementPath}.y`, -100_000, 100_000);
+    if (placement.rotation !== undefined) assertNumber(placement.rotation, `${placementPath}.rotation`, -Math.PI * 4, Math.PI * 4);
+  });
+
+  const moves = assertArray(recipe.moves, `${targetPath}.moves`, 0, 8);
+  const moveIds = new Set();
+  moves.forEach((move, index) => {
+    const movePath = `${targetPath}.moves[${index}]`;
+    assertOnlyKeys(move, ['id', 'kind', 'target_semantic_ids', 'algorithm_id', 'data'], movePath);
+    const id = validateCompositionId(move.id, `${movePath}.id`);
+    if (moveIds.has(id)) fail('DUPLICATE_MOVE_ID', 'Composition move IDs must be unique.', `${movePath}.id`);
+    if (!COMPOSITION_MOVE_KINDS.has(move.kind)) fail('INVALID_MOVE_KIND', 'Composition move kind is unsupported.', `${movePath}.kind`);
+    const targets = assertArray(move.target_semantic_ids, `${movePath}.target_semantic_ids`, 1, 64);
+    const targetSet = new Set();
+    targets.forEach((target, targetIndex) => {
+      const semanticId = validateCompositionId(target, `${movePath}.target_semantic_ids[${targetIndex}]`);
+      if (targetSet.has(semanticId) || !semanticIds.has(semanticId)) fail('UNKNOWN_TARGET', 'Composition move targets must be unique known semantic IDs.', `${movePath}.target_semantic_ids[${targetIndex}]`);
+      targetSet.add(semanticId);
+    });
+    if (move.algorithm_id !== undefined) validateCompositionId(move.algorithm_id, `${movePath}.algorithm_id`);
+    if (move.data !== undefined) validateCompositionData(move.data, `${movePath}.data`);
+    moveIds.add(id);
+  });
+
+  const adapters = assertArray(recipe.adapters, `${targetPath}.adapters`, 0, 8);
+  const adapterIds = new Set();
+  adapters.forEach((adapter, index) => {
+    const adapterPath = `${targetPath}.adapters[${index}]`;
+    assertOnlyKeys(adapter, ['id', 'capability_id', 'locality', 'purpose', 'loss'], adapterPath);
+    const id = validateCompositionId(adapter.id, `${adapterPath}.id`);
+    if (adapterIds.has(id)) fail('DUPLICATE_ADAPTER_ID', 'Composition adapter IDs must be unique.', `${adapterPath}.id`);
+    validateCapabilityId(adapter.capability_id, `${adapterPath}.capability_id`);
+    if (adapter.locality !== 'local') fail('INVALID_LOCALITY', 'Composition adapters must be local.', `${adapterPath}.locality`);
+    validateCompositionText(adapter.purpose, `${adapterPath}.purpose`);
+    if (!['none', 'annotated', 'bounded'].includes(adapter.loss)) fail('INVALID_ADAPTER', 'Composition adapter loss is unsupported.', `${adapterPath}.loss`);
+    adapterIds.add(id);
+  });
+
+  const aesthetics = assertArray(recipe.aesthetics, `${targetPath}.aesthetics`, 0, 12);
+  const aestheticIds = new Set();
+  aesthetics.forEach((aesthetic, index) => {
+    const aestheticPath = `${targetPath}.aesthetics[${index}]`;
+    assertOnlyKeys(aesthetic, ['id', 'token_id', 'purpose'], aestheticPath);
+    const id = validateCompositionId(aesthetic.id, `${aestheticPath}.id`);
+    if (aestheticIds.has(id)) fail('DUPLICATE_AESTHETIC_ID', 'Composition aesthetic IDs must be unique.', `${aestheticPath}.id`);
+    validateCapabilityId(aesthetic.token_id, `${aestheticPath}.token_id`);
+    validateCompositionText(aesthetic.purpose, `${aestheticPath}.purpose`);
+    aestheticIds.add(id);
+  });
+
+  const algorithms = assertArray(recipe.algorithms, `${targetPath}.algorithms`, 0, 12);
+  const algorithmIds = new Set();
+  algorithms.forEach((algorithm, index) => {
+    const algorithmPath = `${targetPath}.algorithms[${index}]`;
+    assertOnlyKeys(algorithm, ['id', 'capability_id', 'data'], algorithmPath);
+    const id = validateCompositionId(algorithm.id, `${algorithmPath}.id`);
+    if (algorithmIds.has(id)) fail('DUPLICATE_ALGORITHM_ID', 'Composition algorithm IDs must be unique.', `${algorithmPath}.id`);
+    validateCapabilityId(algorithm.capability_id, `${algorithmPath}.capability_id`);
+    if (algorithm.data !== undefined) validateCompositionData(algorithm.data, `${algorithmPath}.data`);
+    algorithmIds.add(id);
+  });
+  moves.forEach((move, index) => {
+    if (move.algorithm_id !== undefined && !algorithmIds.has(move.algorithm_id)) fail('UNKNOWN_ALGORITHM', 'Composition move algorithm_id must reference a declared algorithm.', `${targetPath}.moves[${index}].algorithm_id`);
+  });
+
+  const provocations = assertArray(recipe.provocations, `${targetPath}.provocations`, 0, 16);
+  const provocationIds = new Set();
+  provocations.forEach((provocation, index) => {
+    const provocationPath = `${targetPath}.provocations[${index}]`;
+    assertOnlyKeys(provocation, ['id', 'kind', 'text', 'target_semantic_id'], provocationPath);
+    const id = validateCompositionId(provocation.id, `${provocationPath}.id`);
+    if (provocationIds.has(id)) fail('DUPLICATE_PROVOCATION_ID', 'Composition provocation IDs must be unique.', `${provocationPath}.id`);
+    if (!COMPOSITION_PROVOCATION_KINDS.has(provocation.kind)) fail('INVALID_PROVOCATION', 'Provocation kind is unsupported.', `${provocationPath}.kind`);
+    validateCompositionText(provocation.text, `${provocationPath}.text`);
+    if (provocation.target_semantic_id !== undefined && !semanticIds.has(validateCompositionId(provocation.target_semantic_id, `${provocationPath}.target_semantic_id`))) fail('UNKNOWN_TARGET', 'Provocation target is unknown.', `${provocationPath}.target_semantic_id`);
+    provocationIds.add(id);
+  });
+
+  const variants = assertArray(recipe.variants, `${targetPath}.variants`, 0, 64);
+  const variantIds = new Set();
+  variants.forEach((variant, index) => {
+    const variantPath = `${targetPath}.variants[${index}]`;
+    assertOnlyKeys(variant, ['id', 'variant_id', 'lineage_source_id', 'parent_variant_id', 'label'], variantPath);
+    const id = validateCompositionId(variant.id, `${variantPath}.id`);
+    const variantId = validateCompositionId(variant.variant_id, `${variantPath}.variant_id`);
+    const lineage = validateCompositionId(variant.lineage_source_id, `${variantPath}.lineage_source_id`);
+    if (variantIds.has(variantId)) fail('DUPLICATE_VARIANT_ID', 'Composition variant IDs must be unique.', `${variantPath}.variant_id`);
+    if (!semanticIds.has(lineage) && !variantIds.has(lineage)) fail('UNKNOWN_LINEAGE', 'Variant lineage source must name an item or earlier variant.', `${variantPath}.lineage_source_id`);
+    if (variant.parent_variant_id !== undefined) {
+      const parent = validateCompositionId(variant.parent_variant_id, `${variantPath}.parent_variant_id`);
+      if (!semanticIds.has(parent) && !variantIds.has(parent)) fail('UNKNOWN_LINEAGE', 'Variant parent must name an item or earlier variant.', `${variantPath}.parent_variant_id`);
+    }
+    validateCompositionText(variant.label, `${variantPath}.label`, 180);
+    variantIds.add(variantId);
+    if (!id) fail('INVALID_ID', 'Variant record id is required.', `${variantPath}.id`);
+  });
+  const declaredVariantIds = new Set(variantIds);
+  items.forEach((item, index) => {
+    const itemPath = `${targetPath}.items[${index}]`;
+    if (item.variant_id !== undefined && !declaredVariantIds.has(item.variant_id)) fail('UNKNOWN_VARIANT', 'Item variant_id must reference a declared variant.', `${itemPath}.variant_id`);
+    if (item.parent_variant_id !== undefined && !declaredVariantIds.has(item.parent_variant_id)) fail('UNKNOWN_VARIANT', 'Item parent_variant_id must reference a declared variant.', `${itemPath}.parent_variant_id`);
+    if (item.lineage_source_id !== undefined && !semanticIds.has(item.lineage_source_id) && !declaredVariantIds.has(item.lineage_source_id)) fail('UNKNOWN_LINEAGE', 'Item lineage_source_id must name an item or declared variant.', `${itemPath}.lineage_source_id`);
+  });
+
+  const sourceNotes = assertArray(recipe.source_notes, `${targetPath}.source_notes`, 0, 16);
+  const sourceIds = new Set();
+  sourceNotes.forEach((source, index) => {
+    const sourcePath = `${targetPath}.source_notes[${index}]`;
+    assertOnlyKeys(source, ['id', 'title', 'locator', 'status', 'summary'], sourcePath);
+    const id = validateCompositionId(source.id, `${sourcePath}.id`);
+    if (sourceIds.has(id)) fail('DUPLICATE_SOURCE_ID', 'Composition source IDs must be unique.', `${sourcePath}.id`);
+    validateCompositionText(source.title, `${sourcePath}.title`, 180);
+    assertString(source.locator, `${sourcePath}.locator`, 1, 500);
+    if (!/^https:\/\//iu.test(source.locator)) fail('INVALID_SOURCE', 'Composition source locators must be bounded HTTPS URLs.', `${sourcePath}.locator`);
+    if (!COMPOSITION_SOURCE_STATUSES.has(source.status)) fail('INVALID_SOURCE_STATUS', 'Composition source status is unsupported.', `${sourcePath}.status`);
+    validateCompositionText(source.summary, `${sourcePath}.summary`);
+    sourceIds.add(id);
+  });
+
+  const qualification = assertRecord(recipe.qualification, `${targetPath}.qualification`);
+  assertOnlyKeys(qualification, ['default_surface_blocks', 'native_material_ratio', 'typed_edge_ratio', 'deterministic_repeat', 'stable_ids', 'variant_preservation', 'edit_inspect_mutation', 'no_live_provider', 'fixtures', 'examples', 'expected_counts'], `${targetPath}.qualification`);
+  if (qualification.default_surface_blocks !== 0) fail('QUALIFICATION_MISMATCH', 'Composition defaults must have zero surface blocks.', `${targetPath}.qualification.default_surface_blocks`);
+  assertNumber(qualification.native_material_ratio, `${targetPath}.qualification.native_material_ratio`, 0.7, 1);
+  assertNumber(qualification.typed_edge_ratio, `${targetPath}.qualification.typed_edge_ratio`, 0.6, 1);
+  const actualNativeMaterialRatio = materials.length === 0 ? 0 : materials.filter((entry) => entry.kind === 'native').length / materials.length;
+  const actualTypedEdgeRatio = edges.length === 0 ? 0 : edges.filter((edge) => COMPOSITION_RELATIONSHIP_KINDS.has(edge.kind)).length / edges.length;
+  if (Math.abs(qualification.native_material_ratio - actualNativeMaterialRatio) > 1e-9) fail('RATIO_MISMATCH', 'Composition native_material_ratio must match the declarative materials.', `${targetPath}.qualification.native_material_ratio`);
+  if (Math.abs(qualification.typed_edge_ratio - actualTypedEdgeRatio) > 1e-9) fail('RATIO_MISMATCH', 'Composition typed_edge_ratio must match the declarative edges.', `${targetPath}.qualification.typed_edge_ratio`);
+  if (qualification.deterministic_repeat !== true || qualification.stable_ids !== true || qualification.no_live_provider !== true) fail('QUALIFICATION_MISMATCH', 'Composition qualification must explicitly prove determinism, stable IDs, and no live provider.', `${targetPath}.qualification`);
+  if (typeof qualification.variant_preservation !== 'boolean' || typeof qualification.edit_inspect_mutation !== 'boolean') fail('QUALIFICATION_MISMATCH', 'Composition qualification must record variant and edit-inspect fixtures.', `${targetPath}.qualification`);
+  assertPathArray(qualification.fixtures, `${targetPath}.qualification.fixtures`, 'fixtures', 1, 12);
+  assertPathArray(qualification.examples, `${targetPath}.qualification.examples`, 'examples', 1, 8);
+  if (qualification.expected_counts !== undefined) {
+    const expected = assertRecord(qualification.expected_counts, `${targetPath}.qualification.expected_counts`);
+    assertOnlyKeys(expected, ['items', 'edges', 'native_materials', 'typed_edges'], `${targetPath}.qualification.expected_counts`);
+    if (expected.items !== items.length || expected.edges !== edges.length || expected.native_materials !== materials.filter((entry) => entry.kind === 'native').length || expected.typed_edges !== edges.length) fail('EXPECTED_COUNT_MISMATCH', 'Composition qualification expected counts do not match content.', `${targetPath}.qualification.expected_counts`);
+  }
+  assertInteger(recipe.expected_count, `${targetPath}.expected_count`, 1, limits.max_items);
+  if (recipe.expected_count !== items.length + edges.length) fail('EXPECTED_COUNT_MISMATCH', 'Composition expected_count must equal items plus typed edges.', `${targetPath}.expected_count`);
+  if (!edges.some((edge) => edge.kind === 'mutates_into') && variants.length > 0) fail('VARIANT_EDGE_REQUIRED', 'A composition with variants must include a mutates_into edge.', `${targetPath}.edges`);
+  return recipe;
+}
+
 const INSTRUMENT_VALUE_TYPES = new Set(['number', 'boolean', 'string', 'chart', 'table']);
 const INSTRUMENT_ID_PATTERN = /^[a-z][a-z0-9_.:-]*$/;
 const RESERVED_INSTRUMENT_NAMES = new Set([
@@ -1014,6 +1337,7 @@ function validateInstrumentProjection(value, targetPath, manifest, limits) {
 
 function validateRecipe(value, targetPath, manifest, limits) {
   const recipe = assertRecord(value, targetPath);
+  if (recipe.version === 2 || recipe.format === COMPOSITION_FORMAT) return validateCompositionRecipe(recipe, targetPath, manifest, limits);
   assertOnlyKeys(recipe, RECIPE_FIELDS, targetPath);
   assertString(recipe.id, `${targetPath}.id`, 1, 120);
   assertInteger(recipe.version, `${targetPath}.version`, 1, 1);

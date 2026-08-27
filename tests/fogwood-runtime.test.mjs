@@ -264,8 +264,8 @@ test('locked ancestors make update, place, remove, and clear proposals atomic', 
 
 test('proposal schema exposes all strict action variants and bounded nested values', () => {
   const actionItems = PROPOSAL_INPUT_SCHEMA.properties.actions.items.oneOf;
-  assert.equal(actionItems.length, 8);
-  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['add_blocks', 'add_shapes', 'update_blocks', 'place_items', 'remove_items', 'clear_surface', 'insert_recipe', 'set_instrument_inputs']);
+  assert.equal(actionItems.length, 11);
+  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['add_blocks', 'add_shapes', 'apply_spatial_moves', 'add_relationships', 'add_materials', 'update_blocks', 'place_items', 'remove_items', 'clear_surface', 'insert_recipe', 'set_instrument_inputs']);
   const blockSchema = actionItems[0].properties.blocks.items;
   assert.equal(blockSchema.properties.items.items.additionalProperties, false);
   assert.equal(blockSchema.properties.series.items.additionalProperties, false);

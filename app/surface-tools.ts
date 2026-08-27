@@ -1,5 +1,5 @@
-import { createShapeId, toRichText } from 'tldraw';
-import type { Editor, TLParentId, TLShape, TLShapeId } from 'tldraw';
+import { AssetRecordType, createShapeId, toRichText } from 'tldraw';
+import type { Editor, TLAsset, TLAssetId, TLParentId, TLShape, TLShapeId } from 'tldraw';
 import {
   BLOCK_KINDS,
   BLOCK_TONES,
@@ -9,15 +9,18 @@ import {
   computePageRevision,
   createProposalController,
   descendantClosure,
+  deterministicHash,
   expandRecipe,
   FOGWOOD_PROTOCOL,
   FOGWOOD_PROTOCOL_VERSION,
   FOGWOOD_REGISTRY_VERSION,
+  FOGWOOD_PARTICIPATION_CONTRACT,
   getRecipe,
   INSPECT_INPUT_SCHEMA,
   PROPOSAL_INPUT_SCHEMA,
   searchCapabilities,
   validateProposal,
+  validateProposalAsync,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-runtime.ts';
 import type {
@@ -34,6 +37,9 @@ import type {
   ProposalDiff,
   ProposalV1,
 } from './fogwood-runtime';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { isPreparedMaterial } from './fogwood-materials.ts';
+import type { MaterialDecoder, PreparedMaterial } from './fogwood-materials';
 import type { JsonObject } from '@tldraw/utils';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { FOGWOOD_PERSISTENCE } from './fogwood-persistence.ts';
@@ -54,6 +60,9 @@ import {
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-instrument-adapter.ts';
 import type { InstrumentShapeLike } from './fogwood-instrument-adapter.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { isStableSemanticId, planRelationships, planSpatialMoves, relationshipSemanticId, SPATIAL_LIMITS } from './fogwood-spatial.ts';
+import type { SemanticRelationship, SpatialCreatePlan } from './fogwood-spatial.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { registerWebMcpTools } from './webmcp-registration.ts';
 import type { ModelContext, ToolConnection, WebMcpTool } from './webmcp-registration';
@@ -224,7 +233,18 @@ type MutationOptions = {
 function shapeMeta(id: string, fogwood?: FogwoodMeta): JsonObject {
   const fogwoodMeta: JsonObject = {
     semantic_id: fogwood?.semantic_id ?? `fogwood:${id}`,
+    semantic_id_source: fogwood?.semantic_id_source ?? (fogwood?.semantic_id ? 'stable' : 'legacy-shape-id'),
     ...(fogwood?.role ? { role: fogwood.role } : {}),
+    ...(fogwood?.composition_id ? { composition_id: fogwood.composition_id } : {}),
+    ...(fogwood?.region_id ? { region_id: fogwood.region_id } : {}),
+    ...(fogwood?.variant_id ? { variant_id: fogwood.variant_id } : {}),
+    ...(fogwood?.parent_variant_id ? { parent_variant_id: fogwood.parent_variant_id } : {}),
+    ...(fogwood?.lineage_source_id ? { lineage_source_id: fogwood.lineage_source_id } : {}),
+    ...(fogwood?.relationship_id ? { relationship_id: fogwood.relationship_id } : {}),
+    ...(fogwood?.relationship_kind ? { relationship_kind: fogwood.relationship_kind } : {}),
+    ...(fogwood?.source_semantic_id ? { source_semantic_id: fogwood.source_semantic_id } : {}),
+    ...(fogwood?.target_semantic_id ? { target_semantic_id: fogwood.target_semantic_id } : {}),
+    ...(fogwood?.relationship_label ? { relationship_label: fogwood.relationship_label } : {}),
     ...(fogwood?.recipe_id ? { recipe_id: fogwood.recipe_id } : {}),
     ...(fogwood?.recipe_version ? { recipe_version: fogwood.recipe_version } : {}),
     ...(fogwood?.recipe_instance_id ? { recipe_instance_id: fogwood.recipe_instance_id } : {}),
@@ -293,12 +313,22 @@ function addCanvasShapes(editor: Editor, inputs: unknown[], options: MutationOpt
     const position = positionFor(editor, input, index, coordinateSpace);
     const text = boundedText(input.text, 2_000);
     const id = createShapeId();
+    const inputFogwood: FogwoodMeta = {
+      ...(options.fogwood ?? {}),
+      ...(typeof input.semantic_id === 'string' ? { semantic_id: input.semantic_id, semantic_id_source: 'stable' } : {}),
+      ...(typeof input.role === 'string' ? { role: input.role } : {}),
+      ...(typeof input.composition_id === 'string' ? { composition_id: input.composition_id } : {}),
+      ...(typeof input.region_id === 'string' ? { region_id: input.region_id } : {}),
+      ...(typeof input.variant_id === 'string' ? { variant_id: input.variant_id } : {}),
+      ...(typeof input.parent_variant_id === 'string' ? { parent_variant_id: input.parent_variant_id } : {}),
+      ...(typeof input.lineage_source_id === 'string' ? { lineage_source_id: input.lineage_source_id } : {}),
+    };
     const base = {
       id,
       x: position.x,
       y: position.y,
       parentId: options.parentId ? (options.parentId as TLParentId) : editor.getCurrentPageId(),
-      meta: shapeMeta(id, options.fogwood),
+      meta: shapeMeta(id, inputFogwood),
     };
     if (kind === 'arrow') {
       const endX = explicitCoordinate(editor, input.end_x, position.x + 240, 'x', coordinateSpace);
@@ -472,7 +502,18 @@ function fogwoodMeta(shape: TLShape): FogwoodMeta {
   const root = isRecord(shape.meta) && isRecord(shape.meta.fogwood) ? shape.meta.fogwood : {};
   return {
     semantic_id: typeof root.semantic_id === 'string' ? root.semantic_id.slice(0, 180) : shape.id,
+    semantic_id_source: typeof root.semantic_id_source === 'string' ? root.semantic_id_source.slice(0, 40) : 'legacy-shape-id',
     ...(typeof root.role === 'string' ? { role: root.role.slice(0, 120) } : {}),
+    ...(typeof root.composition_id === 'string' ? { composition_id: root.composition_id.slice(0, 180) } : {}),
+    ...(typeof root.region_id === 'string' ? { region_id: root.region_id.slice(0, 180) } : {}),
+    ...(typeof root.variant_id === 'string' ? { variant_id: root.variant_id.slice(0, 180) } : {}),
+    ...(typeof root.parent_variant_id === 'string' ? { parent_variant_id: root.parent_variant_id.slice(0, 180) } : {}),
+    ...(typeof root.lineage_source_id === 'string' ? { lineage_source_id: root.lineage_source_id.slice(0, 180) } : {}),
+    ...(typeof root.relationship_id === 'string' ? { relationship_id: root.relationship_id.slice(0, 180) } : {}),
+    ...(typeof root.relationship_kind === 'string' ? { relationship_kind: root.relationship_kind.slice(0, 40) } : {}),
+    ...(typeof root.source_semantic_id === 'string' ? { source_semantic_id: root.source_semantic_id.slice(0, 180) } : {}),
+    ...(typeof root.target_semantic_id === 'string' ? { target_semantic_id: root.target_semantic_id.slice(0, 180) } : {}),
+    ...(typeof root.relationship_label === 'string' ? { relationship_label: root.relationship_label.slice(0, 500) } : {}),
     ...(typeof root.recipe_id === 'string' ? { recipe_id: root.recipe_id.slice(0, 120) } : {}),
     ...(typeof root.recipe_version === 'number' ? { recipe_version: root.recipe_version } : {}),
     ...(typeof root.recipe_instance_id === 'string' ? { recipe_instance_id: root.recipe_instance_id.slice(0, 120) } : {}),
@@ -515,6 +556,154 @@ function currentPageBindings(editor: Editor, shapeIds: Set<string>) {
     .map((record) => ({ id: record.id, type_name: record.typeName, type: record.type, from_id: record.fromId, to_id: record.toId, props: boundedProps(record.props) }));
 }
 
+function currentSemanticRelationships(shapes: readonly TLShape[]): SemanticRelationship[] {
+  const liveSemanticIds = new Set(shapes.flatMap((shape) => {
+    const semanticId = fogwoodMeta(shape).semantic_id;
+    return typeof semanticId === 'string' && isStableSemanticId(semanticId) ? [semanticId] : [];
+  }));
+  const relationships: SemanticRelationship[] = [];
+  for (const shape of shapes) {
+    if (shape.type !== 'arrow') continue;
+    const meta = fogwoodMeta(shape);
+    const kind = meta.relationship_kind;
+    const id = meta.relationship_id;
+    const source = meta.source_semantic_id;
+    const target = meta.target_semantic_id;
+    if (meta.role !== 'semantic-relationship') continue;
+    if (typeof id !== 'string' || typeof source !== 'string' || typeof target !== 'string') continue;
+    if (!isStableSemanticId(id) || !isStableSemanticId(source) || !isStableSemanticId(target) || source === target) continue;
+    if (meta.semantic_id !== relationshipSemanticId(id) || !liveSemanticIds.has(source) || !liveSemanticIds.has(target)) continue;
+    if (!['supports', 'contradicts', 'depends_on', 'causes', 'blocks', 'echoes', 'mutates_into'].includes(kind ?? '')) continue;
+    relationships.push({
+      id,
+      kind: kind as SemanticRelationship['kind'],
+      source_semantic_id: source,
+      target_semantic_id: target,
+      ...(meta.relationship_label === undefined ? {} : { label: meta.relationship_label }),
+      shape_id: shape.id,
+    });
+  }
+  return relationships.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function currentRegions(shapes: readonly TLShape[]): Array<{ id: string; semantic_id?: string; x: number; y: number; w: number; h: number; label?: string }> {
+  const grouped = new Map<string, { id: string; semantic_id?: string; x: number; y: number; right: number; bottom: number; label?: string }>();
+  for (const shape of shapes) {
+    const meta = fogwoodMeta(shape);
+    if (!meta.region_id) continue;
+    const bounds = { x: shape.x, y: shape.y, w: Math.max(0, shape.props && isRecord(shape.props) && typeof shape.props.w === 'number' ? shape.props.w : 0), h: Math.max(0, shape.props && isRecord(shape.props) && typeof shape.props.h === 'number' ? shape.props.h : 0) };
+    const existing = grouped.get(meta.region_id);
+    if (!existing) {
+      grouped.set(meta.region_id, { id: meta.region_id, x: bounds.x, y: bounds.y, right: bounds.x + bounds.w, bottom: bounds.y + bounds.h });
+    } else {
+      existing.x = Math.min(existing.x, bounds.x);
+      existing.y = Math.min(existing.y, bounds.y);
+      existing.right = Math.max(existing.right, bounds.x + bounds.w);
+      existing.bottom = Math.max(existing.bottom, bounds.y + bounds.h);
+    }
+  }
+  return [...grouped.values()].sort((left, right) => left.id.localeCompare(right.id)).map((region) => ({ id: region.id, ...(region.semantic_id ? { semantic_id: region.semantic_id } : {}), x: region.x, y: region.y, w: region.right - region.x, h: region.bottom - region.y, ...(region.label ? { label: region.label } : {}) }));
+}
+
+type BoundedAssetProjection = {
+  id: string;
+  type: string;
+  type_name?: string;
+  props: {
+    w?: number;
+    h?: number;
+    name?: string;
+    mime_type?: string | null;
+    file_size?: number;
+    is_animated?: boolean;
+    source_length?: number;
+    source_fingerprint?: string;
+  };
+  meta: Record<string, unknown>;
+};
+
+function boundedAssetMetadata(value: unknown): Record<string, unknown> {
+  if (!isRecord(value) || !isRecord(value.fogwood)) return {};
+  const root = value.fogwood;
+  if (root.kind !== 'material') return {};
+  const provenance = isRecord(root.provenance) ? root.provenance : {};
+  return {
+    fogwood: {
+      kind: 'material',
+      ...(typeof root.content_hash === 'string' ? { content_hash: root.content_hash.slice(0, 80) } : {}),
+      ...(typeof root.byte_length === 'number' ? { byte_length: root.byte_length } : {}),
+      ...(typeof root.mime_type === 'string' ? { mime_type: root.mime_type } : {}),
+      ...(typeof root.width === 'number' ? { width: root.width } : {}),
+      ...(typeof root.height === 'number' ? { height: root.height } : {}),
+      ...(root.source_status === 'original' || root.source_status === 'sanitized' ? { source_status: root.source_status } : {}),
+      ...(root.decode_qualified === true ? { decode_qualified: true } : {}),
+      provenance: {
+        ...(typeof provenance.originating_capability === 'string' ? { originating_capability: provenance.originating_capability.slice(0, 180) } : {}),
+        ...(typeof provenance.qualification_boundary === 'string' ? { qualification_boundary: provenance.qualification_boundary.slice(0, 500) } : {}),
+        ...(typeof provenance.prompt_summary === 'string' ? { prompt_summary: provenance.prompt_summary.slice(0, 500) } : {}),
+      },
+    },
+  };
+}
+
+function boundedAssetProjection(asset: unknown): BoundedAssetProjection | undefined {
+  if (!isRecord(asset) || typeof asset.id !== 'string' || typeof asset.type !== 'string') return undefined;
+  const props = isRecord(asset.props) ? asset.props : {};
+  const source = typeof props.src === 'string' ? props.src : undefined;
+  const sourceLength = source?.length;
+  const sourceFingerprint = source === undefined
+    ? undefined
+    : source.length <= 6 * 1024 * 1024
+      ? deterministicHash(source)
+      : `oversized-${source.length}`;
+  return {
+    id: asset.id,
+    type: asset.type,
+    ...(typeof asset.typeName === 'string' ? { type_name: asset.typeName } : {}),
+    props: {
+      ...(typeof props.w === 'number' ? { w: props.w } : {}),
+      ...(typeof props.h === 'number' ? { h: props.h } : {}),
+      ...(typeof props.name === 'string' ? { name: props.name.slice(0, 180) } : {}),
+      ...(typeof props.mimeType === 'string' || props.mimeType === null ? { mime_type: props.mimeType } : {}),
+      ...(typeof props.fileSize === 'number' ? { file_size: props.fileSize } : {}),
+      ...(typeof props.isAnimated === 'boolean' ? { is_animated: props.isAnimated } : {}),
+      ...(sourceLength === undefined ? {} : { source_length: sourceLength }),
+      ...(sourceFingerprint === undefined ? {} : { source_fingerprint: sourceFingerprint }),
+    },
+    // Only the Fogwood content-addressed metadata is inspectable. In
+    // particular, arbitrary host asset metadata and source/data URLs never
+    // cross the page inspection boundary.
+    meta: boundedAssetMetadata(asset.meta),
+  };
+}
+
+function assetRecords(editor: Editor): readonly TLAsset[] {
+  try {
+    if (typeof editor.getAssets === 'function') return editor.getAssets();
+  } catch {
+    // A test/editor double may not expose asset records; callers handle empty.
+  }
+  try {
+    return editor.store.allRecords().filter((record) => record.typeName === 'asset') as unknown as TLAsset[];
+  } catch {
+    return [];
+  }
+}
+
+function referencedAssets(editor: Editor, shapes = editor.getCurrentPageShapes()): BoundedAssetProjection[] {
+  const ids = new Set<string>();
+  for (const shape of shapes) {
+    if (shape.type !== 'image') continue;
+    const assetId = isRecord(shape.props) && typeof shape.props.assetId === 'string' ? shape.props.assetId : undefined;
+    if (assetId) ids.add(assetId);
+  }
+  return assetRecords(editor)
+    .filter((asset) => ids.has(String(asset.id)))
+    .map(boundedAssetProjection)
+    .filter((asset): asset is BoundedAssetProjection => Boolean(asset))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function pageContent(editor: Editor) {
   const shapes = editor.getCurrentPageShapesSorted();
   const shapeIds = new Set<string>(shapes.map((shape) => shape.id));
@@ -523,12 +712,12 @@ function pageContent(editor: Editor) {
     .filter((record) => record.typeName === 'binding')
     .map((record) => record as unknown as { fromId: string; toId: string; id: string; type: string; props: unknown })
     .filter((record) => shapeIds.has(record.fromId) && shapeIds.has(record.toId));
-  return { shapes, bindings };
+  return { shapes, bindings, assets: referencedAssets(editor, shapes), semantic_relationships: currentSemanticRelationships(shapes) };
 }
 
 export function currentRevision(editor: Editor) {
-  const { shapes, bindings } = pageContent(editor);
-  return computePageRevision(editor.getCurrentPageId(), shapes, bindings);
+  const { shapes, bindings, assets } = pageContent(editor);
+  return computePageRevision(editor.getCurrentPageId(), shapes, bindings, assets);
 }
 
 export type InstrumentControlUpdateOptions = {
@@ -649,10 +838,10 @@ function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
     id: shape.id,
     type_name: shape.typeName,
     type: shape.type,
-    x: Math.round(shape.x),
-    y: Math.round(shape.y),
-    w: Math.round(bounds?.w ?? 0),
-    h: Math.round(bounds?.h ?? 0),
+    x: shape.x,
+    y: shape.y,
+    w: bounds?.w ?? 0,
+    h: bounds?.h ?? 0,
     rotation: shape.rotation,
     parent_id: shape.parentId,
     is_locked: shape.isLocked,
@@ -666,8 +855,8 @@ function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
     return {
       ...base,
       kind: block.props.kind,
-      w: Math.round(block.props.w),
-      h: Math.round(block.props.h),
+      w: block.props.w,
+      h: block.props.h,
       props: {
         w: block.props.w,
         h: block.props.h,
@@ -681,12 +870,40 @@ function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
       text: [block.props.title, block.props.body, block.props.value].filter(Boolean).join(' ').slice(0, 500),
     };
   }
+  if (shape.type === 'image') {
+    const imageProps = shape.props as unknown as Record<string, unknown>;
+    const assetId = typeof imageProps.assetId === 'string' ? imageProps.assetId : undefined;
+    const asset = assetId ? assetRecords(editor).find((candidate) => String(candidate.id) === assetId) : undefined;
+    const assetProjection = boundedAssetProjection(asset);
+    const fogwoodAssetMeta = assetProjection && isRecord(assetProjection.meta.fogwood) ? assetProjection.meta.fogwood : undefined;
+    const materialMeta = fogwoodAssetMeta && isRecord(fogwoodAssetMeta.material)
+      ? fogwoodAssetMeta.material
+      : fogwoodAssetMeta?.kind === 'material'
+        ? fogwoodAssetMeta
+        : undefined;
+    return {
+      ...base,
+      kind: 'material',
+      w: typeof imageProps.w === 'number' ? imageProps.w : base.w,
+      h: typeof imageProps.h === 'number' ? imageProps.h : base.h,
+      props: {
+        w: typeof imageProps.w === 'number' ? imageProps.w : base.w,
+        h: typeof imageProps.h === 'number' ? imageProps.h : base.h,
+        asset_id: assetId ?? null,
+        alt_text: typeof imageProps.altText === 'string' ? imageProps.altText.slice(0, 240) : '',
+        ...(assetProjection ? { asset: assetProjection } : {}),
+        ...(materialMeta ? { material: boundedProps(materialMeta) } : {}),
+      },
+      text: typeof imageProps.altText === 'string' ? imageProps.altText.slice(0, 500) : '',
+    };
+  }
   const text = getNativeShapeText(editor, shape);
   return { ...base, props: nativePropsForInspection(shape), text };
 }
 
-function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: string; binding_page_size?: number; binding_cursor?: string } = {}) {
-  const { shapes, bindings } = pageContent(editor);
+export function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: string; binding_page_size?: number; binding_cursor?: string } = {}) {
+  const { shapes, bindings, semantic_relationships } = pageContent(editor);
+  const assets = referencedAssets(editor, shapes);
   const allItems = shapes.map((shape) => inspectItem(editor, shape));
   const pageSize = typeof input.page_size === 'number' && Number.isFinite(input.page_size)
     ? Math.max(1, Math.min(128, Math.trunc(input.page_size)))
@@ -714,29 +931,48 @@ function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: st
   const selectionLimit = 128;
   const selectedShapeIdsPage = selectedShapeIds.slice(0, selectionLimit);
   const selectionComplete = selectedShapeIdsPage.length >= selectedShapeIds.length;
+  const selectedSemanticIds = selectedShapeIdsPage.flatMap((id) => {
+    const item = allItems.find((candidate) => candidate.id === id);
+    return item?.semantic_id ? [item.semantic_id] : [];
+  });
+  const allRegions = currentRegions(shapes);
+  const regionLimit = 256;
+  const regions = allRegions.slice(0, regionLimit);
+  const regionComplete = regions.length >= allRegions.length;
+  const semanticRelationshipLimit = SPATIAL_LIMITS.max_relationships;
+  const semanticRelationshipItems = semantic_relationships.slice(0, semanticRelationshipLimit);
+  const semanticRelationshipComplete = semanticRelationshipItems.length >= semantic_relationships.length;
   return {
     protocol: { name: FOGWOOD_PROTOCOL, version: FOGWOOD_PROTOCOL_VERSION, registry_version: FOGWOOD_REGISTRY_VERSION },
     persistence: FOGWOOD_PERSISTENCE,
+    participation_contract: FOGWOOD_PARTICIPATION_CONTRACT,
     workflow: ['inspect', 'capability search', 'proposal', 'page Apply/Reject'],
     workflow_contract: 'inspect -> capability search -> proposal -> page Apply/Reject',
     authority: { agent: 'read current state, search local capabilities, and stage typed proposals', page: 'owns validation and Apply/Reject; only page Apply mutates content' },
     no_code: true,
     content_revision: currentRevision(editor),
-    revision_source: 'current-page-shapes-and-bindings; camera and selection excluded',
+    revision_source: 'current-page-shapes-bindings-and-referenced-asset-metadata; camera and selection excluded',
     page: {
       id: editor.getCurrentPageId(),
       bounds: pageBounds ? { x: pageBounds.x, y: pageBounds.y, w: pageBounds.w, h: pageBounds.h } : null,
       coordinate_system: 'page coordinates',
     },
     viewport: { page_coordinates: { x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h }, camera: { x: camera.x, y: camera.y, z: camera.z } },
-    selection: { shape_ids: selectedShapeIdsPage, focused_group_id: currentState.focusedGroupId ?? null, editing_shape_id: currentState.editingShapeId ?? null },
+    selection: { shape_ids: selectedShapeIdsPage, semantic_ids: selectedSemanticIds, focused_group_id: currentState.focusedGroupId ?? null, editing_shape_id: currentState.editingShapeId ?? null },
     selection_count: selectedShapeIds.length,
+    selection_semantic_ids: selectedSemanticIds,
     selection_completeness: { complete: selectionComplete, truncated: !selectionComplete, total: selectedShapeIds.length, returned: selectedShapeIdsPage.length, limit: selectionLimit },
-    counts: { shapes: shapes.length, blocks: blockCount, native_shapes: nativeCount, bindings: bindings.length, returned_items: items.length, returned_bindings: bindingItems.length },
+    counts: { shapes: shapes.length, blocks: blockCount, native_shapes: nativeCount, assets: assets.length, bindings: bindings.length, semantic_relationships: semantic_relationships.length, regions: allRegions.length, returned_items: items.length, returned_bindings: bindingItems.length },
+    semantic_relationship_count: semantic_relationships.length,
     supported_blocks: [...BLOCK_KINDS],
     supported_native_shapes: [...CANVAS_SHAPE_KINDS],
     items,
+    assets,
     bindings: bindingItems,
+    regions,
+    region_completeness: { complete: regionComplete, truncated: !regionComplete, total: allRegions.length, returned: regions.length, limit: regionLimit },
+    semantic_relationships: semanticRelationshipItems,
+    semantic_relationship_completeness: { complete: semanticRelationshipComplete, truncated: !semanticRelationshipComplete, total: semantic_relationships.length, returned: semanticRelationshipItems.length, limit: semanticRelationshipLimit },
     item_completeness: {
       complete: itemComplete,
       truncated: !itemComplete,
@@ -756,20 +992,38 @@ function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: st
       limit: bindingPageSize,
     },
     completeness: {
-      complete: itemComplete && bindingComplete,
-      truncated: !itemComplete || !bindingComplete,
+      complete: itemComplete && bindingComplete && regionComplete && semanticRelationshipComplete,
+      truncated: !itemComplete || !bindingComplete || !regionComplete || !semanticRelationshipComplete,
       cursor: offset === 0 ? undefined : String(offset),
       next_cursor: itemComplete ? undefined : String(nextOffset),
-      limits: { page_size: pageSize, block_data_items: 20, table_columns: 8, table_rows: 12, native_text: 500, native_props_depth: 6, native_props_entries: 64, binding_page_size: bindingPageSize },
+      limits: { page_size: pageSize, block_data_items: 20, table_columns: 8, table_rows: 12, native_text: 500, native_props_depth: 6, native_props_entries: 64, binding_page_size: bindingPageSize, regions: regionLimit, semantic_relationships: semanticRelationshipLimit },
     },
   };
 }
 
 function proposalContext(editor: Editor) {
+  const content = pageContent(editor);
+  const items = content.shapes.map((shape) => inspectItem(editor, shape));
+  let allSelectedShapeIds: readonly string[] = [];
+  try {
+    allSelectedShapeIds = [...editor.getCurrentPageState().selectedShapeIds];
+  } catch {
+    // Legacy editor doubles and older hosts may omit ephemeral selection APIs.
+  }
+  const selectedShapeIds = allSelectedShapeIds.slice(0, 128);
   return {
     current_revision: currentRevision(editor),
-    items: pageContent(editor).shapes.map((shape) => inspectItem(editor, shape)),
+    items,
     instrument_shapes: instrumentShapesForEditor(editor),
+    page_id: editor.getCurrentPageId(),
+    selection_semantic_ids: selectedShapeIds.flatMap((id) => {
+      const item = items.find((candidate) => candidate.id === id);
+      return item?.semantic_id ? [item.semantic_id] : [];
+    }),
+    selection_complete: allSelectedShapeIds.length <= 128,
+    selection_total: allSelectedShapeIds.length,
+    regions: currentRegions(content.shapes),
+    semantic_relationships: content.semantic_relationships,
   };
 }
 
@@ -795,6 +1049,7 @@ function expandActions(actions: readonly ProposalAction[], recipeInstanceIdFor: 
       ...operation,
       recipeMeta: {
         recipe_id: recipe.id,
+        composition_id: recipe.version === 2 ? recipe.id : undefined,
         recipe_version: recipe.version,
         recipe_instance_id: recipeInstanceId,
       },
@@ -828,8 +1083,283 @@ function nextRecipeInstanceId(editor: Editor, recipeId: string, used: Set<string
   return undefined;
 }
 
+function materialDataUrl(material: PreparedMaterial) {
+  if (!isRecord(material) || !/^sha256:[0-9a-f]{64}$/u.test(material.content_hash)) throw new Error('The material content hash is not canonical.');
+  if (material.base64 !== material.canonical_base64 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(material.base64)) throw new Error('The material base64 is not canonical.');
+  if (!Number.isSafeInteger(material.byte_length) || material.byte_length < 1) throw new Error('The material byte length is invalid.');
+  return `data:${material.mime_type};base64,${material.base64}`;
+}
+
+function materialAssetMeta(material: PreparedMaterial): JsonObject {
+  return {
+    fogwood: {
+      kind: 'material',
+      content_hash: material.content_hash,
+      byte_length: material.byte_length,
+      mime_type: material.mime_type,
+      width: material.dimensions.width,
+      height: material.dimensions.height,
+      source_status: material.source_status,
+      decode_qualified: material.decode_qualified,
+      provenance: {
+        originating_capability: material.originating_capability,
+        qualification_boundary: material.qualification_boundary,
+        prompt_summary: material.prompt_summary,
+      },
+    },
+  };
+}
+
+function findContentAddressedAsset(editor: Editor, material: PreparedMaterial, expectedSrc: string, expectedId: TLAssetId) {
+  return assetRecords(editor).find((asset) => {
+    if (asset.type !== 'image' || !isRecord(asset.meta) || !isRecord(asset.meta.fogwood)) return false;
+    const fogwood = asset.meta.fogwood;
+    const props: Record<string, unknown> = isRecord(asset.props) ? asset.props : {};
+    return asset.id === expectedId
+      && fogwood.kind === 'material'
+      && fogwood.content_hash === material.content_hash
+      && fogwood.byte_length === material.byte_length
+      && fogwood.mime_type === material.mime_type
+      && fogwood.width === material.dimensions.width
+      && fogwood.height === material.dimensions.height
+      && fogwood.source_status === material.source_status
+      && fogwood.decode_qualified === true
+      && props.mimeType === material.mime_type
+      && props.w === material.dimensions.width
+      && props.h === material.dimensions.height
+      && props.src === expectedSrc;
+  });
+}
+
+function addMaterialShapes(
+  editor: Editor,
+  materials: readonly PreparedMaterial[],
+  createdAssetIds: TLAssetId[],
+) {
+  if (materials.length === 0) return [] as TLShapeId[];
+  if (typeof editor.createAssets !== 'function' || typeof editor.createShapes !== 'function') throw new Error('This page adapter does not expose the built-in tldraw asset and image-shape APIs.');
+  const pageId = editor.getCurrentPageId() as TLParentId;
+  const shapes: Array<Record<string, unknown>> = [];
+  for (const material of materials) {
+    if (!isPreparedMaterial(material) || !material.decode_qualified) throw new Error('Material decode proof was not retained through Apply.');
+    const src = materialDataUrl(material);
+    const assetId = AssetRecordType.createId(`fogwood-material-${material.content_hash.slice('sha256:'.length)}`) as TLAssetId;
+    const existing = findContentAddressedAsset(editor, material, src, assetId);
+    let asset = existing;
+    if (!asset) {
+      if (assetRecords(editor).some((candidate) => candidate.id === assetId)) throw new Error('The content-addressed asset id is already occupied by different bytes or metadata.');
+      asset = AssetRecordType.create({
+        id: assetId,
+        type: 'image',
+        props: {
+          w: material.dimensions.width,
+          h: material.dimensions.height,
+          name: material.label || material.semantic_id,
+          isAnimated: false,
+          mimeType: material.mime_type,
+          src,
+          fileSize: material.byte_length,
+        },
+        meta: materialAssetMeta(material),
+      });
+      editor.createAssets([asset]);
+      createdAssetIds.push(asset.id);
+    }
+    const imageAsset = asset as TLAsset & { type: 'image'; props: { w: number; h: number } };
+    const shapeId = createShapeId();
+    shapes.push({
+      id: shapeId,
+      type: 'image',
+      x: material.x,
+      y: material.y,
+      parentId: pageId,
+      meta: {
+        fogwood: {
+          semantic_id: material.semantic_id,
+          semantic_id_source: 'stable',
+          role: 'proposal-material',
+          material_hash: material.content_hash,
+          byte_length: material.byte_length,
+          source_status: material.source_status,
+          originating_capability: material.originating_capability,
+          qualification_boundary: material.qualification_boundary,
+        },
+      },
+      props: {
+        w: material.w,
+        h: material.h,
+        playing: false,
+        url: '',
+        assetId: imageAsset.id,
+        crop: null,
+        flipX: false,
+        flipY: false,
+        altText: material.alt || material.label || material.semantic_id,
+      },
+    });
+  }
+  editor.createShapes(shapes as never);
+  return shapes.map((shape) => shape.id as TLShapeId);
+}
+
+function cleanupUnreferencedAssets(editor: Editor, assetIds: readonly TLAssetId[]) {
+  if (assetIds.length === 0 || typeof editor.deleteAssets !== 'function') return;
+  const referenced = new Set<string>();
+  for (const shape of editor.getCurrentPageShapes()) {
+    if (shape.type !== 'image') continue;
+    const assetId = isRecord(shape.props) && typeof shape.props.assetId === 'string' ? shape.props.assetId : undefined;
+    if (assetId) referenced.add(assetId);
+  }
+  const orphaned = assetIds.filter((id) => !referenced.has(String(id)));
+  if (orphaned.length > 0) editor.deleteAssets(orphaned);
+}
+
+function spatialContextForEditor(editor: Editor) {
+  const content = pageContent(editor);
+  const items = content.shapes.map((shape) => inspectItem(editor, shape));
+  let allSelectedShapeIds: readonly string[] = [];
+  try {
+    allSelectedShapeIds = [...editor.getCurrentPageState().selectedShapeIds];
+  } catch {
+    // Minimal editor doubles may omit ephemeral selection APIs.
+  }
+  const selectedShapeIds = allSelectedShapeIds.slice(0, 128);
+  return {
+    page_id: editor.getCurrentPageId(),
+    items,
+    selection_semantic_ids: selectedShapeIds.flatMap((id) => {
+      const item = items.find((candidate) => candidate.id === id);
+      return item?.semantic_id ? [item.semantic_id] : [];
+    }),
+    selection_complete: allSelectedShapeIds.length <= 128,
+    selection_total: allSelectedShapeIds.length,
+    regions: currentRegions(content.shapes),
+    semantic_relationships: content.semantic_relationships,
+  };
+}
+
+function cloneShapeRecord(shape: TLShape): Record<string, unknown> {
+  const cloneValue = (value: unknown): unknown => {
+    if (typeof structuredClone === 'function') {
+      try {
+        return structuredClone(value);
+      } catch {
+        // JSON fallback below is sufficient for tldraw's plain shape records.
+      }
+    }
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return value;
+    }
+  };
+  return cloneValue(shape) as Record<string, unknown>;
+}
+
+function spatialCreateShape(
+  editor: Editor,
+  create: SpatialCreatePlan,
+) {
+  const source = create.source_shape_id ? editor.getShape(create.source_shape_id as TLShapeId) : undefined;
+  if (create.kind === 'variant' && !source) throw new Error(`Variant source ${create.source_shape_id ?? ''} no longer exists.`);
+  if (create.kind === 'variant' && source) {
+    const clone = cloneShapeRecord(source);
+    const id = createShapeId();
+    const sourceMeta = fogwoodMeta(source);
+    const variantSourceMeta = { ...sourceMeta };
+    for (const key of ['relationship_id', 'relationship_kind', 'source_semantic_id', 'target_semantic_id', 'relationship_label'] as const) delete variantSourceMeta[key];
+    const fogwood = {
+      ...variantSourceMeta,
+      semantic_id: create.semantic_id,
+      semantic_id_source: 'stable',
+      role: 'variant',
+      variant_id: create.variant_id ?? create.semantic_id,
+      ...(create.parent_variant_id ? { parent_variant_id: create.parent_variant_id } : {}),
+      ...(create.lineage_source_id ? { lineage_source_id: create.lineage_source_id } : {}),
+    } satisfies FogwoodMeta;
+    const props = isRecord(clone.props) ? { ...clone.props } : {};
+    if (create.patches?.text !== undefined) {
+      if (source.type === 'image') props.altText = create.patches.text;
+      else props.richText = toRichText(create.patches.text);
+    }
+    if (create.patches?.color !== undefined) {
+      props.color = create.patches.color;
+      if ('labelColor' in props) props.labelColor = create.patches.color;
+    }
+    if (create.patches?.fill !== undefined) props.fill = create.patches.fill;
+    clone.id = id;
+    clone.x = create.x;
+    clone.y = create.y;
+    clone.parentId = editor.getCurrentPageId();
+    clone.meta = {
+      ...(isRecord(source.meta) ? source.meta : {}),
+      ...shapeMeta(String(id), fogwood),
+    };
+    clone.props = props;
+    editor.createShapes([clone] as never);
+    return id as TLShapeId;
+  }
+  const ids = addCanvasShapes(editor, [{
+    kind: 'note',
+    x: create.x,
+    y: create.y,
+    w: create.w,
+    h: create.h,
+    text: create.text ?? '',
+    semantic_id: create.semantic_id,
+    role: 'annotation',
+    lineage_source_id: create.lineage_source_id,
+  }], {
+    coordinateSpace: 'page',
+    focusAfter: false,
+    select: false,
+    recordHistory: false,
+    parentId: editor.getCurrentPageId(),
+    fogwood: {
+      semantic_id: create.semantic_id,
+      semantic_id_source: 'stable',
+      role: 'annotation',
+      ...(create.source_semantic_id ? { lineage_source_id: create.source_semantic_id } : {}),
+    },
+  });
+  return ids[0];
+}
+
+function spatialRelationshipShape(editor: Editor, relationship: SemanticRelationship, recipeMeta?: FogwoodMeta) {
+  const items = spatialContextForEditor(editor).items;
+  const source = items.find((item) => item.semantic_id === relationship.source_semantic_id);
+  const target = items.find((item) => item.semantic_id === relationship.target_semantic_id);
+  if (!source || !target) throw new Error(`Relationship ${relationship.id} target no longer exists.`);
+  return addCanvasShapes(editor, [{
+    kind: 'arrow',
+    x: source.x + source.w / 2,
+    y: source.y + source.h / 2,
+    end_x: target.x + target.w / 2,
+    end_y: target.y + target.h / 2,
+    text: relationship.label ?? '',
+  }], {
+    coordinateSpace: 'page',
+    focusAfter: false,
+    select: false,
+    recordHistory: false,
+    parentId: editor.getCurrentPageId(),
+    fogwood: {
+      semantic_id: relationshipSemanticId(relationship.id),
+      semantic_id_source: 'stable',
+      role: 'semantic-relationship',
+      ...(recipeMeta ?? {}),
+      relationship_id: relationship.id,
+      relationship_kind: relationship.kind,
+      source_semantic_id: relationship.source_semantic_id,
+      target_semantic_id: relationship.target_semantic_id,
+      ...(relationship.label ? { relationship_label: relationship.label } : {}),
+    },
+  })[0];
+}
+
 export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
   if (currentRevision(editor) !== proposal.base_revision) return { ok: false as const, status: 'STALE_STATE' as const, message: 'The page changed; inspect again and re-propose before applying.' };
+  if (typeof editor.getIsReadonly === 'function' && editor.getIsReadonly()) return { ok: false as const, status: 'ERROR' as const, message: 'This page is read-only; no proposal changes were applied.' };
   const validation = validateProposal(proposal, proposalContext(editor));
   if (!validation.ok) {
     const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
@@ -847,6 +1377,19 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
     return allocated ?? '';
   });
   if (scopeAllocationError) return { ok: false as const, status: 'ERROR' as const, message: 'The bounded recipe-instance scope is full; no changes were applied.' };
+  const materialActions = actions.filter((action): action is Extract<ProposalAction, { type: 'add_materials' }> => action.type === 'add_materials');
+  const preparedMaterials = materialActions.flatMap((action) => action.materials);
+  if (preparedMaterials.length > 0 && (typeof editor.createAssets !== 'function' || typeof editor.createShapes !== 'function')) {
+    return { ok: false as const, status: 'ERROR' as const, message: 'The page adapter does not expose the built-in tldraw asset and image-shape APIs; no changes were applied.' };
+  }
+  for (const material of preparedMaterials) {
+    try {
+      if (!isPreparedMaterial(material) || !material.decode_qualified) throw new Error('Material decode proof was not retained through Apply.');
+      materialDataUrl(material);
+    } catch (error) {
+      return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The material was refused before Apply.' };
+    }
+  }
   let instrumentUpdates: Array<{ id: TLShapeId; type: 'surface-block'; props: { value: string; data: string } }> = [];
   for (const action of actions) {
     if (action.type !== 'set_instrument_inputs') continue;
@@ -882,7 +1425,54 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
   if ([...compareRecipeBlockCounts.values()].some((count) => count !== COMPARE_INSTRUMENT_INSTANCE_IDS.length + 2)) {
     return { ok: false as const, status: 'ERROR' as const, message: 'The immutable Compare recipe mapping was incomplete; no changes were applied.' };
   }
+  const spatialContext = spatialContextForEditor(editor);
+  const spatialMovePlans = new Map<ProposalAction, ReturnType<typeof planSpatialMoves>>();
+  const relationshipPlans = new Map<ProposalAction, SemanticRelationship[]>();
+  // v2 relationships intentionally arrive in the same proposal as their
+  // native endpoints. Validate those endpoints before mutation by projecting
+  // the bounded composition shapes into the spatial grammar; the real arrows
+  // are still created only after the editor has created the native shapes.
+  const compositionItems = actions.flatMap((action) => {
+    if (action.type !== 'add_shapes') return [];
+    const recipeMeta = 'recipeMeta' in action
+      ? (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta
+      : undefined;
+    if (recipeMeta?.recipe_version !== 2) return [];
+    return action.shapes.map((shape) => {
+      const compositionShape = shape as typeof shape & {
+        semantic_id: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+      };
+      return {
+      id: `composition:${recipeMeta.recipe_instance_id ?? recipeMeta.recipe_id}:${compositionShape.semantic_id}`,
+      semantic_id: compositionShape.semantic_id,
+      semantic_id_source: 'stable',
+      type: shape.kind,
+      kind: shape.kind,
+      x: compositionShape.x,
+      y: compositionShape.y,
+      w: compositionShape.w,
+      h: compositionShape.h,
+      parent_id: spatialContext.page_id,
+      };
+    });
+  });
+  const relationshipContext = compositionItems.length > 0
+    ? { ...spatialContext, items: [...spatialContext.items, ...compositionItems] }
+    : spatialContext;
+  try {
+    for (const action of actions) {
+      if (action.type === 'apply_spatial_moves') spatialMovePlans.set(action, planSpatialMoves(spatialContext, action));
+      if (action.type === 'add_relationships') relationshipPlans.set(action, [...planRelationships(relationshipContext, action.relationships).relationships]);
+    }
+  } catch (error) {
+    return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The spatial proposal was rejected before mutation.' };
+  }
   const compareBlocksByScope = new Map<string, TLShapeId[]>();
+  const createdAssetIds: TLAssetId[] = [];
   try {
     editor.markHistoryStoppingPoint('Apply agent proposal');
     editor.run(() => {
@@ -901,6 +1491,24 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
           }
         } else if (action.type === 'add_shapes') {
           addCanvasShapes(editor, action.shapes, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
+        } else if (action.type === 'add_materials') {
+          addMaterialShapes(editor, action.materials as readonly PreparedMaterial[], createdAssetIds);
+        } else if (action.type === 'apply_spatial_moves') {
+          const plan = spatialMovePlans.get(action);
+          if (!plan) throw new Error('Spatial move plan was not retained through Apply.');
+          const moveUpdates = plan.moves.map((move) => ({
+            id: move.shape_id as TLShapeId,
+            type: editor.getShape(move.shape_id as TLShapeId)?.type ?? 'geo',
+            x: move.after.x,
+            y: move.after.y,
+            rotation: move.after.rotation,
+          }));
+          if (moveUpdates.length > 0) editor.updateShapes(moveUpdates as never);
+          for (const create of plan.creates) spatialCreateShape(editor, create);
+        } else if (action.type === 'add_relationships') {
+          // Relationship metadata is canonical, but arrow geometry is derived
+          // from the final positions. Project these after all action-order
+          // spatial moves below, still inside this one history transaction.
         } else if (action.type === 'update_blocks') {
           updateSurfaceBlocks(editor, action.updates, { recordHistory: false });
         } else if (action.type === 'place_items') {
@@ -916,6 +1524,15 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
           editor.updateShapes(instrumentUpdates as never);
         }
       }
+      for (const action of actions) {
+        if (action.type !== 'add_relationships') continue;
+        const relationships = relationshipPlans.get(action);
+        if (!relationships) throw new Error('Relationship plan was not retained through Apply.');
+        const recipeMeta = 'recipeMeta' in action
+          ? (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta
+          : undefined;
+        for (const relationship of relationships) spatialRelationshipShape(editor, relationship, recipeMeta);
+      }
       for (const [recipeInstanceId, blockIds] of compareBlocksByScope) {
         const shapeIds = compareShapeIdsFromRecipeBlocks(blockIds.map(String));
         if (Object.keys(shapeIds).length !== COMPARE_INSTRUMENT_INSTANCE_IDS.length) throw new Error('Compare recipe block mapping was incomplete.');
@@ -927,7 +1544,12 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
       }
     }, { history: 'record' });
   } catch (error) {
+    cleanupUnreferencedAssets(editor, createdAssetIds);
     return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The page rejected the proposal.' };
+  }
+  if (currentRevision(editor) === proposal.base_revision) {
+    cleanupUnreferencedAssets(editor, createdAssetIds);
+    return { ok: false as const, status: 'ERROR' as const, message: 'The page reported no content change; Apply was not recorded.' };
   }
   return { ok: true as const };
 }
@@ -936,6 +1558,23 @@ export type SurfaceToolController = ReturnType<typeof createProposalController> 
   stageRecipe: (recipeId: string) => ProposalControllerResult;
 };
 
+export type SurfaceMaterialOptions = {
+  /** Test and host seam for browser image decode qualification. */
+  decodeRaster?: MaterialDecoder;
+};
+
+function browserRasterDecoder(document: Document): MaterialDecoder {
+  return async ({ mime_type, bytes }) => {
+    const view = document.defaultView as (Window & { createImageBitmap?: (blob: Blob) => Promise<{ width: number; height: number; close?: () => void }>; Blob?: typeof Blob }) | null;
+    if (!view?.createImageBitmap || !view.Blob) throw new Error('Browser image decode is unavailable on this page.');
+    const blob = new view.Blob([new Uint8Array(bytes)], { type: mime_type });
+    const bitmap = await view.createImageBitmap(blob);
+    const result = { width: bitmap.width, height: bitmap.height };
+    bitmap.close?.();
+    return result;
+  };
+}
+
 export function registerSurfaceTools(
   editor: Editor,
   onConnection: (connection: ToolConnection) => void,
@@ -943,6 +1582,7 @@ export function registerSurfaceTools(
   onProposalChange?: (state: ProposalControllerState | null) => void,
   onController?: (controller: SurfaceToolController) => void,
   onProposalLifecycle?: (event: ProposalLifecycleEvent) => void,
+  options: SurfaceMaterialOptions = {},
 ) {
   const baseController = createProposalController(
     { getRevision: () => currentRevision(editor), apply: (proposal) => applyProposalToEditor(editor, proposal) },
@@ -956,13 +1596,13 @@ export function registerSurfaceTools(
   const controller: SurfaceToolController = {
     ...lifecycleController,
     stageRecipe(recipeId) {
-      const recipe = getRecipe(recipeId, 1);
+      const recipe = getRecipe(recipeId, 2) ?? getRecipe(recipeId, 1);
       if (!recipe) return { status: 'ERROR', message: 'Unknown immutable recipe.' };
       const proposal = {
         base_revision: currentRevision(editor),
         summary: `Review ${recipe.title}`.slice(0, 180),
         rationale: recipe.purpose.slice(0, 500),
-        actions: [{ type: 'insert_recipe', recipe_id: recipe.id, version: 1 }],
+        actions: [{ type: 'insert_recipe', recipe_id: recipe.id, version: recipe.version }],
       } satisfies ProposalV1;
       const validation = validateProposal(proposal, proposalContext(editor));
       if (!validation.ok) return { status: 'ERROR', message: validation.errors.map((error) => error.message).join(' ') };
@@ -973,11 +1613,14 @@ export function registerSurfaceTools(
   };
   onController?.(controller);
 
+  const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
+  const decodeRaster = options.decodeRaster ?? browserRasterDecoder(containerDocument);
+
   const tools: WebMcpTool[] = [
     {
       name: 'fogwood-inspect',
       title: 'Inspect Fogwood',
-      description: 'Read the bounded Fogwood operating contract and complete or paginated current-page state. This is read-only, device-local, and excludes camera and selection from the opaque content revision.',
+      description: 'Inspect the live Fogwood canvas and spatial state first, including the participation contract, complete or paginated current-page state, semantic relationships, and bounded assets. This is read-only, device-local, and excludes camera and selection from the opaque content revision.',
       inputSchema: INSPECT_INPUT_SCHEMA,
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: (input) => {
@@ -995,7 +1638,7 @@ export function registerSurfaceTools(
     {
       name: 'fogwood-capabilities',
       title: 'Search Fogwood capabilities',
-      description: 'Search the immutable local Fogwood registry of read-only tools, bounded actions, primitives, and recipes. Results contain schemas and definitions only; there is no executable code or fetch URL.',
+      description: 'Search the bounded host-facing Fogwood vocabulary of materials, moves, adapters, aesthetics, algorithms, provocations, primitives, and recipes. Results contain schemas and definitions only; there is no executable code or fetch URL, and host availability must be observed separately.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -1022,10 +1665,22 @@ export function registerSurfaceTools(
     {
       name: 'fogwood-propose',
       title: 'Propose a Fogwood change',
-      description: 'Validate and stage one bounded typed proposal against an inspect content_revision. The proposal never mutates the canvas; a person must review the diff and choose page Apply or Reject.',
+      description: 'Validate and stage one bounded typed composition or page proposal against an inspect content_revision. The proposal never mutates the canvas; a person must review the diff and choose page Apply or Reject.',
       inputSchema: PROPOSAL_INPUT_SCHEMA,
       annotations: { untrustedContentHint: true },
       execute: (input) => {
+        if (isRecord(input) && Array.isArray(input.actions) && input.actions.some((action) => isRecord(action) && action.type === 'add_materials')) {
+          return validateProposalAsync(input, proposalContext(editor), { decodeRaster }).then((validation) => {
+            if (!validation.ok) {
+              const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
+              return textResult({ status: stale ? 'STALE_STATE' : 'INVALID_PROPOSAL', errors: validation.errors }, true);
+            }
+            const staged = controller.stage(validation.proposal, validation.diff);
+            if (staged.status !== 'STAGED') return textResult({ status: staged.status, message: staged.message }, true);
+            onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
+            return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
+          });
+        }
         const validation = validateProposal(input, proposalContext(editor));
         if (!validation.ok) {
           const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
@@ -1051,7 +1706,6 @@ export function registerSurfaceTools(
     },
   ];
 
-  const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
   const ContainerAbortController = containerDocument.defaultView?.AbortController ?? AbortController;
   return registerWebMcpTools({
     tools,

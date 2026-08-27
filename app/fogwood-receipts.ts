@@ -7,10 +7,17 @@
  * injected storage adapter.
  */
 
+import {
+  canonicalSerialize,
+  sha256Hex,
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+} from './fogwood-identities.ts';
+
 export const RECEIPT_SCHEMA_VERSION = 1 as const;
 export const RECEIPT_LEDGER_SCHEMA_VERSION = 1 as const;
 export const RECEIPT_STORAGE_KEY = 'fogwood-receipts-local:v1' as const;
 export const RECEIPT_BATCH_LIMIT = 16 as const;
+export const RECEIPT_MATERIAL_EVIDENCE_LIMIT = 32 as const;
 /** Alias that makes the storage boundary easy to discover from app code. */
 export const FOGWOOD_RECEIPTS_STORAGE_KEY = RECEIPT_STORAGE_KEY;
 
@@ -36,11 +43,31 @@ export type ReceiptIdentity = {
   hash?: string;
   /** Canonical Bazaar package spelling; accepted for every identity. */
   content_hash?: string;
+  /** Binds separately projected material evidence to this proposal identity. */
+  material_evidence_hash?: string;
 };
 
 export type ReceiptArtifact = {
   format: string;
   hash: string;
+};
+
+export type ReceiptMaterialEvidence = {
+  semantic_id: string;
+  content_hash: string;
+  byte_length: number;
+  mime_type: 'image/png' | 'image/jpeg' | 'image/svg+xml';
+  width: number;
+  height: number;
+  source_status: 'original' | 'sanitized';
+  decode_qualified: true;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  originating_capability: string;
+  qualification_boundary: string;
+  prompt_summary: string;
 };
 
 export type ReceiptDraft = {
@@ -51,6 +78,7 @@ export type ReceiptDraft = {
   proposal?: ReceiptIdentity;
   package?: ReceiptIdentity;
   recipe?: ReceiptIdentity;
+  material_evidence?: readonly ReceiptMaterialEvidence[];
   outcome: ReceiptOutcome;
   locality?: ReceiptLocality;
   qualification_boundary: string;
@@ -74,6 +102,7 @@ export type Receipt = Readonly<{
   proposal?: Readonly<ReceiptIdentity>;
   package?: Readonly<ReceiptIdentity>;
   recipe?: Readonly<ReceiptIdentity>;
+  material_evidence?: readonly ReceiptMaterialEvidence[];
   outcome: ReceiptOutcome;
   qualification_boundary: string;
   warnings: readonly string[];
@@ -229,6 +258,7 @@ const DRAFT_KEYS = [
   'proposal',
   'package',
   'recipe',
+  'material_evidence',
   'outcome',
   'locality',
   'qualification_boundary',
@@ -476,15 +506,17 @@ function normalizeIdentity(
     addError(errors, 'INVALID_IDENTITY', 'Identity must include id, version, and hash.', path);
     return undefined;
   }
-  if (!hasOnlyKeys(value, ['id', 'version', 'hash', 'content_hash'])) addError(errors, 'UNKNOWN_FIELD', 'Identity contains an unknown field.', path);
+  if (!hasOnlyKeys(value, ['id', 'version', 'hash', 'content_hash', 'material_evidence_hash'])) addError(errors, 'UNKNOWN_FIELD', 'Identity contains an unknown field.', path);
   const id = boundedString(value.id, limits.max_identity_length) ? value.id : undefined;
   if (id === undefined) addError(errors, 'INVALID_IDENTITY_ID', 'Identity id must be a bounded non-empty string.', `${path}.id`);
   const version = normalizeVersion(value.version, path, errors);
   const hash = canonicalHash(value.hash, limits.max_hash_length) ? value.hash : undefined;
   const contentHash = canonicalHash(value.content_hash, limits.max_hash_length) ? value.content_hash : undefined;
+  const materialEvidenceHash = canonicalHash(value.material_evidence_hash, limits.max_hash_length) ? value.material_evidence_hash : undefined;
   if (hash === undefined && contentHash === undefined) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity must include a bounded non-empty hash or content_hash.', `${path}.hash`);
   if (value.hash !== undefined && !canonicalHash(value.hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.hash`);
   if (value.content_hash !== undefined && !canonicalHash(value.content_hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity content_hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.content_hash`);
+  if (value.material_evidence_hash !== undefined && !canonicalHash(value.material_evidence_hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity material_evidence_hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.material_evidence_hash`);
   if (hash !== undefined && contentHash !== undefined && hash !== contentHash) addError(errors, 'IDENTITY_HASH_MISMATCH', 'hash and content_hash must match when both are supplied.', path);
   if (id === undefined || version === undefined || errors.some((error) => error.path === path || error.path?.startsWith(`${path}.`))) return undefined;
   return {
@@ -492,7 +524,12 @@ function normalizeIdentity(
     version,
     ...(hash === undefined ? {} : { hash }),
     ...(contentHash === undefined ? {} : { content_hash: contentHash }),
+    ...(materialEvidenceHash === undefined ? {} : { material_evidence_hash: materialEvidenceHash }),
   };
+}
+
+export function hashReceiptMaterialEvidence(value: readonly ReceiptMaterialEvidence[]) {
+  return `sha256:${sha256Hex(canonicalSerialize(value))}`;
 }
 
 function normalizeArtifact(
@@ -538,6 +575,59 @@ function normalizeStringList(
   return normalized.slice(0, limit);
 }
 
+function normalizeMaterialEvidence(
+  value: unknown,
+  path: string,
+  limits: ReceiptLedgerLimits,
+  errors: ReceiptValidationError[],
+): ReceiptMaterialEvidence[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'material_evidence must be a bounded array.', path);
+    return undefined;
+  }
+  if (value.length > RECEIPT_MATERIAL_EVIDENCE_LIMIT) addError(errors, 'MATERIAL_EVIDENCE_LIMIT', 'material_evidence exceeds its configured bound.', path);
+  const normalized: ReceiptMaterialEvidence[] = [];
+  value.slice(0, RECEIPT_MATERIAL_EVIDENCE_LIMIT).forEach((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    if (!isRecord(entry)) {
+      addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'Each material evidence entry must be an object.', entryPath);
+      return;
+    }
+    const allowed = ['semantic_id', 'content_hash', 'byte_length', 'mime_type', 'width', 'height', 'source_status', 'decode_qualified', 'x', 'y', 'w', 'h', 'originating_capability', 'qualification_boundary', 'prompt_summary'];
+    if (!hasOnlyKeys(entry, allowed)) addError(errors, 'UNKNOWN_FIELD', 'Material evidence contains an unknown field.', entryPath);
+    const semanticId = boundedString(entry.semantic_id, limits.max_identity_length) ? entry.semantic_id : undefined;
+    const contentHash = canonicalHash(entry.content_hash, limits.max_hash_length) ? entry.content_hash : undefined;
+    const mimeType = entry.mime_type === 'image/png' || entry.mime_type === 'image/jpeg' || entry.mime_type === 'image/svg+xml' ? entry.mime_type : undefined;
+    const sourceStatus = entry.source_status === 'original' || entry.source_status === 'sanitized' ? entry.source_status : undefined;
+    const decodeQualified = entry.decode_qualified === true;
+    const byteLength = isFiniteNumber(entry.byte_length) && Number.isSafeInteger(entry.byte_length) && entry.byte_length >= 1 && entry.byte_length <= 12 * 1024 * 1024 ? entry.byte_length : undefined;
+    const width = isFiniteNumber(entry.width) && Number.isSafeInteger(entry.width) && entry.width >= 1 && entry.width <= 8192 ? entry.width : undefined;
+    const height = isFiniteNumber(entry.height) && Number.isSafeInteger(entry.height) && entry.height >= 1 && entry.height <= 8192 ? entry.height : undefined;
+    const x = isFiniteNumber(entry.x) && entry.x >= -100_000 && entry.x <= 100_000 ? entry.x : undefined;
+    const y = isFiniteNumber(entry.y) && entry.y >= -100_000 && entry.y <= 100_000 ? entry.y : undefined;
+    const w = isFiniteNumber(entry.w) && entry.w >= 16 && entry.w <= 8192 ? entry.w : undefined;
+    const h = isFiniteNumber(entry.h) && entry.h >= 16 && entry.h <= 8192 ? entry.h : undefined;
+    const originatingCapability = boundedString(entry.originating_capability, limits.max_identity_length) ? entry.originating_capability : undefined;
+    const qualificationBoundary = boundedString(entry.qualification_boundary, limits.max_string_length) ? entry.qualification_boundary : undefined;
+    const promptSummary = boundedString(entry.prompt_summary, limits.max_string_length) ? entry.prompt_summary : undefined;
+    if (semanticId === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'semantic_id must be a bounded non-empty string.', `${entryPath}.semantic_id`);
+    if (contentHash === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'content_hash must use the canonical sha256:<64 lowercase hex> form.', `${entryPath}.content_hash`);
+    if (byteLength === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'byte_length must be a bounded positive safe integer.', `${entryPath}.byte_length`);
+    if (mimeType === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'mime_type must be one of the supported material types.', `${entryPath}.mime_type`);
+    if (sourceStatus === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'source_status must be original or sanitized.', `${entryPath}.source_status`);
+    if (!decodeQualified) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'decode_qualified must be true for recorded material evidence.', `${entryPath}.decode_qualified`);
+    if (width === undefined || height === undefined || (width !== undefined && height !== undefined && width * height > 16_000_000)) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'Material evidence dimensions must stay within the bounded pixel limit.', entryPath);
+    if (x === undefined || y === undefined || w === undefined || h === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'Material evidence placement must stay within the bounded page/display limits.', entryPath);
+    if (originatingCapability === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'originating_capability must be a bounded non-empty string.', `${entryPath}.originating_capability`);
+    if (qualificationBoundary === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'qualification_boundary must be a bounded non-empty string.', `${entryPath}.qualification_boundary`);
+    if (promptSummary === undefined) addError(errors, 'INVALID_MATERIAL_EVIDENCE', 'prompt_summary must be a bounded non-empty string.', `${entryPath}.prompt_summary`);
+    if (semanticId === undefined || contentHash === undefined || byteLength === undefined || mimeType === undefined || sourceStatus === undefined || width === undefined || height === undefined || x === undefined || y === undefined || w === undefined || h === undefined || originatingCapability === undefined || qualificationBoundary === undefined || promptSummary === undefined) return;
+    normalized.push({ semantic_id: semanticId, content_hash: contentHash, byte_length: byteLength, mime_type: mimeType, width, height, source_status: sourceStatus, decode_qualified: true, x, y, w, h, originating_capability: originatingCapability, qualification_boundary: qualificationBoundary, prompt_summary: promptSummary });
+  });
+  return normalized;
+}
+
 /**
  * Normalize and validate an event draft. This function intentionally does not
  * assign receipt IDs, timestamps, or sequence numbers; validation is pure and
@@ -570,6 +660,13 @@ function validateDraft(input: unknown, limits: ReceiptLedgerLimits): ReceiptVali
   const proposal = input.proposal === undefined ? undefined : normalizeIdentity(input.proposal, 'proposal', limits, errors);
   const packageIdentity = input.package === undefined ? undefined : normalizeIdentity(input.package, 'package', limits, errors);
   const recipe = input.recipe === undefined ? undefined : normalizeIdentity(input.recipe, 'recipe', limits, errors);
+  const materialEvidence = normalizeMaterialEvidence(input.material_evidence, 'material_evidence', limits, errors);
+  if (materialEvidence && materialEvidence.length > 0) {
+    const expectedEvidenceHash = hashReceiptMaterialEvidence(materialEvidence);
+    if (proposal?.material_evidence_hash !== expectedEvidenceHash) {
+      addError(errors, 'MATERIAL_EVIDENCE_HASH_MISMATCH', 'Material evidence must match the digest bound into the proposal identity.', 'material_evidence');
+    }
+  }
   const artifact = input.artifact === undefined ? undefined : normalizeArtifact(input.artifact, 'artifact', limits, errors);
   let reason: string | undefined;
   if (input.reason !== undefined) {
@@ -629,6 +726,7 @@ function validateDraft(input: unknown, limits: ReceiptLedgerLimits): ReceiptVali
     ...(proposal === undefined ? {} : { proposal }),
     ...(packageIdentity === undefined ? {} : { package: packageIdentity }),
     ...(recipe === undefined ? {} : { recipe }),
+    ...(materialEvidence === undefined ? {} : { material_evidence: materialEvidence }),
     outcome,
     locality: 'device-local' as const,
     qualification_boundary: qualificationBoundary,

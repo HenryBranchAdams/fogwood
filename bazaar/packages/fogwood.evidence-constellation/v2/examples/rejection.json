@@ -1,0 +1,1 @@
+{ "id": "evidence-constellation-rejection", "title": "Reject dashboard flattening", "input": {}, "expected": { "artifact": "composition", "review_required": true }, "notes": "No table or chart is the default." }

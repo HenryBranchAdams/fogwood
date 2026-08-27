@@ -1,0 +1,1 @@
+After Apply or human rearrangement, inspect the spatial relationships and preserve the person’s geometry. Use a branch or annotation for new thinking. The image portal is conditional: use a live image capability only when its availability is observed, then transfer bytes through add_materials for review.

@@ -20,16 +20,18 @@ import {
   createRecipeInsertedReceipt,
   createRecipeStagedReceipt,
   createSnapshotExportedReceipt,
+  hashReceiptMaterialEvidence,
   type Receipt,
   type ReceiptAppendManyResult,
   type ReceiptDraft,
+  type ReceiptMaterialEvidence,
   type createReceiptLedger,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-receipts.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { COMPARE_DECIDE_FIXTURE, recomputeCompareDecide } from './fogwood-instruments.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { getRecipe, type ProposalAction, type RecipeDefinition } from './fogwood-runtime.ts';
+import { getRecipe, type AnyRecipeDefinition, type ProposalAction } from './fogwood-runtime.ts';
 
 type ReceiptLedger = Pick<ReturnType<typeof createReceiptLedger>, 'appendMany'>;
 
@@ -59,6 +61,32 @@ const RUNTIME_RECIPE_FIELDS = [
   'operations',
 ] as const;
 
+const COMPOSITION_RECIPE_FIELDS = [
+  'id',
+  'version',
+  'format',
+  'title',
+  'purpose',
+  'status',
+  'bounds',
+  'semantic',
+  'provenance',
+  'expected_count',
+  'regions',
+  'materials',
+  'items',
+  'edges',
+  'placements',
+  'moves',
+  'adapters',
+  'aesthetics',
+  'algorithms',
+  'provocations',
+  'variants',
+  'source_notes',
+  'qualification',
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -66,18 +94,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function recipeProjection(value: unknown) {
   if (!isRecord(value)) return undefined;
   const projected: Record<string, unknown> = {};
-  for (const key of RUNTIME_RECIPE_FIELDS) {
+  const fields = value.version === 2 ? COMPOSITION_RECIPE_FIELDS : RUNTIME_RECIPE_FIELDS;
+  for (const key of fields) {
     if (!(key in value)) return undefined;
     projected[key] = value[key];
   }
   return projected;
 }
 
-export function validateRecipePackageAlignment(runtime: RecipeDefinition, packaged: unknown) {
+export function validateRecipePackageAlignment(runtime: AnyRecipeDefinition, packaged: unknown) {
   const packagedProjection = recipeProjection(packaged);
   const runtimeProjection = recipeProjection(runtime);
   if (!packagedProjection || !runtimeProjection || canonicalSerialize(packagedProjection) !== canonicalSerialize(runtimeProjection)) return false;
   if (!isRecord(packaged)) return false;
+  if (runtime.version === 2) return packaged.instrument === undefined && packaged.instrument_projection === undefined;
   const packagedInstrument = packaged.instrument;
   if (canonicalSerialize(packagedInstrument ?? null) !== canonicalSerialize(runtime.instrument ?? null)) return false;
   if (!runtime.instrument) return packaged.instrument_projection === undefined;
@@ -106,11 +136,44 @@ function insertRecipeActions(actions: readonly ProposalAction[]) {
   return actions.filter((action): action is Extract<ProposalAction, { type: 'insert_recipe' }> => action.type === 'insert_recipe');
 }
 
+function materialEvidenceForProposal(actions: readonly ProposalAction[]): ReceiptMaterialEvidence[] {
+  return actions.flatMap((action) => {
+    if (action.type !== 'add_materials') return [];
+    return action.materials.map((material) => {
+      if (
+        !('content_hash' in material)
+        || !('byte_length' in material)
+        || !('dimensions' in material)
+        || !('source_status' in material)
+        || !('decode_qualified' in material)
+        || material.decode_qualified !== true
+      ) throw new Error('Material receipt evidence requires the exact prepared, decode-qualified proposal object.');
+      return {
+        semantic_id: material.semantic_id,
+        content_hash: material.content_hash,
+        byte_length: material.byte_length,
+        mime_type: material.mime_type,
+        width: material.dimensions.width,
+        height: material.dimensions.height,
+        source_status: material.source_status,
+        decode_qualified: true,
+        x: material.x,
+        y: material.y,
+        w: material.w,
+        h: material.h,
+        originating_capability: material.originating_capability,
+        qualification_boundary: material.qualification_boundary,
+        prompt_summary: material.prompt_summary,
+      };
+    });
+  });
+}
+
 function evidenceFailure(code: string, message: string): ReceiptRecorderFailure {
   return { ok: false, status: 'RECIPE_EVIDENCE_ERROR', error: { code, message } };
 }
 
-function exactPackageForRecipe(recipe: RecipeDefinition): { package: BazaarSearchSummary; runtime: RecipeDefinition } | ReceiptRecorderFailure {
+function exactPackageForRecipe(recipe: AnyRecipeDefinition): { package: BazaarSearchSummary; runtime: AnyRecipeDefinition } | ReceiptRecorderFailure {
   const search = searchBazaar({
     query: recipe.id,
     kind: 'recipe',
@@ -179,9 +242,12 @@ function recipeDrafts(
 }
 
 function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeof identityForProposal>) {
+  const materialEvidence = materialEvidenceForProposal(event.proposal.actions);
+  const evidence = materialEvidence.length > 0 ? { material_evidence: materialEvidence } : {};
   if (event.type === 'proposal-staged') {
     return createProposalStagedReceipt({
       proposal,
+      ...evidence,
       source_revision: event.source_revision,
       base_revision: event.base_revision,
       outcome: 'staged',
@@ -191,6 +257,7 @@ function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeo
   if (event.type === 'proposal-applied') {
     return createProposalAppliedReceipt({
       proposal,
+      ...evidence,
       source_revision: event.source_revision,
       base_revision: event.base_revision,
       result_revision: event.result_revision,
@@ -200,6 +267,7 @@ function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeo
   }
   return createProposalRejectedReceipt({
     proposal,
+    ...evidence,
     source_revision: event.source_revision,
     base_revision: event.base_revision,
     outcome: 'rejected',
@@ -217,7 +285,11 @@ export function createFogwoodReceiptRecorder(options: FogwoodReceiptRecorderOpti
 
   const recordProposalLifecycle = (event: ProposalLifecycleEvent): ReceiptRecorderResult => {
     try {
-      const proposal = identityForProposal(event.proposal);
+      const materialEvidence = materialEvidenceForProposal(event.proposal.actions);
+      const baseProposal = identityForProposal(event.proposal);
+      const proposal = materialEvidence.length > 0
+        ? { ...baseProposal, material_evidence_hash: hashReceiptMaterialEvidence(materialEvidence) }
+        : baseProposal;
       const related = recipeDrafts(event, proposal);
       if (!Array.isArray(related)) return related;
       return append([proposalDraft(event, proposal), ...related]);

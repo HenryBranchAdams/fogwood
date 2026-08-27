@@ -98,7 +98,7 @@ function BazaarPackageCard({
         aria-pressed={selected}
         onClick={onSelect}
       >
-        <span className="bazaar-card-kind">{packageSummary.kind} · local</span>
+        <span className="bazaar-card-kind">{packageSummary.version === 2 ? 'composition.v2 · local' : 'legacy fixture · v1'}</span>
         <span className="bazaar-card-title">{packageSummary.title}</span>
         <span className="bazaar-card-summary">{packageSummary.summary}</span>
       </button>
@@ -111,7 +111,7 @@ function BazaarPackageCard({
           onClick={onStage}
           title={canStage ? 'Stage this exact recipe for page review' : 'The canvas is still connecting'}
         >
-          Add to board
+          {packageSummary.version === 2 ? 'Stage composition for review' : 'Stage legacy fixture'}
         </button>
       </div>
     </article>
@@ -229,7 +229,9 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
     () => searchBazaar({
       query: deferredQuery.slice(0, 120),
       locality: 'local',
-      limit: 4,
+      // Keep all bounded local packages in the read-only view so the three
+      // composition signatures are visible before the collapsed v1 fixtures.
+      limit: 20,
       catalog_revision: BAZAAR_CATALOG_REVISION,
     }),
     [deferredQuery],
@@ -243,7 +245,10 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
     searchRef.current?.focus();
   }, [open]);
 
-  const selectedPackage = results.find((result) => result.id === selectedId) ?? results[0] ?? null;
+  const selectedPackage = results.find((result) => result.id === selectedId)
+    ?? results.find((result) => result.version === 2)
+    ?? results[0]
+    ?? null;
   const readResult = useMemo(() => {
     if (!selectedPackage) return null;
     return readBazaar({
@@ -265,13 +270,13 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
         <div>
           <span className="bazaar-section-label">Local catalog · read only</span>
           <h2>Fogwood Bazaar</h2>
-          <p>Discover exact packages before you stage a reviewable board proposal.</p>
+          <p>Discover materials, moves, adapters, aesthetics, algorithms, provocations, and exact composition recipes before you stage a reviewable proposal.</p>
         </div>
         <button type="button" className="bazaar-close" aria-label="Close Fogwood Bazaar" onClick={onClose}>×</button>
       </header>
 
       <div className="bazaar-search-wrap">
-        <label htmlFor="bazaar-search">Search the local Bazaar</label>
+          <label htmlFor="bazaar-search">Search local materials and recipes</label>
         <div className="bazaar-search-field">
           <span aria-hidden="true">⌕</span>
           <input
@@ -280,7 +285,7 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
             type="search"
             value={query}
             maxLength={120}
-            placeholder="Try compare, meeting, evidence…"
+            placeholder="Try fungi, evidence, storyworld…"
             onChange={(event) => setQuery(event.currentTarget.value.slice(0, 120))}
           />
           {query && <button type="button" aria-label="Clear Bazaar search" onClick={() => setQuery('')}>×</button>}
@@ -291,10 +296,11 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
       </div>
 
       <div className="bazaar-panel-scroll">
-        <section className="bazaar-card-list" aria-label="Local Bazaar packages">
+        <p className="bazaar-vocabulary">Materials · moves · adapters · aesthetics · algorithms · provocations</p>
+        <section className="bazaar-card-list" aria-label="New composition recipes">
           {!searchResult.ok && <p className="bazaar-error" role="alert">Bazaar search failed: {searchResult.message}</p>}
           {searchResult.ok && results.length === 0 && <p className="bazaar-empty-detail">No local packages match that search. Try a shorter phrase.</p>}
-          {results.map((packageSummary) => (
+          {results.filter((packageSummary) => packageSummary.version === 2).map((packageSummary) => (
             <BazaarPackageCard
               key={`${packageSummary.id}@${packageSummary.version}`}
               packageSummary={packageSummary}
@@ -305,6 +311,25 @@ export default function BazaarPanel({ open, canStage, onClose, onStage }: Bazaar
             />
           ))}
         </section>
+
+        {searchResult.ok && results.some((packageSummary) => packageSummary.version === 1) && (
+          <details className="legacy-starter bazaar-legacy-group">
+            <summary>Block regression fixtures</summary>
+            <p>Legacy dashboard and block packages remain available for compatibility checks. They are not the generative composition path.</p>
+            <section className="bazaar-card-list" aria-label="Legacy block regression fixtures">
+              {results.filter((packageSummary) => packageSummary.version === 1).map((packageSummary) => (
+                <BazaarPackageCard
+                  key={`${packageSummary.id}@${packageSummary.version}`}
+                  packageSummary={packageSummary}
+                  selected={packageSummary.id === selectedPackage?.id}
+                  canStage={canStage}
+                  onSelect={() => setSelectedId(packageSummary.id)}
+                  onStage={() => onStage(packageSummary.recipe_ids[0] ?? '', packageSummary)}
+                />
+              ))}
+            </section>
+          </details>
+        )}
 
         {selectedPackage && (
           <>

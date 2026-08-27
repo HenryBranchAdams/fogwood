@@ -1,0 +1,1 @@
+{ "id": "storyworld-loss", "kind": "loss", "description": "A mutation keeps the prior branch and records lineage.", "input": { "replacement": false }, "expected": { "status": "annotated" } }

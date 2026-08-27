@@ -1,0 +1,1 @@
+After human edits, inspect positions, edge endpoints, and variant lineage. Stage a mutation or annotation against the exact revision. Apply or Reject belongs to the page; the agent never declares a branch canonical.

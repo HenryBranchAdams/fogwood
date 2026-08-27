@@ -1,0 +1,1 @@
+{ "id": "storyworld-mutation-rejection", "title": "Reject replacement canon", "input": {}, "expected": { "artifact": "composition", "review_required": true }, "notes": "Mutations preserve lineage." }

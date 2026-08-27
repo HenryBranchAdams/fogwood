@@ -1,0 +1,1 @@
+{ "id": "fungi-cities-malformed", "kind": "malformed", "description": "An unknown composition field is rejected.", "input": { "unknown": true }, "expected": { "status": "rejected" } }

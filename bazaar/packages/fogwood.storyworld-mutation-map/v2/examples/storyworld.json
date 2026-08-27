@@ -1,0 +1,1 @@
+{ "id": "storyworld-mutation-example", "title": "Preserved harbor branch", "input": {}, "expected": { "artifact": "composition", "review_required": true }, "notes": "The source branch stays visible." }

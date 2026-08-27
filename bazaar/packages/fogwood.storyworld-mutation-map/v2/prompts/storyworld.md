@@ -1,0 +1,1 @@
+Inspect before composing. Keep a place, a rule, a faction, a portal, a tension, and a scene connected by semantic arrows. Ask which branch should mutate, preserve the source, and leave room for the person to shape the next scene.

@@ -9,19 +9,45 @@
 import { applyInstrumentInputChanges } from './fogwood-instrument-adapter.ts';
 import type { InstrumentInputChange, InstrumentShapeLike } from './fogwood-instrument-adapter.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { FOGWOOD_BAZAAR_CAPABILITY } from './fogwood-bazaar.ts';
+import { BAZAAR_CATALOG, FOGWOOD_BAZAAR_CAPABILITY } from './fogwood-bazaar.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { isPreparedMaterial, prepareMaterials, MATERIAL_LIMITS, MATERIAL_TEXT_LIMITS } from './fogwood-materials.ts';
+import type { MaterialInput, MaterialDecoder, PreparedMaterial } from './fogwood-materials.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { isStableSemanticId, planRelationships, planSpatialMoves, relationshipSemanticId, SPATIAL_LIMITS, SPATIAL_MOVE_KINDS, SEMANTIC_RELATIONSHIP_KINDS } from './fogwood-spatial.ts';
+import type { AddRelationshipsAction, SemanticRelationship, SpatialMoveAction, SpatialMoveInput, SpatialPlan } from './fogwood-spatial.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { COMPOSITION_FORMAT, compositionQualification, expandCompositionRecipe, isCompositionRecipe, validateCompositionRecipe } from './fogwood-composition.ts';
+import type { CompositionRecipe } from './fogwood-composition.ts';
 
 export const FOGWOOD_PROTOCOL = 'fogwood-agent-runtime';
 export const FOGWOOD_PROTOCOL_VERSION = '1';
 export const FOGWOOD_REGISTRY_VERSION = '1';
 export const FOGWOOD_PROPOSAL_VERSION = '1';
+export { COMPOSITION_FORMAT, compositionQualification, expandCompositionRecipe, isCompositionRecipe, validateCompositionRecipe };
 export const CLEAR_SURFACE_PHRASE = 'clear the surface';
+
+/** Agent-facing doctrine returned by inspect so the live page can be treated as a medium. */
+export const FOGWOOD_PARTICIPATION_CONTRACT = {
+  inspect_live_canvas_first: true,
+  discover_bounded_materials_and_moves: true,
+  inspect_actual_host_capabilities_just_in_time: true,
+  separate_page_registration_host_exposure_conversation_inventory_successful_call: true,
+  use_external_capabilities_only_when_observed: true,
+  return_only_constrained_bytes_or_data_through_proposal_bridge: true,
+  stage_and_stop_for_page_apply_or_reject: true,
+  inspect_after_human_manipulation: true,
+  branch_mutate_annotate_or_remix_instead_of_overwrite: true,
+  no_implicit_live_provider: true,
+} as const;
 
 export const MAX_ACTIONS = 32;
 export const MAX_BLOCKS_PER_ACTION = 48;
 export const MAX_SHAPES_PER_ACTION = 64;
 export const MAX_ITEMS_PER_ACTION = 100;
 export const MAX_AGGREGATE_ADDS = 96;
+export const MAX_MATERIALS_PER_ACTION = MATERIAL_LIMITS.max_materials_per_action;
+export const MAX_MATERIALS_AGGREGATE_BYTES = MATERIAL_LIMITS.max_aggregate_bytes;
 export const MAX_SUMMARY_LENGTH = 180;
 export const MAX_RATIONALE_LENGTH = 500;
 
@@ -88,7 +114,18 @@ export type JsonRecord = Record<string, unknown>;
 
 export type FogwoodMeta = {
   semantic_id?: string;
+  semantic_id_source?: 'stable' | 'legacy-shape-id' | string;
   role?: string;
+  composition_id?: string;
+  region_id?: string;
+  variant_id?: string;
+  parent_variant_id?: string;
+  lineage_source_id?: string;
+  relationship_id?: string;
+  relationship_kind?: string;
+  source_semantic_id?: string;
+  target_semantic_id?: string;
+  relationship_label?: string;
   recipe_id?: string;
   recipe_version?: number;
   recipe_instance_id?: string;
@@ -119,6 +156,12 @@ export type ProposalContext = {
   items: readonly InspectableItem[];
   /** Page adapters may supply exact raw shape props so stage and Apply validate identical instrument bytes. */
   instrument_shapes?: readonly InstrumentShapeLike[];
+  page_id?: string;
+  selection_semantic_ids?: readonly string[];
+  selection_complete?: boolean;
+  selection_total?: number;
+  regions?: readonly { id: string; semantic_id?: string; x: number; y: number; w: number; h: number; label?: string }[];
+  semantic_relationships?: readonly SemanticRelationship[];
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -207,6 +250,7 @@ export function computePageRevision(
   pageId: string,
   shapes: readonly unknown[],
   bindings: readonly unknown[],
+  assets?: readonly unknown[],
 ) {
   const sortById = (left: unknown, right: unknown) => {
     const leftId = isRecord(left) && typeof left.id === 'string' ? left.id : '';
@@ -218,6 +262,7 @@ export function computePageRevision(
     page_id: pageId,
     shapes: [...shapes].sort(sortById),
     bindings: [...bindings].sort(sortById),
+    ...(assets === undefined ? {} : { assets: [...assets].sort(sortById) }),
   });
 }
 
@@ -252,6 +297,14 @@ export type CanvasShapeInput = {
   text?: string;
   color?: CanvasColor;
   fill?: CanvasFill;
+  /** Optional stable semantic composition metadata. */
+  semantic_id?: string;
+  role?: string;
+  composition_id?: string;
+  region_id?: string;
+  variant_id?: string;
+  parent_variant_id?: string;
+  lineage_source_id?: string;
 };
 
 type RecipeOperation =
@@ -744,6 +797,25 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+/**
+ * v2 recipes are immutable catalog data. Runtime availability is derived from
+ * the generated local catalog and then narrowed through the same pure schema
+ * validator used by proposal insertion; package data never contributes code.
+ */
+function compositionRecipesFromCatalog(): CompositionRecipe[] {
+  const packages = (BAZAAR_CATALOG as unknown as { packages?: readonly { sections?: { recipes?: readonly { content?: unknown }[] } }[] }).packages ?? [];
+  const recipes: CompositionRecipe[] = [];
+  for (const entry of packages) {
+    for (const candidate of entry.sections?.recipes ?? []) {
+      const value = candidate.content;
+      if (isCompositionRecipe(value)) recipes.push(value);
+    }
+  }
+  return recipes.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export const COMPOSITION_REGISTRY: readonly CompositionRecipe[] = deepFreeze(compositionRecipesFromCatalog());
+
 export const RECIPE_REGISTRY: readonly RecipeDefinition[] = deepFreeze([
   researchRecipe,
   meetingRecipe,
@@ -753,11 +825,16 @@ export const RECIPE_REGISTRY: readonly RecipeDefinition[] = deepFreeze([
 
 export type RecipeId = (typeof RECIPE_REGISTRY)[number]['id'];
 
-export function getRecipe(recipeId: string, version: number) {
+export type AnyRecipeDefinition = RecipeDefinition | CompositionRecipe;
+export type CompositionRecipeId = CompositionRecipe['id'];
+
+export function getRecipe(recipeId: string, version: number): AnyRecipeDefinition | undefined {
+  if (version === 2) return COMPOSITION_REGISTRY.find((recipe) => recipe.id === recipeId && recipe.version === version);
   return RECIPE_REGISTRY.find((recipe) => recipe.id === recipeId && recipe.version === version);
 }
 
-export function expandRecipe(recipe: RecipeDefinition, anchor?: { x?: number; y?: number }) {
+export function expandRecipe(recipe: AnyRecipeDefinition, anchor?: { x?: number; y?: number }) {
+  if (recipe.version === 2) return expandCompositionRecipe(recipe, anchor);
   const offsetX = isFiniteNumber(anchor?.x) ? clamp(anchor.x, -100_000, 100_000) : 0;
   const offsetY = isFiniteNumber(anchor?.y) ? clamp(anchor.y, -100_000, 100_000) : 0;
   return recipe.operations.map((operation) => {
@@ -789,14 +866,14 @@ type CapabilitySchema = JsonRecord;
 export type Capability = {
   id: string;
   kind: 'tool' | 'action' | 'primitive' | 'recipe';
-  version: 1;
+  version: number;
   title: string;
   summary: string;
   use_when: string;
   keywords: readonly string[];
   effect: 'read-only' | 'stage-only' | 'page-apply';
   input_schema?: CapabilitySchema;
-  recipe?: RecipeDefinition;
+  recipe?: AnyRecipeDefinition;
 };
 
 export const INSPECT_INPUT_SCHEMA: CapabilitySchema = {
@@ -877,25 +954,128 @@ const shapeItemSchema: CapabilitySchema = {
     text: { type: 'string', maxLength: 2000 },
     color: { type: 'string', enum: [...CANVAS_COLORS] },
     fill: { type: 'string', enum: [...CANVAS_FILLS] },
+    semantic_id: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
+    role: { type: 'string', maxLength: 120 },
+    composition_id: { type: 'string', maxLength: 180 },
+    region_id: { type: 'string', maxLength: 180 },
+    variant_id: { type: 'string', maxLength: 180 },
+    parent_variant_id: { type: 'string', maxLength: 180 },
+    lineage_source_id: { type: 'string', maxLength: 180 },
   },
   required: ['kind'],
 };
+
+const materialItemSchema: CapabilitySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    semantic_id: { type: 'string', minLength: 1, maxLength: MATERIAL_TEXT_LIMITS.semantic_id },
+    mime_type: { type: 'string', enum: ['image/png', 'image/jpeg', 'image/svg+xml'] },
+    base64: { type: 'string', minLength: 4, maxLength: Math.ceil(MATERIAL_LIMITS.max_raster_bytes / 3) * 4 },
+    label: { type: 'string', maxLength: MATERIAL_TEXT_LIMITS.label },
+    alt: { type: 'string', maxLength: MATERIAL_TEXT_LIMITS.alt },
+    prompt_summary: { type: 'string', maxLength: MATERIAL_TEXT_LIMITS.prompt_summary },
+    originating_capability: { type: 'string', maxLength: MATERIAL_TEXT_LIMITS.originating_capability },
+    qualification_boundary: { type: 'string', maxLength: MATERIAL_TEXT_LIMITS.qualification_boundary },
+    x: { type: 'number', minimum: -100000, maximum: 100000 },
+    y: { type: 'number', minimum: -100000, maximum: 100000 },
+    w: { type: 'number', minimum: 16, maximum: MATERIAL_LIMITS.max_dimension },
+    h: { type: 'number', minimum: 16, maximum: MATERIAL_LIMITS.max_dimension },
+  },
+  required: ['semantic_id', 'mime_type', 'base64', 'x', 'y', 'w', 'h'],
+};
+
+const semanticScopeSchema: CapabilitySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', enum: ['selection', 'explicit', 'region'] },
+    semantic_ids: { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } },
+    region_id: { type: 'string', minLength: 1, maxLength: 180 },
+  },
+  required: ['kind'],
+};
+
+const spatialMoveSchema: CapabilitySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', enum: [...SPATIAL_MOVE_KINDS] },
+    move: { type: 'string', enum: [...SPATIAL_MOVE_KINDS] },
+    scope: semanticScopeSchema,
+    target: { oneOf: [semanticScopeSchema, { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } }, { type: 'object', additionalProperties: false, properties: { kind: { type: 'string', enum: ['selection', 'explicit', 'region'] }, scope: { type: 'string', enum: ['selection', 'explicit', 'region'] }, semantic_ids: { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } }, ids: { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } }, region_id: { type: 'string', minLength: 1, maxLength: 180 } } }] },
+    targets: { oneOf: [{ type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } }, { type: 'object', additionalProperties: false, properties: { kind: { type: 'string', enum: ['selection', 'explicit', 'region'] }, scope: { type: 'string', enum: ['selection', 'explicit', 'region'] }, semantic_ids: { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } }, ids: { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } }, region_id: { type: 'string', minLength: 1, maxLength: 180 } } }] },
+    target_semantic_ids: { type: 'array', minItems: 1, maxItems: SPATIAL_LIMITS.max_targets_per_move, items: { type: 'string', minLength: 1, maxLength: 180 } },
+    region: {
+      type: 'object', additionalProperties: false,
+      properties: { x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 }, w: { type: 'number', exclusiveMinimum: 0, maximum: 100000 }, h: { type: 'number', exclusiveMinimum: 0, maximum: 100000 } },
+      required: ['x', 'y', 'w', 'h'],
+    },
+    seed: { oneOf: [{ type: 'string', maxLength: 180 }, { type: 'number' }] },
+    spacing: { type: 'number', minimum: 0, maximum: 10000 },
+    anchor: { oneOf: [{ type: 'string', minLength: 1, maxLength: 180 }, { type: 'object', additionalProperties: false, properties: { x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 } }, required: ['x', 'y'] }] },
+    center: { oneOf: [{ type: 'string', minLength: 1, maxLength: 180 }, { type: 'object', additionalProperties: false, properties: { x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 } }, required: ['x', 'y'] }] },
+    radius: { type: 'number', exclusiveMinimum: 0, maximum: 100000 },
+    links: { type: 'array', minItems: 1, maxItems: 256, items: { type: 'object', additionalProperties: false, properties: { parent_semantic_id: { type: 'string', minLength: 1, maxLength: 180 }, child_semantic_id: { type: 'string', minLength: 1, maxLength: 180 } }, required: ['parent_semantic_id', 'child_semantic_id'] } },
+    parent_child_links: { type: 'array', minItems: 1, maxItems: 256, items: { type: 'object', additionalProperties: false, properties: { parent_semantic_id: { type: 'string', minLength: 1, maxLength: 180 }, child_semantic_id: { type: 'string', minLength: 1, maxLength: 180 } }, required: ['parent_semantic_id', 'child_semantic_id'] } },
+    columns: { type: 'integer', minimum: 1, maximum: 32 },
+    gap_x: { type: 'number', minimum: 0, maximum: 10000 },
+    gap_y: { type: 'number', minimum: 0, maximum: 10000 },
+    path: { type: 'array', minItems: 2, maxItems: SPATIAL_LIMITS.max_path_points, items: { type: 'object', additionalProperties: false, properties: { x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 } }, required: ['x', 'y'] } },
+    text: { type: 'string', minLength: 1, maxLength: SPATIAL_LIMITS.max_text },
+    offset: { type: 'object', additionalProperties: false, properties: { x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 } }, required: ['x', 'y'] },
+    patches: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', maxLength: SPATIAL_LIMITS.max_text }, color: { type: 'string', maxLength: 40 }, fill: { type: 'string', maxLength: 40 } } },
+  },
+  required: ['kind'],
+};
+
+const relationshipItemSchema: CapabilitySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
+    kind: { type: 'string', enum: [...SEMANTIC_RELATIONSHIP_KINDS] },
+    source_semantic_id: { type: 'string', minLength: 1, maxLength: 180 },
+    target_semantic_id: { type: 'string', minLength: 1, maxLength: 180 },
+    label: { type: 'string', maxLength: SPATIAL_LIMITS.max_label },
+  },
+  required: ['id', 'kind', 'source_semantic_id', 'target_semantic_id'],
+};
+
+const actionArrayField = (field: string) => field === 'add_blocks'
+  ? 'blocks'
+  : field === 'add_shapes'
+    ? 'shapes'
+    : field === 'add_materials'
+      ? 'materials'
+      : field === 'update_blocks'
+        ? 'updates'
+        : field === 'place_items'
+          ? 'placements'
+          : field === 'apply_spatial_moves'
+            ? 'moves'
+            : field === 'add_relationships'
+              ? 'relationships'
+              : 'placements';
 
 const actionSchema = (field: string, maxItems: number, itemSchema: CapabilitySchema): CapabilitySchema => ({
   type: 'object',
   additionalProperties: false,
   properties: {
     type: { const: field },
-    ...(field === 'add_blocks' || field === 'add_shapes' ? { coordinate_space: { const: 'page' } } : {}),
-    [field === 'add_blocks' ? 'blocks' : field === 'add_shapes' ? 'shapes' : field === 'update_blocks' ? 'updates' : 'placements']:
+    ...(field === 'add_blocks' || field === 'add_shapes' || field === 'add_materials' ? { coordinate_space: { const: 'page' } } : {}),
+    [actionArrayField(field)]:
       { type: 'array', minItems: 1, maxItems, items: itemSchema },
   },
-  required: ['type', field === 'add_blocks' ? 'blocks' : field === 'add_shapes' ? 'shapes' : field === 'update_blocks' ? 'updates' : 'placements'],
+  required: ['type', actionArrayField(field)],
 });
 
 const exactActionSchemas: Record<string, CapabilitySchema> = {
   add_blocks: actionSchema('add_blocks', MAX_BLOCKS_PER_ACTION, blockItemSchema),
   add_shapes: actionSchema('add_shapes', MAX_SHAPES_PER_ACTION, shapeItemSchema),
+  apply_spatial_moves: actionSchema('apply_spatial_moves', SPATIAL_LIMITS.max_moves_per_action, spatialMoveSchema),
+  add_relationships: actionSchema('add_relationships', SPATIAL_LIMITS.max_relationships, relationshipItemSchema),
+  add_materials: actionSchema('add_materials', MAX_MATERIALS_PER_ACTION, materialItemSchema),
   update_blocks: actionSchema('update_blocks', MAX_BLOCKS_PER_ACTION, {
     ...blockItemSchema,
     properties: { ...(blockItemSchema.properties as JsonRecord), id: { type: 'string', minLength: 1, maxLength: 180 } },
@@ -933,7 +1113,7 @@ const exactActionSchemas: Record<string, CapabilitySchema> = {
     properties: {
       type: { const: 'insert_recipe' },
       recipe_id: { type: 'string', minLength: 1, maxLength: 120 },
-      version: { const: 1 },
+      version: { oneOf: [{ const: 1 }, { const: 2 }] },
       anchor: {
         type: 'object',
         additionalProperties: false,
@@ -988,9 +1168,9 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     kind: 'tool',
     version: 1,
     title: 'Inspect Fogwood',
-    summary: 'Read the bounded current-page operating contract and editable state.',
-    use_when: 'Bootstrap context before searching capabilities or proposing a change.',
-    keywords: ['inspect', 'state', 'page', 'revision', 'viewport'],
+    summary: 'Read the bounded live canvas, spatial grammar, semantic relationships, and editable state.',
+    use_when: 'Always inspect the live page first, before searching capabilities or proposing a change.',
+    keywords: ['inspect', 'live', 'canvas', 'spatial', 'semantic', 'state', 'page', 'revision', 'viewport'],
     effect: 'read-only',
     input_schema: INSPECT_INPUT_SCHEMA,
   },
@@ -999,9 +1179,9 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     kind: 'tool',
     version: 1,
     title: 'Search Fogwood capabilities',
-    summary: 'Search deterministic local tools, actions, primitives, and recipes.',
-    use_when: 'Find an allowlisted operation or immutable recipe before proposing.',
-    keywords: ['search', 'capability', 'action', 'recipe', 'primitive'],
+    summary: 'Search the bounded host-facing vocabulary of materials, moves, adapters, aesthetics, algorithms, provocations, primitives, and recipes.',
+    use_when: 'Inspect the actual available contract before proposing; never assume a host capability or live provider.',
+    keywords: ['search', 'capability', 'materials', 'moves', 'adapters', 'aesthetics', 'algorithms', 'provocation', 'recipe', 'primitive'],
     effect: 'read-only',
     input_schema: {
       type: 'object',
@@ -1020,9 +1200,9 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     kind: 'tool',
     version: 1,
     title: 'Propose a Fogwood change',
-    summary: 'Stage one typed, bounded proposal for page-owned human review.',
-    use_when: 'The desired canvas change is understood and should be reviewed before Apply.',
-    keywords: ['proposal', 'stage', 'review', 'apply', 'reject'],
+    summary: 'Stage one typed, bounded composition or page proposal for page-owned human review.',
+    use_when: 'A bounded composition, material, spatial move, semantic edge, or legacy block change is ready after inspecting current page state.',
+    keywords: ['proposal', 'composition', 'material', 'spatial', 'semantic', 'stage', 'review', 'apply', 'reject'],
     effect: 'stage-only',
     input_schema: PROPOSAL_INPUT_SCHEMA,
   },
@@ -1047,6 +1227,39 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     keywords: ['shape', 'diagram', 'arrow', 'note', 'frame'],
     effect: 'page-apply',
     input_schema: exactActionSchemas.add_shapes,
+  },
+  {
+    id: 'apply_spatial_moves',
+    kind: 'action',
+    version: 1,
+    title: 'Apply spatial moves',
+    summary: 'Arrange existing semantic canvas items with bounded deterministic spatial grammar.',
+    use_when: 'The proposal should scatter, cluster, branch, orbit, montage, trace, annotate, or preserve a mutated variant.',
+    keywords: [...SPATIAL_MOVE_KINDS, 'spatial', 'layout', 'variant'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.apply_spatial_moves,
+  },
+  {
+    id: 'add_relationships',
+    kind: 'action',
+    version: 1,
+    title: 'Add semantic relationships',
+    summary: 'Add bounded typed relationships as visible native arrows.',
+    use_when: 'The proposal needs visible meaning-bearing edges between stable semantic items.',
+    keywords: [...SEMANTIC_RELATIONSHIP_KINDS, 'relationship', 'edge', 'arrow'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.add_relationships,
+  },
+  {
+    id: 'add_materials',
+    kind: 'action',
+    version: 1,
+    title: 'Add qualified materials',
+    summary: 'Add bounded, content-addressed images or strict-subset SVG materials after local decode or sanitization qualification.',
+    use_when: 'The proposal needs a reviewed local image or sanitized geometry asset on the page.',
+    keywords: ['material', 'image', 'svg', 'asset', 'qualified'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.add_materials,
   },
   {
     id: 'update_blocks',
@@ -1097,9 +1310,9 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     kind: 'action',
     version: 1,
     title: 'Insert an immutable recipe',
-    summary: 'Expand one local recipe into bounded add-blocks and add-shapes operations.',
-    use_when: 'A known starting surface will help the person review a coherent proposal.',
-    keywords: ['recipe', 'starter', 'compose', 'expand'],
+    summary: 'Expand one exact local v1 fixture or composition.v2 recipe into bounded native matter and typed edges.',
+    use_when: 'A known composition seed will help the person review and reshape a coherent proposal.',
+    keywords: ['recipe', 'composition', 'starter', 'native', 'spatial', 'expand'],
     effect: 'page-apply',
     input_schema: exactActionSchemas.insert_recipe,
   },
@@ -1144,6 +1357,23 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     summary: recipe.purpose,
     use_when: 'Stage this bounded starter for human review before applying it.',
     keywords: recipe.semantic.split('-'),
+    effect: 'page-apply',
+    recipe,
+  })),
+  ...COMPOSITION_REGISTRY.map((recipe): Capability => ({
+    id: recipe.id,
+    kind: 'recipe',
+    version: 2,
+    title: recipe.title,
+    summary: recipe.purpose,
+    use_when: 'Stage this native composition for human review before applying it to the canvas.',
+    keywords: [
+      ...recipe.semantic.split('-'),
+      'composition',
+      'native',
+      'provocation',
+      'spatial',
+    ],
     effect: 'page-apply',
     recipe,
   })),
@@ -1206,6 +1436,13 @@ export type AddShapesAction = {
   coordinate_space?: 'page';
   shapes: CanvasShapeInput[];
 };
+export type ApplySpatialMovesAction = SpatialMoveAction;
+export type AddRelationshipsProposalAction = AddRelationshipsAction;
+export type AddMaterialsAction = {
+  type: 'add_materials';
+  coordinate_space?: 'page';
+  materials: Array<MaterialInput | PreparedMaterial>;
+};
 export type UpdateBlocksAction = {
   type: 'update_blocks';
   updates: Array<BlockInput & { id: string }>;
@@ -1219,7 +1456,7 @@ export type ClearSurfaceAction = { type: 'clear_surface'; confirmation: typeof C
 export type InsertRecipeAction = {
   type: 'insert_recipe';
   recipe_id: string;
-  version: 1;
+  version: 1 | 2;
   anchor?: { x?: number; y?: number };
 };
 export type SetInstrumentInputsAction = {
@@ -1230,6 +1467,9 @@ export type SetInstrumentInputsAction = {
 export type ProposalAction =
   | AddBlocksAction
   | AddShapesAction
+  | ApplySpatialMovesAction
+  | AddRelationshipsProposalAction
+  | AddMaterialsAction
   | UpdateBlocksAction
   | PlaceItemsAction
   | RemoveItemsAction
@@ -1274,8 +1514,56 @@ export type ProposalDiff = {
   adds: {
     blocks: number;
     shapes: number;
+    materials: number;
     total: number;
-    specs: Array<{ type: 'block' | 'shape'; kind: string; label: string; x?: number; y?: number; end_x?: number; end_y?: number; w?: number; h?: number }>;
+    specs: Array<{
+      type: 'block' | 'shape' | 'material';
+      kind: string;
+      label: string;
+      x?: number;
+      y?: number;
+      end_x?: number;
+      end_y?: number;
+      w?: number;
+      h?: number;
+      semantic_id?: string;
+      role?: string;
+      composition_id?: string;
+      region_id?: string;
+      variant_id?: string;
+      parent_variant_id?: string;
+      lineage_source_id?: string;
+      mime_type?: string;
+      content_hash?: string;
+      byte_length?: number;
+      dimensions?: { width: number; height: number };
+      source_status?: 'original' | 'sanitized';
+      decode_qualified?: boolean;
+      alt?: string;
+      prompt_summary?: string;
+      originating_capability?: string;
+      qualification_boundary?: string;
+    }>;
+    material_specs: Array<{
+      type: 'material';
+      kind: string;
+      label: string;
+      semantic_id: string;
+      mime_type: string;
+      content_hash: string;
+      byte_length: number;
+      dimensions: { width: number; height: number };
+      source_status: 'original' | 'sanitized';
+      decode_qualified: boolean;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      alt: string;
+      prompt_summary: string;
+      originating_capability: string;
+      qualification_boundary: string;
+    }>;
   };
   updates: Array<{
     ids: string[];
@@ -1286,8 +1574,40 @@ export type ProposalDiff = {
     ids: string[];
     changes: Array<{ id: string; before: { x: number; y: number; rotation: number }; after: { x: number; y: number; rotation: number } }>;
   }>;
+  spatial_moves: Array<{
+    move_index: number;
+    kind: string;
+    semantic_id: string;
+    shape_id: string;
+    before: { x: number; y: number; rotation: number };
+    after: { x: number; y: number; rotation: number };
+  }>;
+  spatial_creates: Array<{
+    move_index: number;
+    kind: 'annotation' | 'variant';
+    semantic_id: string;
+    source_semantic_id?: string;
+    source_shape_id?: string;
+    type: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    text?: string;
+    lineage_source_id?: string;
+    parent_variant_id?: string;
+    variant_id?: string;
+  }>;
+  semantic_relationships: Array<{
+    id: string;
+    kind: string;
+    source_semantic_id: string;
+    target_semantic_id: string;
+    label?: string;
+    shape_id?: string;
+  }>;
   removes: { ids: string[]; total: number; collateral_ids: string[]; descriptors: ProposalItemDescriptor[] };
-  recipe_expansions: Array<{ id: string; version: 1; title: string; expected_count: number; operations: number }>;
+  recipe_expansions: Array<{ id: string; version: 1 | 2; title: string; expected_count: number; operations: number; format?: string; composition_metrics?: ReturnType<typeof compositionQualification> }>;
   instrument_changes: ProposalInstrumentChangeScope[];
   counts: { before: number; after: number; adds: number; updates: number; moves: number; removes: number };
   warnings: string[];
@@ -1296,6 +1616,11 @@ export type ProposalDiff = {
 export type ProposalValidation =
   | { ok: true; proposal: ProposalV1; diff: ProposalDiff }
   | { ok: false; errors: ProposalError[] };
+
+export type ProposalValidationOptions = {
+  /** Prepared objects are branded by fogwood-materials and carry decode proof. */
+  preparedMaterials?: ReadonlyMap<number, readonly PreparedMaterial[]>;
+};
 
 const BLOCK_KEYS = [
   'kind',
@@ -1448,7 +1773,7 @@ function normalizeBlock(
 
 function normalizeShape(raw: unknown, path: string, warnings: string[]) {
   if (!isRecord(raw)) return { errors: [{ code: 'WRONG_TYPE', message: 'Expected an object.', path }] };
-  const allowed = ['kind', 'x', 'y', 'end_x', 'end_y', 'w', 'h', 'text', 'color', 'fill'];
+  const allowed = ['kind', 'x', 'y', 'end_x', 'end_y', 'w', 'h', 'text', 'color', 'fill', 'semantic_id', 'role', 'composition_id', 'region_id', 'variant_id', 'parent_variant_id', 'lineage_source_id'];
   if (!hasOnlyKeys(raw, allowed)) return { errors: [{ code: 'UNKNOWN_FIELD', message: 'Unknown native-shape field.', path }] };
   const errors: ProposalError[] = [];
   if (typeof raw.kind !== 'string' || !CANVAS_SHAPE_KINDS.includes(raw.kind as CanvasShapeKind)) {
@@ -1464,6 +1789,10 @@ function normalizeShape(raw: unknown, path: string, warnings: string[]) {
   if (raw.text !== undefined && typeof raw.text !== 'string') {
     errors.push({ code: 'INVALID_TEXT', message: 'text must be a string.', path: `${path}.text` });
   }
+  if (raw.semantic_id !== undefined && !isStableSemanticId(raw.semantic_id)) errors.push({ code: 'INVALID_SEMANTIC_ID', message: 'semantic_id must be a lexical stable semantic id.', path: `${path}.semantic_id` });
+  for (const key of ['role', 'composition_id', 'region_id', 'variant_id', 'parent_variant_id', 'lineage_source_id']) {
+    if (raw[key] !== undefined && (typeof raw[key] !== 'string' || raw[key].length > 180)) errors.push({ code: 'INVALID_METADATA', message: `${key} must be a bounded string.`, path: `${path}.${key}` });
+  }
   const value = {
     ...(typeof raw.kind === 'string' && CANVAS_SHAPE_KINDS.includes(raw.kind as CanvasShapeKind) ? { kind: raw.kind as CanvasShapeKind } : {}),
     ...(raw.x !== undefined ? { x: numberWithWarning(raw.x, 0, -100_000, 100_000, `${path}.x`, warnings) } : {}),
@@ -1475,6 +1804,13 @@ function normalizeShape(raw: unknown, path: string, warnings: string[]) {
     ...(raw.text !== undefined ? { text: boundedString(raw.text, 2_000) } : {}),
     ...(raw.color !== undefined && typeof raw.color === 'string' && CANVAS_COLORS.includes(raw.color as CanvasColor) ? { color: raw.color as CanvasColor } : {}),
     ...(raw.fill !== undefined && typeof raw.fill === 'string' && CANVAS_FILLS.includes(raw.fill as CanvasFill) ? { fill: raw.fill as CanvasFill } : {}),
+    ...(typeof raw.semantic_id === 'string' && isStableSemanticId(raw.semantic_id) ? { semantic_id: raw.semantic_id } : {}),
+    ...(typeof raw.role === 'string' ? { role: raw.role.slice(0, 120) } : {}),
+    ...(typeof raw.composition_id === 'string' ? { composition_id: raw.composition_id.slice(0, 180) } : {}),
+    ...(typeof raw.region_id === 'string' ? { region_id: raw.region_id.slice(0, 180) } : {}),
+    ...(typeof raw.variant_id === 'string' ? { variant_id: raw.variant_id.slice(0, 180) } : {}),
+    ...(typeof raw.parent_variant_id === 'string' ? { parent_variant_id: raw.parent_variant_id.slice(0, 180) } : {}),
+    ...(typeof raw.lineage_source_id === 'string' ? { lineage_source_id: raw.lineage_source_id.slice(0, 180) } : {}),
   } as CanvasShapeInput;
   return { value, errors };
 }
@@ -1559,12 +1895,15 @@ export function buildProposalDiff(
   context: ProposalContext,
   warnings: string[] = [],
 ): ProposalDiff {
-  const adds: ProposalDiff['adds'] = { blocks: 0, shapes: 0, total: 0, specs: [] };
+  const adds: ProposalDiff['adds'] = { blocks: 0, shapes: 0, materials: 0, total: 0, specs: [], material_specs: [] };
   const updates: ProposalDiff['updates'] = [];
   const moves: ProposalDiff['moves'] = [];
   const removes: ProposalDiff['removes'] = { ids: [], total: 0, collateral_ids: [], descriptors: [] };
   const recipe_expansions: ProposalDiff['recipe_expansions'] = [];
   const instrument_changes: ProposalDiff['instrument_changes'] = [];
+  const spatial_moves: ProposalDiff['spatial_moves'] = [];
+  const spatial_creates: ProposalDiff['spatial_creates'] = [];
+  const semantic_relationships: ProposalDiff['semantic_relationships'] = [];
   const items = itemMap(context.items);
   const instrumentShapes = instrumentShapesForProposalContext(context);
   const addLabel = (input: BlockInput | CanvasShapeInput) => {
@@ -1583,6 +1922,13 @@ export function buildProposalDiff(
     ...('end_y' in input && isFiniteNumber(input.end_y) ? { end_y: clamp(input.end_y, -100_000, 100_000) } : {}),
     ...(isFiniteNumber(input.w) ? { w: clamp(input.w, type === 'block' ? 120 : 40, type === 'block' ? 1_400 : 2_000) } : {}),
     ...(isFiniteNumber(input.h) ? { h: clamp(input.h, type === 'block' ? 56 : 40, type === 'block' ? 1_000 : 1_600) } : {}),
+    ...('semantic_id' in input && typeof input.semantic_id === 'string' ? { semantic_id: input.semantic_id } : {}),
+    ...('role' in input && typeof input.role === 'string' ? { role: input.role.slice(0, 120) } : {}),
+    ...('composition_id' in input && typeof input.composition_id === 'string' ? { composition_id: input.composition_id.slice(0, 180) } : {}),
+    ...('region_id' in input && typeof input.region_id === 'string' ? { region_id: input.region_id.slice(0, 180) } : {}),
+    ...('variant_id' in input && typeof input.variant_id === 'string' ? { variant_id: input.variant_id.slice(0, 180) } : {}),
+    ...('parent_variant_id' in input && typeof input.parent_variant_id === 'string' ? { parent_variant_id: input.parent_variant_id.slice(0, 180) } : {}),
+    ...('lineage_source_id' in input && typeof input.lineage_source_id === 'string' ? { lineage_source_id: input.lineage_source_id.slice(0, 180) } : {}),
   });
   const boundedDiffValue = (value: unknown, depth = 2): ProposalDiffValue => {
     if (value === null || typeof value === 'string' || typeof value === 'boolean') return typeof value === 'string' ? value.slice(0, 240) : value;
@@ -1626,6 +1972,79 @@ export function buildProposalDiff(
       adds.shapes += action.shapes.length;
       adds.specs.push(...action.shapes.map((input) => addSpec('shape', input)));
     }
+    if (action.type === 'apply_spatial_moves') {
+      const plan = planSpatialMoves({
+        page_id: context.page_id,
+        items: context.items,
+        selection_semantic_ids: context.selection_semantic_ids,
+        selection_complete: context.selection_complete,
+        selection_total: context.selection_total,
+        regions: context.regions,
+        semantic_relationships: context.semantic_relationships,
+      }, action);
+      spatial_moves.push(...plan.moves.map((move) => ({ ...move })));
+      if (plan.moves.length > 0) {
+        moves.push({
+          ids: plan.moves.map((move) => move.shape_id),
+          changes: plan.moves.map((move) => ({ id: move.shape_id, before: move.before, after: move.after })),
+        });
+      }
+      spatial_creates.push(...plan.creates.map((create) => ({
+        move_index: create.move_index,
+        kind: create.kind,
+        semantic_id: create.semantic_id,
+        ...(create.source_semantic_id ? { source_semantic_id: create.source_semantic_id } : {}),
+        ...(create.source_shape_id ? { source_shape_id: create.source_shape_id } : {}),
+        type: create.type,
+        x: create.x,
+        y: create.y,
+        w: create.w,
+        h: create.h,
+        ...(create.text ? { text: create.text } : {}),
+        ...(create.lineage_source_id ? { lineage_source_id: create.lineage_source_id } : {}),
+        ...(create.parent_variant_id ? { parent_variant_id: create.parent_variant_id } : {}),
+        ...(create.variant_id ? { variant_id: create.variant_id } : {}),
+      })));
+      adds.shapes += plan.creates.length;
+      for (const create of plan.creates) adds.specs.push({ type: 'shape', kind: create.type, label: create.text ?? create.semantic_id, x: create.x, y: create.y, w: create.w, h: create.h, semantic_id: create.semantic_id });
+    }
+    if (action.type === 'add_relationships') {
+      const plan = planRelationships({ page_id: context.page_id, items: context.items, semantic_relationships: context.semantic_relationships }, action.relationships);
+      for (const relationship of plan.relationships) {
+        const edge = { ...relationship, shape_id: `pending:relationship:${relationship.id}` };
+        semantic_relationships.push(edge);
+        adds.shapes += 1;
+        adds.specs.push({ type: 'shape', kind: 'arrow', label: relationship.label || relationship.kind, semantic_id: relationshipSemanticId(relationship.id) });
+      }
+    }
+    if (action.type === 'add_materials') {
+      adds.materials += action.materials.length;
+      for (const material of action.materials) {
+        if (!isPreparedMaterial(material)) continue;
+        const spec = {
+          type: 'material' as const,
+          kind: material.mime_type,
+          label: material.label || material.semantic_id,
+          semantic_id: material.semantic_id,
+          mime_type: material.mime_type,
+          content_hash: material.content_hash,
+          byte_length: material.byte_length,
+          dimensions: { ...material.dimensions },
+          source_status: material.source_status,
+          decode_qualified: material.decode_qualified,
+          x: material.x,
+          y: material.y,
+          w: material.w,
+          h: material.h,
+          alt: material.alt,
+          prompt_summary: material.prompt_summary,
+          originating_capability: material.originating_capability,
+          qualification_boundary: material.qualification_boundary,
+        };
+        adds.material_specs.push(spec);
+        adds.specs.push(spec);
+      }
+    }
     if (action.type === 'update_blocks') {
       const changes = action.updates.map((update) => {
         const fields = Object.keys(update).filter((key) => key !== 'id');
@@ -1661,14 +2080,40 @@ export function buildProposalDiff(
     }
     if (action.type === 'insert_recipe') {
       const recipe = getRecipe(action.recipe_id, action.version);
-      if (recipe) recipe_expansions.push({ id: recipe.id, version: recipe.version, title: recipe.title, expected_count: recipe.expected_count, operations: recipe.operations.length });
+      if (recipe) {
+        if (recipe.version === 2) {
+          const metrics = compositionQualification(recipe);
+          const expanded = expandCompositionRecipe(recipe, action.anchor);
+          const expandedShapes = expanded.flatMap((operation) => operation.type === 'add_shapes' ? operation.shapes : []);
+          const expandedRelationships = expanded.flatMap((operation) => operation.type === 'add_relationships' ? operation.relationships : []);
+          recipe_expansions.push({
+            id: recipe.id,
+            version: recipe.version,
+            format: COMPOSITION_FORMAT,
+            title: recipe.title,
+            expected_count: recipe.expected_count,
+            operations: expanded.length,
+            composition_metrics: metrics,
+          });
+          adds.shapes += expandedShapes.length + expandedRelationships.length;
+          for (const item of expandedShapes) {
+            adds.specs.push({ type: 'shape', kind: item.kind, label: item.text ?? item.role, x: item.x, y: item.y, w: item.w, h: item.h, semantic_id: item.semantic_id, role: item.role, composition_id: recipe.id, region_id: item.region_id, variant_id: item.variant_id, parent_variant_id: item.parent_variant_id, lineage_source_id: item.lineage_source_id });
+          }
+          for (const edge of expandedRelationships) {
+            semantic_relationships.push({ id: edge.id, kind: edge.kind, source_semantic_id: edge.source_semantic_id, target_semantic_id: edge.target_semantic_id, ...(edge.label ? { label: edge.label } : {}), shape_id: `pending:relationship:${edge.id}` });
+            adds.specs.push({ type: 'shape', kind: 'arrow', label: edge.label ?? edge.kind, semantic_id: relationshipSemanticId(edge.id), role: 'semantic-relationship', composition_id: recipe.id });
+          }
+        } else {
+          recipe_expansions.push({ id: recipe.id, version: recipe.version, title: recipe.title, expected_count: recipe.expected_count, operations: recipe.operations.length });
+        }
+      }
     }
     if (action.type === 'set_instrument_inputs') {
       const result = applyInstrumentInputChanges(instrumentShapes, action.changes);
       if (result.status === 'ok') instrument_changes.push(...result.instrument_changes);
     }
   }
-  adds.total = adds.blocks + adds.shapes + recipe_expansions.reduce((sum, recipe) => sum + recipe.expected_count, 0);
+  adds.total = adds.blocks + adds.shapes + adds.materials + recipe_expansions.filter((recipe) => recipe.version === 1).reduce((sum, recipe) => sum + recipe.expected_count, 0);
   removes.total = removes.ids.length;
   const requestedRemoveIds = new Set(actions.flatMap((action) => {
     if (action.type === 'remove_items') return action.ids;
@@ -1686,6 +2131,9 @@ export function buildProposalDiff(
     adds,
     updates,
     moves,
+    spatial_moves,
+    spatial_creates,
+    semantic_relationships,
     removes,
     recipe_expansions,
     instrument_changes,
@@ -1701,7 +2149,7 @@ export function buildProposalDiff(
   };
 }
 
-export function validateProposal(input: unknown, context: ProposalContext): ProposalValidation {
+export function validateProposal(input: unknown, context: ProposalContext, options: ProposalValidationOptions = {}): ProposalValidation {
   const errors: ProposalError[] = [];
   const warnings: string[] = [];
   if (!isRecord(input)) return { ok: false, errors: [{ code: 'WRONG_TYPE', message: 'Proposal must be an object.' }] };
@@ -1716,7 +2164,18 @@ export function validateProposal(input: unknown, context: ProposalContext): Prop
   const normalizedActions: ProposalAction[] = [];
   const targetKinds = new Map<string, string>();
   let aggregateAdds = 0;
+  let aggregateRelationshipCount = 0;
+  let aggregateSpatialMoveCount = 0;
+  let aggregateMaterialBytes = 0;
+  const semanticMaterialIdentity = new Map<string, string>();
   const items = itemMap(context.items);
+  const existingSemanticIds = new Set(context.items.flatMap((item) => typeof item.semantic_id === 'string' && item.semantic_id.length > 0 ? [item.semantic_id] : []));
+  const proposalSemanticIds = new Set(existingSemanticIds);
+  const proposalRelationshipIds = new Set((context.semantic_relationships ?? []).map((relationship) => relationship.id));
+  const relationshipEndpointIds = new Set<string>();
+  const liveSemanticIdCounts = new Map<string, number>();
+  for (const semanticId of context.items.flatMap((item) => typeof item.semantic_id === 'string' && item.semantic_id.length > 0 ? [item.semantic_id] : [])) liveSemanticIdCounts.set(semanticId, (liveSemanticIdCounts.get(semanticId) ?? 0) + 1);
+  for (const [semanticId, count] of liveSemanticIdCounts) if (count > 1) addError(errors, 'DUPLICATE_SEMANTIC_ID', `Current page contains duplicate semantic id ${semanticId}.`, 'items');
   const actionList = input.actions as unknown[];
   for (let index = 0; index < actionList.length; index += 1) {
     const raw = actionList[index];
@@ -1770,10 +2229,130 @@ export function validateProposal(input: unknown, context: ProposalContext): Prop
       const normalized = shapes.flatMap((shape, shapeIndex) => {
         const result = normalizeShape(shape, `${path}.shapes[${shapeIndex}]`, warnings);
         errors.push(...result.errors);
+        if (result.value?.semantic_id) {
+          if (proposalSemanticIds.has(result.value.semantic_id)) addError(errors, 'DUPLICATE_SEMANTIC_ID', 'A native shape semantic id must be unique across the live page and this proposal.', `${path}.shapes[${shapeIndex}].semantic_id`);
+          proposalSemanticIds.add(result.value.semantic_id);
+        }
         return result.value ? [result.value] : [];
       }) as CanvasShapeInput[];
       aggregateAdds += normalized.length;
       normalizedActions.push({ type: 'add_shapes', coordinate_space: 'page', shapes: normalized });
+      continue;
+    }
+    if (raw.type === 'apply_spatial_moves') {
+      if (!hasOnlyKeys(raw, ['type', 'moves']) || !Array.isArray(raw.moves) || raw.moves.length < 1 || raw.moves.length > SPATIAL_LIMITS.max_moves_per_action) addError(errors, 'INVALID_MOVE_COUNT', `moves must contain 1-${SPATIAL_LIMITS.max_moves_per_action} entries and no unknown fields.`, path);
+      const rawMoves = Array.isArray(raw.moves) ? raw.moves : [];
+      aggregateSpatialMoveCount += rawMoves.length;
+      let spatialPlan: SpatialPlan | undefined;
+      try {
+        spatialPlan = planSpatialMoves({
+          page_id: context.page_id,
+          items: context.items,
+          selection_semantic_ids: context.selection_semantic_ids,
+          selection_complete: context.selection_complete,
+          selection_total: context.selection_total,
+          regions: context.regions,
+          semantic_relationships: context.semantic_relationships,
+        }, raw as unknown as SpatialMoveAction);
+      } catch (error) {
+        const candidate = error as { code?: string; message?: string; path?: string };
+        addError(errors, candidate.code ?? 'INVALID_ACTION', candidate.message ?? 'Spatial move planning failed.', candidate.path ? `${path}.${candidate.path}` : path);
+      }
+      const normalizedMoves = rawMoves.flatMap((move, moveIndex) => {
+        if (!isRecord(move)) return [];
+        const resolved = spatialPlan?.resolved_scopes[moveIndex]?.semantic_ids;
+        const normalizedMove = { ...move } as Record<string, unknown>;
+        if (normalizedMove.kind === undefined && typeof normalizedMove.move === 'string') normalizedMove.kind = normalizedMove.move;
+        delete normalizedMove.move;
+        delete normalizedMove.scope;
+        delete normalizedMove.target;
+        delete normalizedMove.targets;
+        delete normalizedMove.semantic_ids;
+        delete normalizedMove.target_semantic_ids;
+        if (resolved) normalizedMove.target_semantic_ids = [...resolved];
+        return [normalizedMove as unknown as SpatialMoveInput];
+      });
+      if (spatialPlan) {
+        for (const scope of spatialPlan.resolved_scopes) for (const semanticId of scope.semantic_ids) {
+          const item = context.items.find((candidate) => candidate.semantic_id === semanticId);
+          if (!item) continue;
+          if (targetKinds.has(item.id)) addError(errors, 'CONFLICTING_TARGET', 'An item cannot be targeted by multiple mutation actions.', path);
+          targetKinds.set(item.id, 'spatial-move');
+        }
+        for (const create of spatialPlan.creates) {
+          if (proposalSemanticIds.has(create.semantic_id)) addError(errors, 'DUPLICATE_SEMANTIC_ID', 'A generated semantic id must be unique across the live page and this proposal.', path);
+          proposalSemanticIds.add(create.semantic_id);
+        }
+        aggregateAdds += spatialPlan.creates.length;
+      }
+      normalizedActions.push({ type: 'apply_spatial_moves', moves: normalizedMoves });
+      continue;
+    }
+    if (raw.type === 'add_relationships') {
+      if (!hasOnlyKeys(raw, ['type', 'relationships']) || !Array.isArray(raw.relationships) || raw.relationships.length < 1 || raw.relationships.length > SPATIAL_LIMITS.max_relationships) addError(errors, 'INVALID_RELATIONSHIP_COUNT', `relationships must contain 1-${SPATIAL_LIMITS.max_relationships} entries and no unknown fields.`, path);
+      const relationships = Array.isArray(raw.relationships) ? raw.relationships : [];
+      let relationshipPlan;
+      try {
+        relationshipPlan = planRelationships({ page_id: context.page_id, items: context.items, semantic_relationships: context.semantic_relationships }, relationships as SemanticRelationship[]);
+      } catch (error) {
+        const candidate = error as { code?: string; message?: string; path?: string };
+        addError(errors, candidate.code ?? 'INVALID_RELATIONSHIP', candidate.message ?? 'Relationship planning failed.', candidate.path ? `${path}.${candidate.path}` : path);
+      }
+      const normalizedRelationships = relationshipPlan?.relationships ?? relationships.flatMap((relationship) => isRecord(relationship) ? [relationship as unknown as SemanticRelationship] : []);
+      if (relationshipPlan) {
+        for (const relationship of relationshipPlan.relationships) {
+          if (proposalRelationshipIds.has(relationship.id)) addError(errors, 'DUPLICATE_RELATIONSHIP_ID', 'A relationship id must be unique across the live page and this proposal.', `${path}.relationships`);
+          proposalRelationshipIds.add(relationship.id);
+          for (const semanticId of [relationship.source_semantic_id, relationship.target_semantic_id]) {
+            const item = context.items.find((candidate) => candidate.semantic_id === semanticId);
+            if (item && targetKinds.get(item.id) === 'remove') addError(errors, 'CONFLICTING_TARGET', 'A relationship endpoint cannot be removed in the same proposal.', `${path}.relationships`);
+            if (item) relationshipEndpointIds.add(item.id);
+          }
+        const edgeSemanticId = relationshipSemanticId(relationship.id);
+          if (proposalSemanticIds.has(edgeSemanticId)) addError(errors, 'DUPLICATE_SEMANTIC_ID', 'A relationship arrow semantic id must be unique across the live page and this proposal.', `${path}.relationships`);
+          proposalSemanticIds.add(edgeSemanticId);
+        }
+        aggregateRelationshipCount += relationshipPlan.relationships.length;
+      }
+      normalizedActions.push({ type: 'add_relationships', relationships: normalizedRelationships });
+      continue;
+    }
+    if (raw.type === 'add_materials') {
+      if (!hasOnlyKeys(raw, ['type', 'coordinate_space', 'materials']) || (raw.coordinate_space !== undefined && raw.coordinate_space !== 'page')) addError(errors, 'UNKNOWN_FIELD', 'add_materials accepts only page coordinates and materials.', path);
+      const rawMaterials = raw.materials;
+      if (!Array.isArray(rawMaterials) || rawMaterials.length < 1 || rawMaterials.length > MAX_MATERIALS_PER_ACTION) addError(errors, 'MATERIAL_COUNT_LIMIT', `materials must contain 1-${MAX_MATERIALS_PER_ACTION} items.`, `${path}.materials`);
+      const preparedFromOptions = options.preparedMaterials?.get(index);
+      const candidateMaterials = preparedFromOptions ?? (Array.isArray(rawMaterials) && rawMaterials.every((material) => isPreparedMaterial(material)) ? rawMaterials as PreparedMaterial[] : undefined);
+      if (!candidateMaterials || !Array.isArray(rawMaterials) || candidateMaterials.length !== rawMaterials.length) {
+        addError(errors, 'DECODE_REQUIRED', 'Every material must be prepared and browser decode-qualified before staging.', `${path}.materials`);
+        normalizedActions.push({ type: 'add_materials', coordinate_space: 'page', materials: [] });
+        continue;
+      }
+      const normalizedMaterials: PreparedMaterial[] = [];
+      for (let materialIndex = 0; materialIndex < candidateMaterials.length; materialIndex += 1) {
+        const material = candidateMaterials[materialIndex];
+        if (!isPreparedMaterial(material) || !material.decode_qualified) {
+          addError(errors, 'DECODE_REQUIRED', 'Every material must be prepared and browser decode-qualified before staging.', `${path}.materials[${materialIndex}]`);
+          continue;
+        }
+        const identityKey = canonicalSerialize({
+          content_hash: material.content_hash,
+          byte_length: material.byte_length,
+          mime_type: material.mime_type,
+          x: material.x,
+          y: material.y,
+          w: material.w,
+          h: material.h,
+        });
+        const previous = semanticMaterialIdentity.get(material.semantic_id);
+        if (proposalSemanticIds.has(material.semantic_id) || previous !== undefined) addError(errors, 'DUPLICATE_SEMANTIC_ID', 'A semantic material id must be unique across the live page and this proposal.', `${path}.materials[${materialIndex}].semantic_id`);
+        proposalSemanticIds.add(material.semantic_id);
+        semanticMaterialIdentity.set(material.semantic_id, identityKey);
+        aggregateMaterialBytes += material.byte_length;
+        normalizedMaterials.push(material);
+      }
+      aggregateAdds += normalizedMaterials.length;
+      normalizedActions.push({ type: 'add_materials', coordinate_space: 'page', materials: normalizedMaterials });
       continue;
     }
     if (raw.type === 'update_blocks') {
@@ -1857,6 +2436,7 @@ export function validateProposal(input: unknown, context: ProposalContext): Prop
         for (const affected of closure) {
           if (isEffectivelyLocked(affected.id, context.items)) addError(errors, 'LOCKED_TARGET', 'Removal would affect locked content or content under a locked ancestor.', path);
           if (targetKinds.has(affected.id)) addError(errors, 'CONFLICTING_TARGET', 'An item cannot be targeted by multiple mutation actions.', path);
+          if (relationshipEndpointIds.has(affected.id)) addError(errors, 'CONFLICTING_TARGET', 'A relationship endpoint cannot be removed in the same proposal.', path);
           targetKinds.set(affected.id, 'remove');
         }
         return true;
@@ -1866,21 +2446,41 @@ export function validateProposal(input: unknown, context: ProposalContext): Prop
       continue;
     }
     if (raw.type === 'insert_recipe') {
-      if (!hasOnlyKeys(raw, ['type', 'recipe_id', 'version', 'anchor']) || typeof raw.recipe_id !== 'string' || raw.version !== 1) addError(errors, 'INVALID_RECIPE', 'insert_recipe needs a stable recipe_id and version 1.', path);
-      const recipe = typeof raw.recipe_id === 'string' && raw.version === 1 ? getRecipe(raw.recipe_id, 1) : undefined;
+      const validVersion = raw.version === 1 || raw.version === 2;
+      if (!hasOnlyKeys(raw, ['type', 'recipe_id', 'version', 'anchor']) || typeof raw.recipe_id !== 'string' || !validVersion) addError(errors, 'INVALID_RECIPE', 'insert_recipe needs a stable recipe_id and supported recipe version 1 or 2.', path);
+      const recipe = typeof raw.recipe_id === 'string' && validVersion ? getRecipe(raw.recipe_id, raw.version as 1 | 2) : undefined;
       if (!recipe) addError(errors, 'UNKNOWN_RECIPE', 'Recipe id/version is not in the immutable local registry.', `${path}.recipe_id`);
+      if (recipe?.version === 2) {
+        const composition = validateCompositionRecipe(recipe);
+        if (!composition.ok) {
+          for (const error of composition.errors) addError(errors, error.code, error.message, `${path}.${error.path?.replace(/^\$\.?/u, '') || 'recipe'}`);
+        } else {
+          for (const item of composition.recipe.items) {
+            if (proposalSemanticIds.has(item.semantic_id)) addError(errors, 'DUPLICATE_SEMANTIC_ID', 'A composition semantic id must be unique across the live page and this proposal.', `${path}.recipe_id`);
+            proposalSemanticIds.add(item.semantic_id);
+          }
+          for (const edge of composition.recipe.edges) {
+            const edgeSemanticId = relationshipSemanticId(edge.id);
+            if (proposalSemanticIds.has(edgeSemanticId)) addError(errors, 'DUPLICATE_SEMANTIC_ID', 'A composition relationship semantic id must be unique across the live page and this proposal.', `${path}.recipe_id`);
+            proposalSemanticIds.add(edgeSemanticId);
+          }
+        }
+      }
       let anchor: { x?: number; y?: number } | undefined;
       if (raw.anchor !== undefined) {
         if (!isRecord(raw.anchor) || !hasOnlyKeys(raw.anchor, ['x', 'y']) || (raw.anchor.x !== undefined && !isFiniteNumber(raw.anchor.x)) || (raw.anchor.y !== undefined && !isFiniteNumber(raw.anchor.y))) addError(errors, 'INVALID_ANCHOR', 'anchor only accepts numeric x and y.', `${path}.anchor`);
         if (isRecord(raw.anchor)) anchor = { ...(raw.anchor.x === undefined ? {} : { x: clamp(raw.anchor.x as number, -100_000, 100_000) }), ...(raw.anchor.y === undefined ? {} : { y: clamp(raw.anchor.y as number, -100_000, 100_000) }) };
       }
       if (recipe) aggregateAdds += recipe.expected_count;
-      normalizedActions.push({ type: 'insert_recipe', recipe_id: typeof raw.recipe_id === 'string' ? raw.recipe_id : '', version: 1, ...(anchor ? { anchor } : {}) });
+      normalizedActions.push({ type: 'insert_recipe', recipe_id: typeof raw.recipe_id === 'string' ? raw.recipe_id : '', version: validVersion ? raw.version as 1 | 2 : 1, ...(anchor ? { anchor } : {}) });
       continue;
     }
     addError(errors, 'UNKNOWN_ACTION', `Unsupported action type: ${raw.type}.`, `${path}.type`);
   }
   if (aggregateAdds > MAX_AGGREGATE_ADDS) addError(errors, 'AGGREGATE_LIMIT', `Proposal adds at most ${MAX_AGGREGATE_ADDS} items.`, 'actions');
+  if (aggregateSpatialMoveCount > SPATIAL_LIMITS.max_moves_per_action) addError(errors, 'INVALID_MOVE_COUNT', `A proposal may contain at most ${SPATIAL_LIMITS.max_moves_per_action} spatial moves across all actions.`, 'actions');
+  if (aggregateRelationshipCount > SPATIAL_LIMITS.max_relationships) addError(errors, 'INVALID_RELATIONSHIP_COUNT', `Proposal relationships must contain at most ${SPATIAL_LIMITS.max_relationships} entries.`, 'actions');
+  if (aggregateMaterialBytes > MAX_MATERIALS_AGGREGATE_BYTES) addError(errors, 'MATERIAL_AGGREGATE_LIMIT', `Aggregate material bytes must be at most ${MAX_MATERIALS_AGGREGATE_BYTES}.`, 'actions');
   if (normalizedActions.some((action) => action.type === 'clear_surface') && normalizedActions.length !== 1) addError(errors, 'CLEAR_MUST_BE_ALONE', 'clear_surface must be the only action.', 'actions');
   if (errors.length > 0) return { ok: false, errors };
   const proposal: ProposalV1 = {
@@ -1890,6 +2490,63 @@ export function validateProposal(input: unknown, context: ProposalContext): Prop
     actions: normalizedActions,
   };
   return { ok: true, proposal, diff: buildProposalDiff(normalizedActions, context, warnings) };
+}
+
+/**
+ * Validate a proposal, asynchronously preparing only add_materials actions.
+ * Non-material proposals stay on the synchronous validator path so existing
+ * callers retain their return shape and timing.
+ */
+export function validateProposalAsync(
+  input: unknown,
+  context: ProposalContext,
+  options: { decodeRaster?: MaterialDecoder } = {},
+): Promise<ProposalValidation> {
+  if (!isRecord(input) || !Array.isArray(input.actions) || !input.actions.some((action) => isRecord(action) && action.type === 'add_materials')) {
+    return Promise.resolve(validateProposal(input, context));
+  }
+  // Reject stale and structurally over-broad proposals before touching any
+  // potentially multi-megabyte transfer string or invoking a decoder.
+  if (input.base_revision !== context.current_revision || input.actions.length < 1 || input.actions.length > MAX_ACTIONS) {
+    return Promise.resolve(validateProposal(input, context));
+  }
+  let encodedAggregateBytes = 0;
+  for (const action of input.actions) {
+    if (!isRecord(action) || action.type !== 'add_materials' || !Array.isArray(action.materials)) continue;
+    for (const candidate of action.materials.slice(0, MAX_MATERIALS_PER_ACTION + 1)) {
+      if (!isRecord(candidate) || typeof candidate.base64 !== 'string') continue;
+      const padding = candidate.base64.endsWith('==') ? 2 : candidate.base64.endsWith('=') ? 1 : 0;
+      const estimated = candidate.base64.length % 4 === 0
+        ? candidate.base64.length / 4 * 3 - padding
+        : Math.ceil(candidate.base64.length / 4) * 3;
+      encodedAggregateBytes += Math.max(0, estimated);
+      if (encodedAggregateBytes > MAX_MATERIALS_AGGREGATE_BYTES) {
+        return Promise.resolve({
+          ok: false,
+          errors: [{ code: 'MATERIAL_AGGREGATE_LIMIT', message: `Aggregate material bytes must be at most ${MAX_MATERIALS_AGGREGATE_BYTES}.`, path: 'actions' }],
+        });
+      }
+    }
+  }
+  return (async () => {
+    const preparedActions: unknown[] = [];
+    const preparationErrors: ProposalError[] = [];
+    for (const [index, action] of (input.actions as unknown[]).entries()) {
+      if (!isRecord(action) || action.type !== 'add_materials') {
+        preparedActions.push(action);
+        continue;
+      }
+      const batch = await prepareMaterials(action.materials, { decodeRaster: options.decodeRaster });
+      if (!batch.ok) {
+        preparationErrors.push(...batch.errors.map((entry) => ({ code: entry.code, message: entry.message, ...(entry.path ? { path: `actions[${index}].${entry.path}` } : { path: `actions[${index}].materials` }) })));
+        preparedActions.push(action);
+      } else {
+        preparedActions.push({ ...action, coordinate_space: 'page', materials: batch.materials });
+      }
+    }
+    if (preparationErrors.length > 0) return { ok: false, errors: preparationErrors };
+    return validateProposal({ ...input, actions: preparedActions }, context);
+  })();
 }
 
 export type ProposalControllerState = {

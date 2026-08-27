@@ -1,0 +1,1 @@
+{ "id": "evidence-constellation-example", "title": "Loose claim/source constellation", "input": {}, "expected": { "artifact": "composition", "review_required": true }, "notes": "Edges retain meaning." }

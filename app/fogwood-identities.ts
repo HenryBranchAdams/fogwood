@@ -538,6 +538,48 @@ function normalizedInput(value: unknown, path: string): Record<string, unknown> 
   return value;
 }
 
+/**
+ * Receipt identities bind material bytes through their validated digest and
+ * length, never through the potentially multi-megabyte inline base64. The
+ * proposal itself remains fully validated by the runtime before this
+ * projection is used. Property descriptors are read explicitly so identity
+ * construction does not accidentally invoke accessor properties.
+ */
+function projectMaterialIdentity(content: Record<string, unknown>): Record<string, unknown> {
+  const actionsValue = identityField(content, 'actions', 'proposal.actions');
+  if (!Array.isArray(actionsValue)) return content;
+  const projected: Record<string, unknown> = {};
+  for (const key of Object.keys(content)) {
+    const value = identityField(content, key, `proposal.${key}`);
+    if (key !== 'actions' || !Array.isArray(value)) {
+      projected[key] = value;
+      continue;
+    }
+    projected.actions = value.map((action, actionIndex) => {
+      if (!isRecord(action) || !isPlainRecord(action) || identityField(action, 'type', `proposal.actions[${actionIndex}].type`) !== 'add_materials') return action;
+      const projectedAction: Record<string, unknown> = {};
+      for (const actionKey of Object.keys(action)) {
+        const actionValue = identityField(action, actionKey, `proposal.actions[${actionIndex}].${actionKey}`);
+        if (actionKey !== 'materials' || !Array.isArray(actionValue)) {
+          projectedAction[actionKey] = actionValue;
+          continue;
+        }
+        projectedAction.materials = actionValue.map((material, materialIndex) => {
+          if (!isRecord(material) || !isPlainRecord(material)) return material;
+          const projectedMaterial: Record<string, unknown> = {};
+          for (const materialKey of Object.keys(material)) {
+            if (materialKey === 'base64' || materialKey === 'canonical_base64') continue;
+            projectedMaterial[materialKey] = identityField(material, materialKey, `proposal.actions[${actionIndex}].materials[${materialIndex}].${materialKey}`);
+          }
+          return projectedMaterial;
+        });
+      }
+      return projectedAction;
+    });
+  }
+  return projected;
+}
+
 /** Build a receipt proposal identity from the exact normalized proposal object. */
 export function identityForProposal(proposal: unknown, options: IdentityOptions = {}): ReceiptIdentity {
   const content = normalizedInput(proposal, 'proposal');
@@ -549,7 +591,7 @@ export function identityForProposal(proposal: unknown, options: IdentityOptions 
   return Object.freeze({
     id: identity.id,
     version: identity.version,
-    hash: canonicalHash(content, options),
+    hash: canonicalHash(projectMaterialIdentity(content), options),
   });
 }
 

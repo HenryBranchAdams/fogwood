@@ -1,66 +1,102 @@
 # Fogwood
 
 Fogwood is a device-local, WebMCP-enabled tldraw canvas where a person and an
-agent compose the same editable artifact. The agent can inspect the current
-page, discover trusted local capabilities and recipes, and stage bounded
-changes. The page shows the diff; only the person can Apply or Reject it.
+agent shape the same editable artifact. Fogwood turns Codex capabilities into
+editable matter: native shapes, semantic arrows, bounded materials, spatial
+moves, and lineage remain visible on the page instead of being flattened into
+a dashboard or a generated preview.
 
-The result is more than a generated dashboard: spatial relationships,
-interactive controls, deterministic derived values, and human-reviewed agent
-changes remain part of one editable canvas.
+The default path is the local, declarative `composition.v2` medium. Three
+signature recipes lead the Bazaar:
 
-Live Site: [fogwood.madebyhenry.chatgpt.site](https://fogwood.madebyhenry.chatgpt.site)
+- `fogwood.fungi-cities-research-world@2` — fungal and urban clusters, bridges,
+  evidence/analogy separation, questions, a systems diagram, a speculative
+  timeline, and an open image provocation.
+- `fogwood.evidence-constellation@2` — claims, sources, counterarguments, and
+  questions connected by typed `supports`, `contradicts`, and `depends_on`
+  relationships.
+- `fogwood.storyworld-mutation-map@2` — branching places, rules, factions,
+  portals, tensions, scenes, and a preserved variant lineage.
 
-## Why WebMCP
+The four original block recipes remain local, hash-pinned regression fixtures
+under **Block regression fixtures**. They are retained for compatibility, not
+as the first-run product narrative.
 
-Fogwood exposes four focused page tools through
+## Codex participation contract
+
+The page owns the artifact and the human decision boundary. A Codex session
+should:
+
+1. Inspect the live canvas and spatial state first.
+2. Discover bounded materials and moves, then inspect the actual host tools and
+   skills just in time. Never claim a host capability without observing it.
+3. Use relevant research, code, image, SVG, data, document, and visualization
+   capabilities outside Fogwood when they are genuinely available.
+4. Return only constrained bytes or data through the Fogwood proposal bridge.
+   Live image bytes, if actually produced, enter through `add_materials`; no
+   generated image is bundled in this repository.
+5. Stage a revision-pinned proposal and stop for the page-owned Apply/Reject
+   decision. The agent never applies a proposal.
+6. Inspect again after human manipulation, then branch, mutate, annotate, or
+   remix. Preserve prior matter and lineage instead of overwriting it.
+
+Page registration, host exposure, conversation inventory, and successful tool
+call evidence are separate observations. A registered page tool does not prove
+that the current host can see or call it.
+
+## WebMCP surface
+
+Fogwood exposes exactly four page tools through
 `document.modelContext.registerTool`:
 
-- `fogwood-inspect` reads the bounded page contract, semantic canvas state,
-  relationships, and an opaque content revision.
-- `fogwood-capabilities` searches the immutable local registry of actions,
-  primitives, and recipes.
-- `fogwood-bazaar` searches and reads hash-pinned, data-only local packages.
-- `fogwood-propose` validates and stages a typed change against the inspected
-  revision. It can compose bounded blocks and native shapes, insert a pinned
-  recipe, or preview declared instrument inputs such as a decision scenario.
-  It never applies the change itself.
+- `fogwood-inspect` — read bounded live page state, semantic regions,
+  relationships, assets, and the opaque content revision.
+- `fogwood-capabilities` — search the bounded host-facing capability contract.
+- `fogwood-propose` — validate and stage a typed proposal; it never mutates.
+- `fogwood-bazaar` — exact-pinned, read-only search/read of local data-only
+  packages.
 
-This small tool surface lets the agent progressively discover richer canvas
-behavior without flooding its context with one tool per block, recipe, or
-workflow.
+All page mutation goes through the existing proposal lifecycle and page-owned
+Apply/Reject transaction. A composition insert creates native shapes and typed
+relationship arrows in one undo step.
 
-## The trust model
+## Bazaar vocabulary
 
-- Canvas content and receipts stay on the device.
-- Bazaar packages contain data, prompts, examples, fixtures, and provenance;
-  they contain no executable modules or network loaders.
-- Formulas use a resource-bounded allowlisted AST. There is no `eval`, dynamic
-  import, or expression-string execution.
-- Typed one-way bindings are validated for declared ports, compatibility,
-  unique writers, bounded size, and acyclic topology.
-- Every proposal is revision-pinned. Apply rechecks the page and runs as one
-  undoable tldraw transaction; Reject changes nothing.
-- An append-only local receipt ledger records accepted lifecycle transitions
-  and exact hashes/revisions as evidence, never as mutation authority.
+The Bazaar contains data-only materials, moves, adapters, aesthetics,
+algorithms, provocations, compositional recipes, qualification fixtures, and
+examples. Catalog entries are local, bounded, canonically hashed, and code-
+free. Recipe reads require the exact package ID, version, content hash, and
+catalog revision. The page CTA is **Stage composition for review**.
 
-## Quick demo
+## First run
 
-1. Open Fogwood in ChatGPT's in-app browser or a WebMCP-enabled Chrome build.
-2. Ask ChatGPT to inspect the blank page and find the pinned Compare & Decide
-   package.
-3. Let it stage the recipe, inspect the visible diff, and press **Apply** on the
-   page.
-4. Ask ChatGPT to inspect again and stage the typed scenario “Cost weight 0.8,
-   Impact weight 0.2” using the exact live control IDs. The review shows the
-   deterministic forecast before the canvas changes: Alpha `74 → 88`, Beta
-   `78 → 76`, recommendation `Beta → Alpha`.
-5. Choose **Apply** or **Reject** yourself. One Undo restores the applied
-   scenario, and the device-local receipt ledger records each accepted stage
-   and decision transition.
+The blank surface is intentionally sparse: start with a ball of clay and a
+fungi/cities spatial seed, sketch before knowing, and leave open space for
+later material. Two quieter alternatives are the evidence constellation and
+storyworld mutation map. Each CTA stages a proposal for review; it never
+auto-applies. Compare & Decide is reachable only as a clearly labelled legacy
+regression fixture.
 
-Fogwood also includes Evidence Research Map, Meeting to Plan Wall, and Static
-Architecture Map recipes, plus local SVG export with an exact artifact hash.
+## Trust and qualification boundaries
+
+- Canvas content, image bytes, and receipts stay device-local.
+- Bazaar packages contain only bounded data, prompts, examples, fixtures, and
+  provenance. They cannot provide executable code, HTML, CSS, scripts,
+  formulas, embeds, fetches, or remote loaders.
+- Composition adapters, aesthetics, and algorithms reference host-owned IDs
+  only. Expansion is deterministic and uses native shape and spatial seams.
+- Every proposal is revision-pinned. Apply rechecks the page and records one
+  undoable transaction; Reject changes nothing.
+- Local checks do not certify host exposure, a live image provider, deployment,
+  publication, or a human decision. Those require direct evidence at the
+  relevant boundary.
+
+The fungi/cities source notes include these primary references in the bounded
+recipe content:
+
+- <https://www.nature.com/articles/s41563-021-01123-y>
+- <https://www.nature.com/articles/s41563-022-01429-5>
+- <https://repository.naturalis.nl/pub/800999/Verbeek-2025-Arbuscular-mycorrhiza-A.pdf>
 
 ## Run locally
 
@@ -83,17 +119,10 @@ npx tsc --noEmit
 npm run lint
 npm run build
 node scripts/compile-bazaar.mjs --check
+git diff --check
 ```
-
-## Challenge-period history
-
-Fogwood's working WebMCP implementation and subsequent agent-runtime work are
-recorded in dated commits created during the 2026 WebMCP Challenge submission
-period. The history separates the initial canvas/tool registration, hardened
-registration, governed proposal runtime, local Bazaar, deterministic
-instruments, receipt evidence, and later competition-phase interaction work.
 
 ## License
 
-Fogwood is available under the [MIT License](LICENSE). tldraw's bundled license
-notice is preserved separately in `public/tldraw-LICENSE.md`.
+Fogwood is available under the [MIT License](LICENSE). tldraw's bundled
+license notice is preserved separately in `public/tldraw-LICENSE.md`.

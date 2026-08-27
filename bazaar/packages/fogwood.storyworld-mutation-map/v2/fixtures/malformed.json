@@ -1,0 +1,1 @@
+{ "id": "storyworld-malformed", "kind": "malformed", "description": "An unknown field is rejected.", "input": { "unknown_field": "blocked" }, "expected": { "status": "rejected" } }

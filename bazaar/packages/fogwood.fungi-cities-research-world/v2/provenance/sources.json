@@ -1,0 +1,8 @@
+{
+  "sources": [
+    { "id": "nature:fungal-networks", "kind": "primary-paper", "title": "Fungal networks and plant communication", "locator": "https://www.nature.com/articles/s41563-021-01123-y", "retrieved": "2026-08-27" },
+    { "id": "nature:mycorrhizal-signals", "kind": "primary-paper", "title": "Mycorrhizal fungal signaling", "locator": "https://www.nature.com/articles/s41563-022-01429-5", "retrieved": "2026-08-27" },
+    { "id": "naturalis:arbuscular-review", "kind": "repository-pdf", "title": "Arbuscular mycorrhiza review", "locator": "https://repository.naturalis.nl/pub/800999/Verbeek-2025-Arbuscular-mycorrhiza-A.pdf", "retrieved": "2026-08-27" }
+  ],
+  "method": "Primary source locators are preserved as provenance notes; no live retrieval is performed by Fogwood."
+}

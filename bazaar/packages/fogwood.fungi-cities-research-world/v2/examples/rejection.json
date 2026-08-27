@@ -1,0 +1,1 @@
+{ "id": "fungi-cities-rejection", "title": "Reject unattended image generation", "input": {}, "expected": { "artifact": "composition", "review_required": true }, "notes": "No provider is assumed." }

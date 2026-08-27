@@ -97,6 +97,42 @@ test('recipe lifecycle commits proposal and exact runtime/package evidence atomi
   assert.equal(ledger.list().total, 4);
 });
 
+test('composition.v2 recipe lifecycle pins format content and exact package identity', () => {
+  const { recorder, writes } = setup();
+  const proposal = {
+    base_revision: 'revision:before',
+    summary: 'Stage Fungi Cities Research World',
+    actions: [{ type: 'insert_recipe', recipe_id: 'fogwood.fungi-cities-research-world', version: 2 }],
+  };
+  const staged = recorder.recordProposalLifecycle({
+    type: 'proposal-staged',
+    proposal,
+    source_revision: 'revision:before',
+    base_revision: 'revision:before',
+  });
+  assert.equal(staged.ok, true);
+  assert.equal(writes.length, 1);
+  const recipe = staged.receipts.find((receipt) => receipt.event === 'recipe-staged');
+  assert.ok(recipe);
+  assert.deepEqual(recipe.recipe, {
+    id: 'fogwood.fungi-cities-research-world',
+    version: 2,
+    hash: recipe.recipe.hash,
+  });
+  assert.match(recipe.recipe.hash, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(recipe.package, {
+    id: 'fogwood.fungi-cities-research-world',
+    version: 2,
+    content_hash: recipe.package.content_hash,
+  });
+  assert.match(recipe.package.content_hash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(ledgerEventCount(staged.receipts, 'recipe-staged'), 1);
+});
+
+function ledgerEventCount(receipts, event) {
+  return receipts.filter((receipt) => receipt.event === event).length;
+}
+
 test('Compare receipt evidence pins the aligned 12-block package rather than the retired preview', () => {
   const { recorder } = setup();
   const proposal = {

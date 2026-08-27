@@ -389,9 +389,9 @@ export const FOGWOOD_BAZAAR_CAPABILITY = {
   kind: 'tool' as const,
   version: 1 as const,
   title: 'Search and read the local Fogwood Bazaar',
-  summary: 'Read-only bounded search and exact-section reads from the pinned local catalog snapshot.',
-  use_when: 'Discover or inspect an exact local data-only package before staging a page-owned proposal.',
-  keywords: ['bazaar', 'vault', 'search', 'read', 'local', 'recipe', 'package'],
+  summary: 'Read-only bounded search and exact-section reads for local materials, moves, adapters, aesthetics, algorithms, provocations, and compositional recipes.',
+  use_when: 'Discover or inspect an exact local data-only package before staging a page-owned composition proposal.',
+  keywords: ['bazaar', 'materials', 'moves', 'adapters', 'aesthetics', 'algorithms', 'provocation', 'search', 'read', 'local', 'recipe', 'package'],
   effect: 'read-only' as const,
   input_schema: BAZAAR_INPUT_SCHEMA,
 };

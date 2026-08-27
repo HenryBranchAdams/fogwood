@@ -1,5 +1,9 @@
 'use client';
 
+// Material previews are validated, bounded data URLs produced by the page;
+// Next Image cannot optimize this intentionally device-local source.
+/* eslint-disable @next/next/no-img-element */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Editor, Tldraw } from 'tldraw';
 import 'tldraw/tldraw.css';
@@ -7,7 +11,6 @@ import BazaarPanel from './bazaar-panel';
 import { SurfaceBlockUtil } from './surface-block';
 import {
   ProposalControllerState,
-  RecipeId,
 } from './fogwood-runtime';
 import { FOGWOOD_PERSISTENCE_KEY } from './fogwood-persistence';
 import { createFogwoodReceiptRecorder } from './fogwood-receipt-recorder';
@@ -52,7 +55,7 @@ function diffValue(value: unknown) {
 
 function proposalDiffEntries(diff: ProposalControllerState['diff']) {
   const entries: string[] = [];
-  for (const spec of diff.adds.specs.slice(0, 16)) entries.push(`Add ${spec.type} · ${spec.kind} · ${spec.label}`);
+  for (const spec of diff.adds.specs) entries.push(`Add ${spec.type} · ${spec.kind} · ${spec.label}${spec.semantic_id ? ` · ${spec.semantic_id}` : ''}`);
   for (const update of diff.updates) {
     for (const change of update.changes.slice(0, 16)) {
       for (const [field, values] of Object.entries(change.fields).slice(0, 4)) {
@@ -65,12 +68,28 @@ function proposalDiffEntries(diff: ProposalControllerState['diff']) {
       entries.push(`Move ${change.id} · (${change.before.x}, ${change.before.y}, ${change.before.rotation.toFixed(2)}) → (${change.after.x}, ${change.after.y}, ${change.after.rotation.toFixed(2)})`);
     }
   }
+  for (const create of diff.spatial_creates ?? []) {
+    entries.push(`${create.kind === 'variant' ? 'Preserve variant' : 'Annotate'} · ${create.semantic_id}${create.source_semantic_id ? ` from ${create.source_semantic_id}` : ''}`);
+  }
+  for (const relationship of diff.semantic_relationships ?? []) {
+    entries.push(`Edge ${relationship.kind} · ${relationship.source_semantic_id} → ${relationship.target_semantic_id}${relationship.label ? ` · ${relationship.label}` : ''}`);
+  }
   const collateral = new Set(diff.removes.collateral_ids);
   for (const descriptor of diff.removes.descriptors.slice(0, 32)) {
     entries.push(`Remove ${descriptor.id} · ${descriptor.label}${collateral.has(descriptor.id) ? ' (child)' : ''}`);
   }
   for (const recipe of diff.recipe_expansions) entries.push(`Recipe ${recipe.title} · ${recipe.expected_count} items`);
   return entries;
+}
+
+function materialPreviewBase64(state: ProposalControllerState, semanticId: string) {
+  for (const action of state.proposal.actions) {
+    if (action.type !== 'add_materials') continue;
+    const material = action.materials.find((candidate) => candidate.semantic_id === semanticId);
+    if (!material) continue;
+    return 'canonical_base64' in material ? material.canonical_base64 : material.base64;
+  }
+  return undefined;
 }
 
 function instrumentDiffLabel(scope: InstrumentDiffScope) {
@@ -338,7 +357,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     }
   }
 
-  function makeRecipe(recipe: RecipeId) {
+  function makeRecipe(recipe: string) {
     if (!proposalController.current) return;
     const result = proposalController.current.stageRecipe(recipe);
     if (result.status === 'ERROR') {
@@ -530,21 +549,22 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
 
         {!hasContent && (
           <section className="empty-invitation" aria-labelledby="empty-title">
-            <p className="eyebrow">First run · scenario review loop</p>
-            <h1 id="empty-title">Make a decision with a human in the loop.</h1>
+            <p className="eyebrow">First run · a small beginning</p>
+            <h1 id="empty-title">Start with a ball of clay.</h1>
             <p className="empty-copy">
-              Start with Compare &amp; Decide: inspect the pinned recipe, review the
-              scorecard, and keep every Apply or Reject choice visible on the page.
+              Sketch before you know. Fogwood turns a surprising seed into
+              editable native matter, then leaves room for your hands, questions,
+              and imperfect next moves.
             </p>
             <div className="guided-empty-actions">
               <button
                 type="button"
                 className="guided-primary-action"
-                onClick={() => makeRecipe('compare-and-decide')}
+                onClick={() => makeRecipe('fogwood.fungi-cities-research-world')}
                 disabled={!controllerReady || Boolean(proposal)}
               >
                 <span aria-hidden="true">✦</span>
-                Stage Compare &amp; Decide
+                Stage fungi + cities seed
               </button>
               <button
                 type="button"
@@ -562,18 +582,22 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               <p>{guidedModel.prompt}</p>
             </div>
             {copyFeedback && !hasContent && <p className="copy-feedback" role="status" aria-live="polite">{copyFeedback}</p>}
-            <div className="starter-divider"><span>Other starters remain available</span></div>
-            <div className="prompt-examples" aria-label="Other starter surfaces">
-              <button type="button" onClick={() => makeRecipe('evidence-research-map')} disabled={!controllerReady || Boolean(proposal)}>
-                Evidence map
+            <div className="starter-divider"><span>Two quieter worlds</span></div>
+            <div className="prompt-examples" aria-label="Alternative composition worlds">
+              <button type="button" onClick={() => makeRecipe('fogwood.evidence-constellation')} disabled={!controllerReady || Boolean(proposal)}>
+                Evidence constellation
               </button>
-              <button type="button" onClick={() => makeRecipe('meeting-to-plan-wall')} disabled={!controllerReady || Boolean(proposal)}>
-                Meeting wall
-              </button>
-              <button type="button" onClick={() => makeRecipe('static-architecture-map')} disabled={!controllerReady || Boolean(proposal)}>
-                Architecture map
+              <button type="button" onClick={() => makeRecipe('fogwood.storyworld-mutation-map')} disabled={!controllerReady || Boolean(proposal)}>
+                Storyworld mutation map
               </button>
             </div>
+            <details className="legacy-starter">
+              <summary>Block regression fixtures</summary>
+              <p>Compare remains available for compatibility checks; it is not the first-run path.</p>
+              <button type="button" onClick={() => makeRecipe('compare-and-decide')} disabled={!controllerReady || Boolean(proposal)}>
+                Stage Compare &amp; Decide (legacy)
+              </button>
+            </details>
             <p className="empty-footnote">Local staging remains available if the ChatGPT host is not exposed in this tab.</p>
           </section>
         )}
@@ -681,12 +705,46 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               ) : (
                 <>
                   <span><strong>{proposal.diff.counts.adds}</strong> adds</span>
+                  {(proposal.diff.adds.materials ?? 0) > 0 && <span><strong>{proposal.diff.adds.materials}</strong> materials</span>}
                   <span><strong>{proposal.diff.counts.updates}</strong> updates</span>
                   <span><strong>{proposal.diff.counts.moves}</strong> moves</span>
                   <span><strong>{proposal.diff.counts.removes}</strong> removes</span>
                 </>
               )}
             </div>
+            {(proposal.diff.adds.material_specs ?? []).length > 0 && (
+              <section className="proposal-material-diff" aria-label="Qualified material previews">
+                <div className="proposal-material-heading">
+                  <div>
+                    <span className="proposal-diff-title">Qualified material preview</span>
+                    <strong>Local bytes only</strong>
+                  </div>
+                  <span>{proposal.diff.adds.material_specs.length} material{proposal.diff.adds.material_specs.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="proposal-material-list">
+                  {proposal.diff.adds.material_specs.slice(0, 4).map((material) => {
+                    const preview = materialPreviewBase64(proposal, material.semantic_id);
+                    const source = preview ? `data:${material.mime_type};base64,${preview}` : undefined;
+                    return (
+                      <article className="proposal-material-card" key={`${material.semantic_id}-${material.content_hash}`}>
+                        <div className="proposal-material-visual">
+                          {source ? <img src={source} alt={material.alt || material.label} loading="lazy" /> : <span aria-hidden="true">No preview</span>}
+                        </div>
+                        <div className="proposal-material-copy">
+                          <strong>{material.label}</strong>
+                          <span>{material.mime_type} · {material.dimensions.width} × {material.dimensions.height}px · {material.byte_length.toLocaleString()} bytes</span>
+                          <span>Hash <code>{material.content_hash}</code></span>
+                          <span>From {material.originating_capability || 'unspecified capability'}</span>
+                          <span>{material.source_status === 'sanitized' ? 'Sanitized strict SVG subset' : 'Original accepted bytes'} · {material.decode_qualified ? 'Browser decode qualified' : 'Decode not qualified'}</span>
+                          <span>Placement ({material.x}, {material.y}) · display {material.w} × {material.h}</span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                {proposal.diff.adds.material_specs.length > 4 && <span className="proposal-diff-more">Showing the four bounded material previews.</span>}
+              </section>
+            )}
             {guidedModel.instrumentChanges.length > 0 && (
               <section className="proposal-instrument-diff" aria-label="Predicted instrument changes">
                 <div className="proposal-instrument-heading">

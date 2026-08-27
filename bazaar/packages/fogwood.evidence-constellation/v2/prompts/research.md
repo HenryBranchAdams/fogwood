@@ -1,0 +1,1 @@
+Inspect before proposing. Place the narrow claim near the source that supports it, keep a counterargument visibly apart, and leave a question open where evidence is incomplete. Use typed edges to say supports, contradicts, or depends_on.
