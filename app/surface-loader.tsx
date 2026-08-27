@@ -5,9 +5,9 @@ import dynamic from 'next/dynamic';
 const SurfaceApp = dynamic(() => import('./surface-app'), {
   ssr: false,
   loading: () => (
-    <main className="surface-loading" aria-label="Loading Open Surface">
+    <main className="surface-loading" aria-label="Loading Fogwood">
       <span />
-      <strong>Open Surface</strong>
+      <strong>Fogwood</strong>
       <p>Preparing the blank canvas…</p>
     </main>
   ),

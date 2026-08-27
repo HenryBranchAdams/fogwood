@@ -1,25 +1,42 @@
 import {
   Editor,
-  TLArrowShape,
-  TLFrameShape,
-  TLGeoShape,
-  TLNoteShape,
+  TLParentId,
   TLShape,
   TLShapeId,
-  TLShapePartial,
-  TLTextShape,
   createShapeId,
   toRichText,
 } from 'tldraw';
 import {
   BLOCK_KINDS,
   BLOCK_TONES,
-  SURFACE_BLOCK_TYPE,
-  SurfaceBlockKind,
-  SurfaceBlockProps,
-  SurfaceBlockShape,
-  SurfaceBlockTone,
-} from './surface-block';
+  CANVAS_COLORS,
+  CANVAS_FILLS,
+  CANVAS_SHAPE_KINDS,
+  BlockInput,
+  BlockKind,
+  BlockTone,
+  CanvasShapeKind,
+  CapabilitySearchInput,
+  computePageRevision,
+  createProposalController,
+  descendantClosure,
+  expandRecipe,
+  FogwoodMeta,
+  FOGWOOD_PROTOCOL,
+  FOGWOOD_PROTOCOL_VERSION,
+  FOGWOOD_REGISTRY_VERSION,
+  getRecipe,
+  INSPECT_INPUT_SCHEMA,
+  InspectableItem,
+  ProposalAction,
+  ProposalControllerResult,
+  ProposalControllerState,
+  ProposalV1,
+  PROPOSAL_INPUT_SCHEMA,
+  searchCapabilities,
+  validateProposal,
+} from './fogwood-runtime';
+import type { JsonObject } from '@tldraw/utils';
 import {
   ModelContext,
   ToolConnection,
@@ -28,33 +45,17 @@ import {
 } from './webmcp-registration';
 
 export type { ToolConnection } from './webmcp-registration';
+export type { BlockKind, BlockTone, CanvasShapeKind } from './fogwood-runtime';
 
-export type SurfaceBlockInput = {
-  kind?: SurfaceBlockKind;
-  tone?: SurfaceBlockTone;
-  x?: number;
-  y?: number;
-  w?: number;
-  h?: number;
-  title?: string;
-  body?: string;
-  value?: string | number;
-  items?: Array<{ label: string; checked?: boolean }>;
-  columns?: string[];
-  rows?: string[][];
-  options?: string[];
-  series?: Array<{ label: string; value: number }>;
-  min?: number;
-  max?: number;
-  step?: number;
-};
+/** Kept as a compatibility input for internal adapters and page-owned code. */
+export type SurfaceBlockInput = Partial<BlockInput> & { kind?: BlockKind };
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 };
 
-const DEFAULT_SIZES: Record<SurfaceBlockKind, { w: number; h: number }> = {
+const DEFAULT_SIZES: Record<BlockKind, { w: number; h: number }> = {
   panel: { w: 330, h: 210 },
   heading: { w: 720, h: 130 },
   text: { w: 360, h: 180 },
@@ -69,98 +70,49 @@ const DEFAULT_SIZES: Record<SurfaceBlockKind, { w: number; h: number }> = {
   chart: { w: 520, h: 320 },
 };
 
-const CANVAS_SHAPE_KINDS = [
-  'rectangle',
-  'ellipse',
-  'diamond',
-  'triangle',
-  'cloud',
-  'note',
-  'text',
-  'arrow',
-  'frame',
-] as const;
-
-const CANVAS_COLORS = [
-  'black',
-  'grey',
-  'violet',
-  'blue',
-  'light-blue',
-  'yellow',
-  'orange',
-  'green',
-  'light-green',
-  'light-red',
-  'red',
-  'white',
-] as const;
-
-const CANVAS_FILLS = ['none', 'semi', 'solid', 'pattern'] as const;
-
-type CanvasShapeKind = (typeof CANVAS_SHAPE_KINDS)[number];
-type CanvasColor = (typeof CANVAS_COLORS)[number];
-type CanvasFill = (typeof CANVAS_FILLS)[number];
-type NativeCanvasShape =
-  | TLArrowShape
-  | TLFrameShape
-  | TLGeoShape
-  | TLNoteShape
-  | TLTextShape;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function clampNumber(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number,
-) {
+function boundedText(value: unknown, max: number, fallback = '') {
+  if (typeof value === 'string') return value.slice(0, max);
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value).slice(0, max);
+  return fallback;
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number) {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(min, Math.min(max, value))
     : fallback;
 }
 
-function boundedText(value: unknown, max: number, fallback = '') {
-  if (typeof value === 'string') return value.slice(0, max);
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return String(value).slice(0, max);
-  }
-  return fallback;
-}
-
-function normalizeKind(value: unknown): SurfaceBlockKind {
-  return typeof value === 'string' &&
-    BLOCK_KINDS.includes(value as SurfaceBlockKind)
-    ? (value as SurfaceBlockKind)
+function normalizeKind(value: unknown): BlockKind {
+  return typeof value === 'string' && BLOCK_KINDS.includes(value as BlockKind)
+    ? (value as BlockKind)
     : 'panel';
 }
 
-function normalizeTone(value: unknown): SurfaceBlockTone {
-  return typeof value === 'string' &&
-    BLOCK_TONES.includes(value as SurfaceBlockTone)
-    ? (value as SurfaceBlockTone)
+function normalizeTone(value: unknown): BlockTone {
+  return typeof value === 'string' && BLOCK_TONES.includes(value as BlockTone)
+    ? (value as BlockTone)
     : 'paper';
 }
 
 function normalizeCanvasKind(value: unknown): CanvasShapeKind {
-  return typeof value === 'string' &&
-    CANVAS_SHAPE_KINDS.includes(value as CanvasShapeKind)
+  return typeof value === 'string' && CANVAS_SHAPE_KINDS.includes(value as CanvasShapeKind)
     ? (value as CanvasShapeKind)
     : 'rectangle';
 }
 
-function normalizeCanvasColor(value: unknown): CanvasColor {
-  return typeof value === 'string' && CANVAS_COLORS.includes(value as CanvasColor)
-    ? (value as CanvasColor)
+function normalizeCanvasColor(value: unknown) {
+  return typeof value === 'string' && CANVAS_COLORS.includes(value as (typeof CANVAS_COLORS)[number])
+    ? (value as (typeof CANVAS_COLORS)[number])
     : 'black';
 }
 
-function normalizeCanvasFill(value: unknown): CanvasFill {
-  return typeof value === 'string' && CANVAS_FILLS.includes(value as CanvasFill)
-    ? (value as CanvasFill)
+function normalizeCanvasFill(value: unknown) {
+  return typeof value === 'string' && CANVAS_FILLS.includes(value as (typeof CANVAS_FILLS)[number])
+    ? (value as (typeof CANVAS_FILLS)[number])
     : 'semi';
 }
 
@@ -186,15 +138,9 @@ function makeBlockData(input: Record<string, unknown>) {
   const items = Array.isArray(input.items)
     ? input.items.slice(0, 20).flatMap((item) => {
         if (!isRecord(item) || typeof item.label !== 'string') return [];
-        return [
-          {
-            label: item.label.slice(0, 240),
-            checked: item.checked === true,
-          },
-        ];
+        return [{ label: item.label.slice(0, 240), checked: item.checked === true }];
       })
     : [];
-
   const columns = safeTextList(input.columns, 8);
   const rows = Array.isArray(input.rows)
     ? input.rows.slice(0, 12).map((row) => safeTextList(row, 8))
@@ -202,23 +148,11 @@ function makeBlockData(input: Record<string, unknown>) {
   const options = safeTextList(input.options, 20);
   const series = Array.isArray(input.series)
     ? input.series.slice(0, 10).flatMap((item) => {
-        if (
-          !isRecord(item) ||
-          typeof item.label !== 'string' ||
-          typeof item.value !== 'number' ||
-          !Number.isFinite(item.value)
-        ) {
-          return [];
-        }
-        return [
-          {
-            label: item.label.slice(0, 80),
-            value: Math.max(-1_000_000_000, Math.min(1_000_000_000, item.value)),
-          },
-        ];
+        if (!isRecord(item) || typeof item.label !== 'string' || typeof item.value !== 'number') return [];
+        if (!Number.isFinite(item.value)) return [];
+        return [{ label: item.label.slice(0, 80), value: Math.max(-1_000_000_000, Math.min(1_000_000_000, item.value)) }];
       })
     : [];
-
   return JSON.stringify({
     items,
     columns,
@@ -249,56 +183,63 @@ function positionFor(
   const defaultY = 90 + Math.floor(index / 3) * 250;
   const rawX = clampNumber(input.x, defaultX, -100_000, 100_000);
   const rawY = clampNumber(input.y, defaultY, -100_000, 100_000);
-
   return coordinateSpace === 'viewport'
     ? { x: viewport.x + rawX, y: viewport.y + rawY }
     : { x: rawX, y: rawY };
 }
 
-export function addSurfaceBlocks(
-  editor: Editor,
-  inputs: unknown[],
-  options: {
-    coordinateSpace?: 'viewport' | 'page';
-    focusAfter?: boolean;
-  } = {},
-) {
+type MutationOptions = {
+  coordinateSpace?: 'viewport' | 'page';
+  focusAfter?: boolean;
+  select?: boolean;
+  recordHistory?: boolean;
+  parentId?: string;
+  fogwood?: FogwoodMeta;
+};
+
+function shapeMeta(id: string, fogwood?: FogwoodMeta): JsonObject {
+  const fogwoodMeta: JsonObject = {
+    semantic_id: fogwood?.semantic_id ?? `fogwood:${id}`,
+    ...(fogwood?.role ? { role: fogwood.role } : {}),
+    ...(fogwood?.recipe_id ? { recipe_id: fogwood.recipe_id } : {}),
+    ...(fogwood?.recipe_version ? { recipe_version: fogwood.recipe_version } : {}),
+  };
+  return { fogwood: fogwoodMeta };
+}
+
+export function addSurfaceBlocks(editor: Editor, inputs: unknown[], options: MutationOptions = {}) {
   const coordinateSpace = options.coordinateSpace ?? 'viewport';
   const records = inputs.filter(isRecord).slice(0, 48);
   if (records.length === 0) return [];
-
-  editor.markHistoryStoppingPoint('Add interface blocks');
-  const shapes: TLShapePartial<SurfaceBlockShape>[] = records.map(
-    (input, index) => {
-      const kind = normalizeKind(input.kind);
-      const size = DEFAULT_SIZES[kind];
-      const position = positionFor(editor, input, index, coordinateSpace);
-
-      return {
-        id: createShapeId(),
-        type: SURFACE_BLOCK_TYPE,
-        x: position.x,
-        y: position.y,
-        props: {
-          w: clampNumber(input.w, size.w, 120, 1_400),
-          h: clampNumber(input.h, size.h, 56, 1_000),
-          kind,
-          tone: normalizeTone(input.tone),
-          title: boundedText(input.title, 180),
-          body: boundedText(input.body, 2_000),
-          value: boundedText(input.value, 500),
-          data: makeBlockData(input),
-        },
-      };
-    },
-  );
-
-  editor.createShapes<SurfaceBlockShape>(shapes);
+  const shapes = records.map((input, index) => {
+    const kind = normalizeKind(input.kind);
+    const size = DEFAULT_SIZES[kind];
+    const position = positionFor(editor, input, index, coordinateSpace);
+    const id = createShapeId();
+    return {
+      id,
+      type: 'surface-block' as const,
+      x: position.x,
+      y: position.y,
+      parentId: options.parentId ? (options.parentId as TLParentId) : editor.getCurrentPageId(),
+      meta: shapeMeta(id, options.fogwood),
+      props: {
+        w: clampNumber(input.w, size.w, 120, 1_400),
+        h: clampNumber(input.h, size.h, 56, 1_000),
+        kind,
+        tone: normalizeTone(input.tone),
+        title: boundedText(input.title, 180),
+        body: boundedText(input.body, 2_000),
+        value: boundedText(input.value, 500),
+        data: makeBlockData(input),
+      },
+    };
+  });
+  if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Add Fogwood blocks');
+  editor.createShapes(shapes);
   const ids = shapes.map((shape) => shape.id as TLShapeId);
-  editor.select(...ids);
-  if (options.focusAfter !== false) {
-    editor.zoomToSelection({ animation: { duration: 320 } });
-  }
+  if (options.select !== false) editor.select(...ids);
+  if (options.focusAfter !== false) editor.zoomToSelection({ animation: { duration: 320 } });
   return ids;
 }
 
@@ -316,47 +257,30 @@ function explicitCoordinate(
   return (axis === 'x' ? viewport.x : viewport.y) + bounded;
 }
 
-function addCanvasShapes(
-  editor: Editor,
-  inputs: unknown[],
-  options: {
-    coordinateSpace?: 'viewport' | 'page';
-    focusAfter?: boolean;
-  } = {},
-) {
+function addCanvasShapes(editor: Editor, inputs: unknown[], options: MutationOptions = {}) {
   const coordinateSpace = options.coordinateSpace ?? 'viewport';
   const records = inputs.filter(isRecord).slice(0, 64);
   if (records.length === 0) return [];
-
-  const shapes: Array<TLShapePartial<NativeCanvasShape>> = [];
-
+  const shapes: Array<Record<string, unknown>> = [];
   records.forEach((input, index) => {
     const kind = normalizeCanvasKind(input.kind);
     const color = normalizeCanvasColor(input.color);
     const position = positionFor(editor, input, index, coordinateSpace);
     const text = boundedText(input.text, 2_000);
     const id = createShapeId();
-
+    const base = {
+      id,
+      x: position.x,
+      y: position.y,
+      parentId: options.parentId ? (options.parentId as TLParentId) : editor.getCurrentPageId(),
+      meta: shapeMeta(id, options.fogwood),
+    };
     if (kind === 'arrow') {
-      const endX = explicitCoordinate(
-        editor,
-        input.end_x,
-        position.x + 240,
-        'x',
-        coordinateSpace,
-      );
-      const endY = explicitCoordinate(
-        editor,
-        input.end_y,
-        position.y + 100,
-        'y',
-        coordinateSpace,
-      );
+      const endX = explicitCoordinate(editor, input.end_x, position.x + 240, 'x', coordinateSpace);
+      const endY = explicitCoordinate(editor, input.end_y, position.y + 100, 'y', coordinateSpace);
       shapes.push({
-        id,
+        ...base,
         type: 'arrow',
-        x: position.x,
-        y: position.y,
         props: {
           color,
           labelColor: color,
@@ -370,13 +294,10 @@ function addCanvasShapes(
       });
       return;
     }
-
     if (kind === 'frame') {
       shapes.push({
-        id,
+        ...base,
         type: 'frame',
-        x: position.x,
-        y: position.y,
         props: {
           w: clampNumber(input.w, 720, 160, 2_000),
           h: clampNumber(input.h, 480, 120, 1_600),
@@ -386,13 +307,10 @@ function addCanvasShapes(
       });
       return;
     }
-
     if (kind === 'note') {
       shapes.push({
-        id,
+        ...base,
         type: 'note',
-        x: position.x,
-        y: position.y,
         props: {
           color: color === 'black' ? 'yellow' : color,
           labelColor: 'black',
@@ -402,13 +320,10 @@ function addCanvasShapes(
       });
       return;
     }
-
     if (kind === 'text') {
       shapes.push({
-        id,
+        ...base,
         type: 'text',
-        x: position.x,
-        y: position.y,
         props: {
           w: clampNumber(input.w, 320, 40, 1_400),
           color,
@@ -419,12 +334,9 @@ function addCanvasShapes(
       });
       return;
     }
-
     shapes.push({
-      id,
+      ...base,
       type: 'geo',
-      x: position.x,
-      y: position.y,
       props: {
         geo: kind,
         w: clampNumber(input.w, 260, 40, 1_400),
@@ -440,33 +352,22 @@ function addCanvasShapes(
       },
     });
   });
-
-  editor.markHistoryStoppingPoint('Add canvas shapes');
-  editor.createShapes<NativeCanvasShape>(shapes);
+  if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Add Fogwood shapes');
+  editor.createShapes(shapes as never);
   const ids = shapes.map((shape) => shape.id as TLShapeId);
-  editor.select(...ids);
-  if (options.focusAfter !== false) {
-    editor.zoomToSelection({ animation: { duration: 320 } });
-  }
+  if (options.select !== false) editor.select(...ids);
+  if (options.focusAfter !== false) editor.zoomToSelection({ animation: { duration: 320 } });
   return ids;
 }
 
-function updateSurfaceBlocks(editor: Editor, rawUpdates: unknown[]) {
+function updateSurfaceBlocks(editor: Editor, rawUpdates: unknown[], options: MutationOptions = {}) {
   const updates = rawUpdates.filter(isRecord).slice(0, 48);
-  const shapeUpdates: Array<{
-    id: SurfaceBlockShape['id'];
-    type: typeof SURFACE_BLOCK_TYPE;
-    x?: number;
-    y?: number;
-    props: Partial<SurfaceBlockProps>;
-  }> = [];
-
+  const shapeUpdates: Array<Record<string, unknown>> = [];
   for (const input of updates) {
     if (typeof input.id !== 'string') continue;
     const shape = editor.getShape(input.id as TLShapeId);
-    if (!shape || shape.type !== SURFACE_BLOCK_TYPE) continue;
-
-    const props: Partial<SurfaceBlockProps> = {};
+    if (!shape || shape.type !== 'surface-block') continue;
+    const props: Record<string, unknown> = {};
     if ('kind' in input) props.kind = normalizeKind(input.kind);
     if ('tone' in input) props.tone = normalizeTone(input.tone);
     if ('title' in input) props.title = boundedText(input.title, 180);
@@ -474,42 +375,27 @@ function updateSurfaceBlocks(editor: Editor, rawUpdates: unknown[]) {
     if ('value' in input) props.value = boundedText(input.value, 500);
     if ('w' in input) props.w = clampNumber(input.w, shape.props.w, 120, 1_400);
     if ('h' in input) props.h = clampNumber(input.h, shape.props.h, 56, 1_000);
-    if (
-      ['items', 'columns', 'rows', 'options', 'series', 'min', 'max', 'step'].some(
-        (key) => key in input,
-      )
-    ) {
-      props.data = makeBlockData({
-        ...parseBlockData(shape.props.data),
-        ...input,
-      });
+    if (['items', 'columns', 'rows', 'options', 'series', 'min', 'max', 'step'].some((key) => key in input)) {
+      props.data = makeBlockData({ ...parseBlockData(shape.props.data), ...input });
     }
-
-    const update: (typeof shapeUpdates)[number] = {
+    shapeUpdates.push({
       id: shape.id,
-      type: SURFACE_BLOCK_TYPE,
+      type: 'surface-block',
+      ...(input.x === undefined ? {} : { x: clampNumber(input.x, shape.x, -100_000, 100_000) }),
+      ...(input.y === undefined ? {} : { y: clampNumber(input.y, shape.y, -100_000, 100_000) }),
       props,
-    };
-    if ('x' in input) {
-      update.x = clampNumber(input.x, shape.x, -100_000, 100_000);
-    }
-    if ('y' in input) {
-      update.y = clampNumber(input.y, shape.y, -100_000, 100_000);
-    }
-    shapeUpdates.push(update);
+    });
   }
-
   if (shapeUpdates.length > 0) {
-    editor.markHistoryStoppingPoint('Update interface blocks');
-    editor.updateShapes<SurfaceBlockShape>(shapeUpdates);
+    if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Update Fogwood blocks');
+    editor.updateShapes(shapeUpdates as never);
   }
-  return shapeUpdates.map((update) => update.id);
+  return shapeUpdates.map((update) => update.id as TLShapeId);
 }
 
-function placeCanvasItems(editor: Editor, rawPlacements: unknown[]) {
+function placeCanvasItems(editor: Editor, rawPlacements: unknown[], options: MutationOptions = {}) {
   const placements = rawPlacements.filter(isRecord).slice(0, 100);
-  const updates: Array<TLShapePartial<TLShape>> = [];
-
+  const updates: Array<Record<string, unknown>> = [];
   for (const input of placements) {
     if (typeof input.id !== 'string') continue;
     const shape = editor.getShape(input.id as TLShapeId);
@@ -519,116 +405,15 @@ function placeCanvasItems(editor: Editor, rawPlacements: unknown[]) {
       type: shape.type,
       x: clampNumber(input.x, shape.x, -100_000, 100_000),
       y: clampNumber(input.y, shape.y, -100_000, 100_000),
-      ...('rotation' in input
-        ? { rotation: clampNumber(input.rotation, shape.rotation, -Math.PI * 4, Math.PI * 4) }
-        : {}),
+      ...(input.rotation === undefined ? {} : { rotation: clampNumber(input.rotation, shape.rotation, -Math.PI * 4, Math.PI * 4) }),
     });
   }
-
   if (updates.length > 0) {
-    editor.markHistoryStoppingPoint('Place canvas items');
-    editor.updateShapes(updates);
+    if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Place Fogwood items');
+    editor.updateShapes(updates as never);
   }
-  return updates.map((update) => update.id);
+  return updates.map((update) => update.id as TLShapeId);
 }
-
-const blockSchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    kind: {
-      type: 'string',
-      enum: BLOCK_KINDS,
-      description: 'The safe, built-in interface primitive to render.',
-    },
-    tone: { type: 'string', enum: BLOCK_TONES },
-    x: { type: 'number', description: 'Horizontal canvas coordinate or viewport offset.' },
-    y: { type: 'number', description: 'Vertical canvas coordinate or viewport offset.' },
-    w: { type: 'number', minimum: 120, maximum: 1400 },
-    h: { type: 'number', minimum: 56, maximum: 1000 },
-    title: { type: 'string', maxLength: 180 },
-    body: { type: 'string', maxLength: 2000 },
-    value: { type: ['string', 'number'] },
-    items: {
-      type: 'array',
-      maxItems: 20,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          label: { type: 'string', maxLength: 240 },
-          checked: { type: 'boolean' },
-        },
-        required: ['label'],
-      },
-    },
-    columns: {
-      type: 'array',
-      maxItems: 8,
-      items: { type: 'string', maxLength: 160 },
-    },
-    rows: {
-      type: 'array',
-      maxItems: 12,
-      items: {
-        type: 'array',
-        maxItems: 8,
-        items: { type: 'string', maxLength: 160 },
-      },
-    },
-    options: {
-      type: 'array',
-      maxItems: 20,
-      items: { type: 'string', maxLength: 160 },
-    },
-    series: {
-      type: 'array',
-      maxItems: 10,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          label: { type: 'string', maxLength: 80 },
-          value: { type: 'number' },
-        },
-        required: ['label', 'value'],
-      },
-    },
-    min: { type: 'number' },
-    max: { type: 'number' },
-    step: { type: 'number', exclusiveMinimum: 0 },
-  },
-  required: ['kind'],
-} as const;
-
-const canvasShapeSchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    kind: {
-      type: 'string',
-      enum: CANVAS_SHAPE_KINDS,
-      description:
-        'A native tldraw diagram primitive. Use blocks instead for interactive interface controls.',
-    },
-    x: { type: 'number', description: 'Start x coordinate or viewport offset.' },
-    y: { type: 'number', description: 'Start y coordinate or viewport offset.' },
-    end_x: {
-      type: 'number',
-      description: 'Arrow endpoint x coordinate or viewport offset. Used only for arrows.',
-    },
-    end_y: {
-      type: 'number',
-      description: 'Arrow endpoint y coordinate or viewport offset. Used only for arrows.',
-    },
-    w: { type: 'number', minimum: 40, maximum: 2000 },
-    h: { type: 'number', minimum: 40, maximum: 1600 },
-    text: { type: 'string', maxLength: 2000 },
-    color: { type: 'string', enum: CANVAS_COLORS },
-    fill: { type: 'string', enum: CANVAS_FILLS },
-  },
-  required: ['kind'],
-} as const;
 
 function getNativeShapeText(editor: Editor, shape: TLShape) {
   try {
@@ -638,448 +423,371 @@ function getNativeShapeText(editor: Editor, shape: TLShape) {
   }
 }
 
-function inspectSurface(editor: Editor) {
-  const viewport = editor.getViewportPageBounds();
-  const shapes = editor.getCurrentPageShapesSorted();
+function boundedValue(value: unknown, depth = 6): unknown {
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') return value.slice(0, 500);
+  if (depth <= 0) return '[bounded]';
+  if (Array.isArray(value)) return value.slice(0, 64).map((child) => boundedValue(child, depth - 1));
+  if (!isRecord(value)) return null;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .slice(0, 64)
+      .map((key) => [key, boundedValue(value[key], depth - 1)]),
+  );
+}
+
+function boundedProps(value: unknown): Record<string, unknown> {
+  const bounded = boundedValue(value);
+  return isRecord(bounded) ? bounded : {};
+}
+
+function fogwoodMeta(shape: TLShape): FogwoodMeta {
+  const root = isRecord(shape.meta) && isRecord(shape.meta.fogwood) ? shape.meta.fogwood : {};
   return {
-    page_id: editor.getCurrentPageId(),
-    viewport: { x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h },
-    shape_count: shapes.length,
-    supported_interface_blocks: BLOCK_KINDS,
-    supported_canvas_shapes: CANVAS_SHAPE_KINDS,
-    items: shapes.map((shape) => {
-      if (shape.type !== SURFACE_BLOCK_TYPE) {
-        const bounds = editor.getShapePageBounds(shape);
-        return {
-          id: shape.id,
-          type: shape.type,
-          x: Math.round(shape.x),
-          y: Math.round(shape.y),
-          w: bounds ? Math.round(bounds.w) : undefined,
-          h: bounds ? Math.round(bounds.h) : undefined,
-          text: getNativeShapeText(editor, shape),
-        };
-      }
-      const block = shape as SurfaceBlockShape;
-      return {
-        id: block.id,
-        type: block.type,
-        kind: block.props.kind,
-        tone: block.props.tone,
-        x: Math.round(block.x),
-        y: Math.round(block.y),
-        w: Math.round(block.props.w),
-        h: Math.round(block.props.h),
-        title: block.props.title,
-        body: block.props.body.slice(0, 500),
-        value: block.props.value,
-      };
-    }),
+    semantic_id: typeof root.semantic_id === 'string' ? root.semantic_id.slice(0, 180) : shape.id,
+    ...(typeof root.role === 'string' ? { role: root.role.slice(0, 120) } : {}),
+    ...(typeof root.recipe_id === 'string' ? { recipe_id: root.recipe_id.slice(0, 120) } : {}),
+    ...(typeof root.recipe_version === 'number' ? { recipe_version: root.recipe_version } : {}),
   };
 }
+
+function blockDataForInspection(data: string) {
+  const parsed = parseBlockData(data);
+  return {
+    items: Array.isArray(parsed.items)
+      ? parsed.items.slice(0, 20).flatMap((item) => (isRecord(item) && typeof item.label === 'string' ? [{ label: item.label.slice(0, 240), checked: item.checked === true }] : []))
+      : [],
+    columns: safeTextList(parsed.columns, 8),
+    rows: Array.isArray(parsed.rows) ? parsed.rows.slice(0, 12).map((row) => safeTextList(row, 8)) : [],
+    options: safeTextList(parsed.options, 20),
+    series: Array.isArray(parsed.series)
+      ? parsed.series.slice(0, 10).flatMap((item) => (isRecord(item) && typeof item.label === 'string' && typeof item.value === 'number' && Number.isFinite(item.value) ? [{ label: item.label.slice(0, 80), value: item.value }] : []))
+      : [],
+    min: clampNumber(parsed.min, 0, -1_000_000, 1_000_000),
+    max: clampNumber(parsed.max, 100, -1_000_000, 1_000_000),
+    step: clampNumber(parsed.step, 1, 0.001, 100_000),
+  };
+}
+
+function nativePropsForInspection(shape: TLShape) {
+  // Keep every native props key (including richText/resource metadata) within
+  // one recursive bound; plain text is exposed separately on the item.
+  return boundedProps(shape.props);
+}
+
+function currentPageBindings(editor: Editor, shapeIds: Set<string>) {
+  return editor.store
+    .allRecords()
+    .filter((record) => record.typeName === 'binding')
+    .map((record) => record as unknown as { id: string; typeName: string; type: string; fromId: string; toId: string; props: unknown })
+    .filter((record) => shapeIds.has(record.fromId) && shapeIds.has(record.toId))
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((record) => ({ id: record.id, type_name: record.typeName, type: record.type, from_id: record.fromId, to_id: record.toId, props: boundedProps(record.props) }));
+}
+
+function pageContent(editor: Editor) {
+  const shapes = editor.getCurrentPageShapesSorted();
+  const shapeIds = new Set<string>(shapes.map((shape) => shape.id));
+  const bindings = editor.store
+    .allRecords()
+    .filter((record) => record.typeName === 'binding')
+    .map((record) => record as unknown as { fromId: string; toId: string; id: string; type: string; props: unknown })
+    .filter((record) => shapeIds.has(record.fromId) && shapeIds.has(record.toId));
+  return { shapes, bindings };
+}
+
+export function currentRevision(editor: Editor) {
+  const { shapes, bindings } = pageContent(editor);
+  return computePageRevision(editor.getCurrentPageId(), shapes, bindings);
+}
+
+function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
+  const bounds = editor.getShapePageBounds(shape);
+  const meta = fogwoodMeta(shape);
+  const base = {
+    id: shape.id,
+    type_name: shape.typeName,
+    type: shape.type,
+    x: Math.round(shape.x),
+    y: Math.round(shape.y),
+    w: Math.round(bounds?.w ?? 0),
+    h: Math.round(bounds?.h ?? 0),
+    rotation: shape.rotation,
+    parent_id: shape.parentId,
+    is_locked: shape.isLocked,
+    opacity: shape.opacity,
+    index: shape.index,
+    semantic_id: meta.semantic_id,
+    meta,
+  } satisfies InspectableItem;
+  if (shape.type === 'surface-block') {
+    const block = shape as Extract<TLShape, { type: 'surface-block' }>;
+    return {
+      ...base,
+      kind: block.props.kind,
+      w: Math.round(block.props.w),
+      h: Math.round(block.props.h),
+      props: {
+        w: block.props.w,
+        h: block.props.h,
+        kind: block.props.kind,
+        tone: block.props.tone,
+        title: block.props.title.slice(0, 180),
+        body: block.props.body.slice(0, 2_000),
+        value: block.props.value.slice(0, 500),
+        data: blockDataForInspection(block.props.data),
+      },
+      text: [block.props.title, block.props.body, block.props.value].filter(Boolean).join(' ').slice(0, 500),
+    };
+  }
+  const text = getNativeShapeText(editor, shape);
+  return { ...base, props: nativePropsForInspection(shape), text };
+}
+
+function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: string; binding_page_size?: number; binding_cursor?: string } = {}) {
+  const { shapes, bindings } = pageContent(editor);
+  const allItems = shapes.map((shape) => inspectItem(editor, shape));
+  const pageSize = typeof input.page_size === 'number' && Number.isFinite(input.page_size)
+    ? Math.max(1, Math.min(128, Math.trunc(input.page_size)))
+    : 128;
+  const offset = typeof input.cursor === 'string' && /^\d+$/.test(input.cursor) ? Number(input.cursor) : 0;
+  const items = allItems.slice(offset, offset + pageSize);
+  const nextOffset = offset + items.length;
+  const shapeIds = new Set<string>(shapes.map((shape) => shape.id));
+  const allBindingItems = currentPageBindings(editor, shapeIds);
+  const bindingPageSize = typeof input.binding_page_size === 'number' && Number.isFinite(input.binding_page_size)
+    ? Math.max(1, Math.min(256, Math.trunc(input.binding_page_size)))
+    : 128;
+  const bindingOffset = typeof input.binding_cursor === 'string' && /^\d+$/.test(input.binding_cursor) ? Number(input.binding_cursor) : 0;
+  const bindingItems = allBindingItems.slice(bindingOffset, bindingOffset + bindingPageSize);
+  const bindingNextOffset = bindingOffset + bindingItems.length;
+  const currentState = editor.getCurrentPageState();
+  const viewport = editor.getViewportPageBounds();
+  const camera = editor.getCamera();
+  const pageBounds = editor.getCurrentPageBounds();
+  const blockCount = shapes.filter((shape) => shape.type === 'surface-block').length;
+  const nativeCount = shapes.length - blockCount;
+  const itemComplete = nextOffset >= allItems.length;
+  const bindingComplete = bindingNextOffset >= allBindingItems.length;
+  const selectedShapeIds = [...currentState.selectedShapeIds];
+  const selectionLimit = 128;
+  const selectedShapeIdsPage = selectedShapeIds.slice(0, selectionLimit);
+  const selectionComplete = selectedShapeIdsPage.length >= selectedShapeIds.length;
+  return {
+    protocol: { name: FOGWOOD_PROTOCOL, version: FOGWOOD_PROTOCOL_VERSION, registry_version: FOGWOOD_REGISTRY_VERSION },
+    persistence: { boundary: 'device-local', key: 'open-surface-local' },
+    workflow: ['inspect', 'capability search', 'proposal', 'page Apply/Reject'],
+    workflow_contract: 'inspect -> capability search -> proposal -> page Apply/Reject',
+    authority: { agent: 'read current state, search local capabilities, and stage typed proposals', page: 'owns validation and Apply/Reject; only page Apply mutates content' },
+    no_code: true,
+    content_revision: currentRevision(editor),
+    revision_source: 'current-page-shapes-and-bindings; camera and selection excluded',
+    page: {
+      id: editor.getCurrentPageId(),
+      bounds: pageBounds ? { x: pageBounds.x, y: pageBounds.y, w: pageBounds.w, h: pageBounds.h } : null,
+      coordinate_system: 'page coordinates',
+    },
+    viewport: { page_coordinates: { x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h }, camera: { x: camera.x, y: camera.y, z: camera.z } },
+    selection: { shape_ids: selectedShapeIdsPage, focused_group_id: currentState.focusedGroupId ?? null, editing_shape_id: currentState.editingShapeId ?? null },
+    selection_count: selectedShapeIds.length,
+    selection_completeness: { complete: selectionComplete, truncated: !selectionComplete, total: selectedShapeIds.length, returned: selectedShapeIdsPage.length, limit: selectionLimit },
+    counts: { shapes: shapes.length, blocks: blockCount, native_shapes: nativeCount, bindings: bindings.length, returned_items: items.length, returned_bindings: bindingItems.length },
+    supported_blocks: [...BLOCK_KINDS],
+    supported_native_shapes: [...CANVAS_SHAPE_KINDS],
+    items,
+    bindings: bindingItems,
+    item_completeness: {
+      complete: itemComplete,
+      truncated: !itemComplete,
+      total: allItems.length,
+      returned: items.length,
+      cursor: offset === 0 ? undefined : String(offset),
+      next_cursor: itemComplete ? undefined : String(nextOffset),
+      limit: pageSize,
+    },
+    binding_completeness: {
+      complete: bindingComplete,
+      truncated: !bindingComplete,
+      total: allBindingItems.length,
+      returned: bindingItems.length,
+      cursor: bindingOffset === 0 ? undefined : String(bindingOffset),
+      next_cursor: bindingComplete ? undefined : String(bindingNextOffset),
+      limit: bindingPageSize,
+    },
+    completeness: {
+      complete: itemComplete && bindingComplete,
+      truncated: !itemComplete || !bindingComplete,
+      cursor: offset === 0 ? undefined : String(offset),
+      next_cursor: itemComplete ? undefined : String(nextOffset),
+      limits: { page_size: pageSize, block_data_items: 20, table_columns: 8, table_rows: 12, native_text: 500, native_props_depth: 6, native_props_entries: 64, binding_page_size: bindingPageSize },
+    },
+  };
+}
+
+function proposalContext(editor: Editor) {
+  return { current_revision: currentRevision(editor), items: pageContent(editor).shapes.map((shape) => inspectItem(editor, shape)) };
+}
+
+function expandActions(actions: readonly ProposalAction[]) {
+  return actions.flatMap((action) => {
+    if (action.type !== 'insert_recipe') return [action];
+    const recipe = getRecipe(action.recipe_id, action.version);
+    if (!recipe) return [];
+    return expandRecipe(recipe, action.anchor).map((operation) => ({
+      ...operation,
+      recipeMeta: { recipe_id: recipe.id, recipe_version: recipe.version },
+    }));
+  });
+}
+
+function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
+  if (currentRevision(editor) !== proposal.base_revision) return { ok: false as const, status: 'STALE_STATE' as const, message: 'The page changed; inspect again and re-propose before applying.' };
+  const validation = validateProposal(proposal, proposalContext(editor));
+  if (!validation.ok) {
+    const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
+    return { ok: false as const, status: stale ? 'STALE_STATE' as const : 'ERROR' as const, message: validation.errors.map((error) => error.message).join(' ') };
+  }
+  const actions = expandActions(validation.proposal.actions);
+  try {
+    editor.markHistoryStoppingPoint('Apply agent proposal');
+    editor.run(() => {
+      for (const action of actions) {
+        const recipeMeta = 'recipeMeta' in action ? action.recipeMeta : undefined;
+        const fogwood = {
+          role: recipeMeta ? 'recipe-content' : 'proposal-content',
+          ...(recipeMeta ?? {}),
+        };
+        if (action.type === 'add_blocks') {
+          addSurfaceBlocks(editor, action.blocks, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
+        } else if (action.type === 'add_shapes') {
+          addCanvasShapes(editor, action.shapes, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
+        } else if (action.type === 'update_blocks') {
+          updateSurfaceBlocks(editor, action.updates, { recordHistory: false });
+        } else if (action.type === 'place_items') {
+          placeCanvasItems(editor, action.placements, { recordHistory: false });
+        } else if (action.type === 'remove_items') {
+          const currentItems = proposalContext(editor).items;
+          const ids = descendantClosure(action.ids, currentItems).map((item) => item.id as TLShapeId);
+          editor.deleteShapes(ids);
+        } else if (action.type === 'clear_surface') {
+          editor.deleteShapes(editor.getCurrentPageShapes().map((shape) => shape.id));
+        }
+      }
+    }, { history: 'record' });
+  } catch (error) {
+    return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The page rejected the proposal.' };
+  }
+  return { ok: true as const };
+}
+
+export type SurfaceToolController = ReturnType<typeof createProposalController> & {
+  stageRecipe: (recipeId: string) => ProposalControllerResult;
+};
 
 export function registerSurfaceTools(
   editor: Editor,
   onConnection: (connection: ToolConnection) => void,
   onActivity?: (title: string, detail?: string) => void,
+  onProposalChange?: (state: ProposalControllerState | null) => void,
+  onController?: (controller: SurfaceToolController) => void,
 ) {
+  const baseController = createProposalController(
+    { getRevision: () => currentRevision(editor), apply: (proposal) => applyProposalToEditor(editor, proposal) },
+    onProposalChange,
+  );
+  const controller: SurfaceToolController = {
+    ...baseController,
+    stageRecipe(recipeId) {
+      const recipe = getRecipe(recipeId, 1);
+      if (!recipe) return { status: 'ERROR', message: 'Unknown immutable recipe.' };
+      const proposal = {
+        base_revision: currentRevision(editor),
+        summary: `Review ${recipe.title}`.slice(0, 180),
+        rationale: recipe.purpose.slice(0, 500),
+        actions: [{ type: 'insert_recipe', recipe_id: recipe.id, version: 1 }],
+      } satisfies ProposalV1;
+      const validation = validateProposal(proposal, proposalContext(editor));
+      if (!validation.ok) return { status: 'ERROR', message: validation.errors.map((error) => error.message).join(' ') };
+      onActivity?.('Staged a Fogwood recipe', `${recipe.title} is ready for page review.`);
+      return baseController.stage(validation.proposal, validation.diff);
+    },
+  };
+  onController?.(controller);
+
   const tools: WebMcpTool[] = [
     {
-      name: 'surface-inspect',
-      title: 'Inspect Open Surface',
-      description:
-        'Read the current Open Surface page, viewport, item IDs, dimensions, positions, and plain-text content for both interface blocks and native tldraw shapes. This does not modify the canvas or make a network request.',
-      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+      name: 'fogwood-inspect',
+      title: 'Inspect Fogwood',
+      description: 'Read the bounded Fogwood operating contract and complete or paginated current-page state. This is read-only, device-local, and excludes camera and selection from the opaque content revision.',
+      inputSchema: INSPECT_INPUT_SCHEMA,
       annotations: { readOnlyHint: true, untrustedContentHint: true },
-      execute: () => {
-        const surface = inspectSurface(editor);
-        onActivity?.(
-          'ChatGPT inspected the surface',
-          `${surface.shape_count} canvas items read without changing them.`,
-        );
+      execute: (input) => {
+        const value = isRecord(input) ? input : {};
+        if (Object.keys(value).some((key) => !['page_size', 'cursor', 'binding_page_size', 'binding_cursor'].includes(key))) return textResult({ status: 'INVALID_INPUT', error: 'Unknown inspect field.' }, true);
+        if (value.page_size !== undefined && (typeof value.page_size !== 'number' || !Number.isInteger(value.page_size) || value.page_size < 1 || value.page_size > 128)) return textResult({ status: 'INVALID_INPUT', error: 'page_size must be an integer from 1 to 128.' }, true);
+        if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 12)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
+        if (value.binding_page_size !== undefined && (typeof value.binding_page_size !== 'number' || !Number.isInteger(value.binding_page_size) || value.binding_page_size < 1 || value.binding_page_size > 256)) return textResult({ status: 'INVALID_INPUT', error: 'binding_page_size must be an integer from 1 to 256.' }, true);
+        if (value.binding_cursor !== undefined && (typeof value.binding_cursor !== 'string' || !/^\d+$/.test(value.binding_cursor) || value.binding_cursor.length > 12)) return textResult({ status: 'INVALID_INPUT', error: 'binding_cursor must be a bounded numeric string.' }, true);
+        const surface = inspectSurface(editor, value);
+        onActivity?.('Fogwood inspected the page', `${surface.counts.shapes} canvas items read without changing them.`);
         return textResult(surface);
       },
     },
     {
-      name: 'surface-add-blocks',
-      title: 'Add interface blocks',
-      description:
-        'Add up to 48 safe, built-in interface blocks to the current device-local tldraw page. Adds are grouped into one undo step. This never executes generated code or contacts an external service.',
+      name: 'fogwood-capabilities',
+      title: 'Search Fogwood capabilities',
+      description: 'Search the immutable local Fogwood registry of read-only tools, bounded actions, primitives, and recipes. Results contain schemas and definitions only; there is no executable code or fetch URL.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          coordinate_space: {
-            type: 'string',
-            enum: ['viewport', 'page'],
-            description:
-              'Use viewport for x/y offsets from the visible top-left; use page for absolute canvas coordinates.',
-          },
-          focus_after: { type: 'boolean' },
-          blocks: { type: 'array', minItems: 1, maxItems: 48, items: blockSchema },
+          query: { type: 'string', maxLength: 120 },
+          kind: { type: 'string', enum: ['tool', 'action', 'primitive', 'recipe'] },
+          page_size: { type: 'integer', minimum: 1, maximum: 20 },
+          cursor: { type: 'string', pattern: '^\\d+$', maxLength: 16 },
         },
-        required: ['blocks'],
       },
+      annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: (input) => {
-        if (!isRecord(input) || !Array.isArray(input.blocks)) {
-          return textResult({ error: 'blocks must be an array' }, true);
-        }
-        const coordinateSpace = input.coordinate_space === 'page' ? 'page' : 'viewport';
-        const ids = addSurfaceBlocks(editor, input.blocks, {
-          coordinateSpace,
-          focusAfter: input.focus_after !== false,
-        });
-        onActivity?.(
-          'ChatGPT added interface blocks',
-          `${ids.length} blocks added in one undoable step.`,
-        );
-        return textResult({ added: ids.length, ids, undoable: true });
+        const value = isRecord(input) ? input : {};
+        if (Object.keys(value).some((key) => !['query', 'kind', 'page_size', 'cursor'].includes(key))) return textResult({ status: 'INVALID_INPUT', error: 'Unknown capability-search field.' }, true);
+        if (value.query !== undefined && (typeof value.query !== 'string' || value.query.length > 120)) return textResult({ status: 'INVALID_INPUT', error: 'query must be at most 120 characters.' }, true);
+        if (value.kind !== undefined && !['tool', 'action', 'primitive', 'recipe'].includes(String(value.kind))) return textResult({ status: 'INVALID_INPUT', error: 'kind must be tool, action, primitive, or recipe.' }, true);
+        if (value.page_size !== undefined && (typeof value.page_size !== 'number' || !Number.isInteger(value.page_size) || value.page_size < 1 || value.page_size > 20)) return textResult({ status: 'INVALID_INPUT', error: 'page_size must be an integer from 1 to 20.' }, true);
+        if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 16)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
+        const result = searchCapabilities(value as CapabilitySearchInput);
+        onActivity?.('Fogwood searched capabilities', `${result.results.length} local capability results returned.`);
+        return textResult(result);
       },
     },
     {
-      name: 'surface-add-canvas-shapes',
-      title: 'Add canvas shapes',
-      description:
-        'Add up to 64 native tldraw diagram primitives such as text, notes, frames, geometric shapes, and arrows. Use this for diagrams and spatial thinking; use surface-add-blocks for interactive UI. Adds are device-local, grouped into one undo step, and never execute generated code.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          coordinate_space: {
-            type: 'string',
-            enum: ['viewport', 'page'],
-            description:
-              'Use viewport for coordinates relative to the visible top-left; use page for absolute canvas coordinates.',
-          },
-          focus_after: { type: 'boolean' },
-          shapes: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 64,
-            items: canvasShapeSchema,
-          },
-        },
-        required: ['shapes'],
-      },
+      name: 'fogwood-propose',
+      title: 'Propose a Fogwood change',
+      description: 'Validate and stage one bounded typed proposal against an inspect content_revision. The proposal never mutates the canvas; a person must review the diff and choose page Apply or Reject.',
+      inputSchema: PROPOSAL_INPUT_SCHEMA,
+      annotations: { untrustedContentHint: true },
       execute: (input) => {
-        if (!isRecord(input) || !Array.isArray(input.shapes)) {
-          return textResult({ error: 'shapes must be an array' }, true);
+        const validation = validateProposal(input, proposalContext(editor));
+        if (!validation.ok) {
+          const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
+          return textResult({ status: stale ? 'STALE_STATE' : 'INVALID_PROPOSAL', errors: validation.errors }, true);
         }
-        const coordinateSpace = input.coordinate_space === 'page' ? 'page' : 'viewport';
-        const ids = addCanvasShapes(editor, input.shapes, {
-          coordinateSpace,
-          focusAfter: input.focus_after !== false,
-        });
-        onActivity?.(
-          'ChatGPT added canvas shapes',
-          `${ids.length} tldraw shapes added in one undoable step.`,
-        );
-        return textResult({ added: ids.length, ids, undoable: true });
-      },
-    },
-    {
-      name: 'surface-update-blocks',
-      title: 'Update interface blocks',
-      description:
-        'Update existing Open Surface interface blocks by exact ID, including their content, live control data, size, tone, or absolute page x/y position. Only provided fields change. Updates are local and grouped into one undo step.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          updates: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 48,
-            items: {
-              ...blockSchema,
-              required: ['id'],
-              properties: {
-                ...blockSchema.properties,
-                id: { type: 'string', description: 'Exact shape ID from surface-inspect.' },
-              },
-            },
-          },
-        },
-        required: ['updates'],
-      },
-      execute: (input) => {
-        if (!isRecord(input) || !Array.isArray(input.updates)) {
-          return textResult({ error: 'updates must be an array' }, true);
-        }
-        const ids = updateSurfaceBlocks(editor, input.updates);
-        onActivity?.(
-          'ChatGPT updated interface blocks',
-          `${ids.length} blocks changed in one undoable step.`,
-        );
-        return textResult({ updated: ids.length, ids, undoable: true });
-      },
-    },
-    {
-      name: 'surface-place-items',
-      title: 'Place canvas items',
-      description:
-        'Move or rotate existing interface blocks and native tldraw shapes by exact ID using absolute page coordinates. Only placement changes; content is preserved. Changes are local and grouped into one undo step.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          placements: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 100,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                id: { type: 'string', description: 'Exact item ID from surface-inspect.' },
-                x: { type: 'number', description: 'Absolute page x coordinate.' },
-                y: { type: 'number', description: 'Absolute page y coordinate.' },
-                rotation: {
-                  type: 'number',
-                  description: 'Optional rotation in radians.',
-                },
-              },
-              required: ['id', 'x', 'y'],
-            },
-          },
-        },
-        required: ['placements'],
-      },
-      execute: (input) => {
-        if (!isRecord(input) || !Array.isArray(input.placements)) {
-          return textResult({ error: 'placements must be an array' }, true);
-        }
-        const ids = placeCanvasItems(editor, input.placements);
-        onActivity?.(
-          'ChatGPT arranged canvas items',
-          `${ids.length} items placed in one undoable step.`,
-        );
-        return textResult({ placed: ids.length, ids, undoable: true });
-      },
-    },
-    {
-      name: 'surface-remove-items',
-      title: 'Remove canvas items',
-      description:
-        'Delete specified items from the current device-local canvas by exact ID. Use only when the user asks to remove them. The deletion is grouped into one undo step.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          ids: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 100,
-            items: { type: 'string' },
-          },
-        },
-        required: ['ids'],
-      },
-      execute: (input) => {
-        if (!isRecord(input) || !Array.isArray(input.ids)) {
-          return textResult({ error: 'ids must be an array' }, true);
-        }
-        const ids = input.ids
-          .filter((id): id is string => typeof id === 'string')
-          .map((id) => id as TLShapeId)
-          .filter((id) => Boolean(editor.getShape(id)))
-          .slice(0, 100);
-        if (ids.length > 0) {
-          editor.markHistoryStoppingPoint('Remove canvas items');
-          editor.deleteShapes(ids);
-        }
-        onActivity?.(
-          'ChatGPT removed canvas items',
-          `${ids.length} items removed in one undoable step.`,
-        );
-        return textResult({ removed: ids.length, ids, undoable: true });
-      },
-    },
-    {
-      name: 'surface-focus',
-      title: 'Focus the canvas view',
-      description:
-        'Move only the local canvas camera to show all content or specified item IDs. This does not change or delete content.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          ids: {
-            type: 'array',
-            maxItems: 100,
-            items: { type: 'string' },
-          },
-        },
-      },
-      execute: (input) => {
-        const ids = isRecord(input) && Array.isArray(input.ids)
-          ? input.ids
-              .filter((id): id is string => typeof id === 'string')
-              .map((id) => id as TLShapeId)
-              .filter((id) => Boolean(editor.getShape(id)))
-          : [];
-        if (ids.length > 0) {
-          editor.select(...ids);
-          editor.zoomToSelection({ animation: { duration: 320 } });
-        } else {
-          editor.zoomToFit({ animation: { duration: 320 } });
-        }
-        onActivity?.(
-          'ChatGPT focused the canvas',
-          ids.length > 0 ? `${ids.length} items brought into view.` : 'All content brought into view.',
-        );
-        return textResult({ focused: ids.length > 0 ? ids : 'all' });
-      },
-    },
-    {
-      name: 'surface-clear',
-      title: 'Clear the surface',
-      description:
-        'Delete every item on the current device-local page. Call only after the user explicitly asks to clear the whole surface. Requires the exact confirmation phrase and remains undoable.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          confirmation: {
-            type: 'string',
-            enum: ['clear the surface'],
-            description:
-              'Use this exact phrase only after the user explicitly asked to clear the entire surface.',
-          },
-        },
-        required: ['confirmation'],
-      },
-      execute: (input) => {
-        if (!isRecord(input) || input.confirmation !== 'clear the surface') {
-          return textResult({ error: 'Exact confirmation phrase required.' }, true);
-        }
-        const ids = editor.getCurrentPageShapes().map((shape) => shape.id);
-        if (ids.length > 0) {
-          editor.markHistoryStoppingPoint('Clear surface');
-          editor.deleteShapes(ids);
-        }
-        onActivity?.(
-          'ChatGPT cleared the surface',
-          `${ids.length} items removed. Undo remains available.`,
-        );
-        return textResult({ cleared: ids.length, undoable: true });
+        const staged = baseController.stage(validation.proposal, validation.diff);
+        if (staged.status === 'STALE_STATE') return textResult({ status: 'STALE_STATE', message: staged.message }, true);
+        onActivity?.('Fogwood staged a proposal', `${validation.diff.counts.adds} additions, ${validation.diff.counts.updates} updates, ${validation.diff.counts.moves} moves, ${validation.diff.counts.removes} removals await review.`);
+        return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
       },
     },
   ];
 
-  const containerDocument = editor.getContainerDocument() as Document & {
-    modelContext?: ModelContext;
-  };
-  const ContainerAbortController = editor.getContainerWindow().AbortController;
-
+  const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
+  const ContainerAbortController = containerDocument.defaultView?.AbortController ?? AbortController;
   return registerWebMcpTools({
     tools,
     getModelContext: () => containerDocument.modelContext,
     createAbortController: () => new ContainerAbortController(),
     onConnection,
-  });
-}
-
-export type RecipeName = 'cockpit' | 'week' | 'decision';
-
-export function buildRecipe(editor: Editor, recipe: RecipeName) {
-  const recipes: Record<RecipeName, SurfaceBlockInput[]> = {
-    cockpit: [
-      {
-        kind: 'heading',
-        tone: 'paper',
-        x: 0,
-        y: 0,
-        w: 980,
-        h: 125,
-        value: 'Live workspace',
-        title: 'Project cockpit',
-        body: 'A composed surface for the work that matters now.',
-      },
-      { kind: 'metric', tone: 'ink', x: 0, y: 155, title: 'Open work', value: '12', body: '3 need attention' },
-      { kind: 'metric', tone: 'accent', x: 255, y: 155, title: 'Momentum', value: '+18%', body: 'This week' },
-      { kind: 'metric', tone: 'blue', x: 510, y: 155, title: 'Next gate', value: 'Friday', body: 'Owner review' },
-      { kind: 'progress', tone: 'paper', x: 765, y: 155, w: 300, title: 'Release readiness', value: 68, body: 'Evidence gathered' },
-      {
-        kind: 'checklist',
-        tone: 'paper',
-        x: 0,
-        y: 345,
-        w: 410,
-        h: 330,
-        title: 'Today',
-        body: 'Click an item to update the canvas state.',
-        items: [
-          { label: 'Resolve the product question', checked: true },
-          { label: 'Review the live evidence' },
-          { label: 'Prepare the decision brief' },
-          { label: 'Ask for the owner gate' },
-        ],
-      },
-      {
-        kind: 'chart',
-        tone: 'paper',
-        x: 445,
-        y: 345,
-        w: 620,
-        h: 330,
-        title: 'Work by stage',
-        body: 'An agent can replace these values without replacing the interface.',
-        series: [
-          { label: 'Explore', value: 9 },
-          { label: 'Build', value: 14 },
-          { label: 'Review', value: 6 },
-          { label: 'Ready', value: 3 },
-        ],
-      },
-    ],
-    week: [
-      { kind: 'heading', tone: 'paper', x: 0, y: 0, w: 980, value: 'Personal surface', title: 'A week with room to think', body: 'Plans, constraints, and notes in one movable place.' },
-      {
-        kind: 'checklist',
-        tone: 'yellow',
-        x: 0,
-        y: 155,
-        w: 370,
-        h: 360,
-        title: 'Commitments',
-        items: [
-          { label: 'Deep work block', checked: true },
-          { label: 'Prepare Wednesday review' },
-          { label: 'Call family' },
-          { label: 'Long run' },
-        ],
-      },
-      { kind: 'input', tone: 'paper', x: 405, y: 155, title: 'What would make this week count?', body: 'This field is live and saved in the canvas.', value: '' },
-      { kind: 'slider', tone: 'green', x: 405, y: 330, title: 'Available energy', body: 'Adjust directly.', value: 72, min: 0, max: 100, step: 1 },
-      { kind: 'text', tone: 'ink', x: 800, y: 155, w: 300, h: 325, title: 'Boundary', body: 'Leave enough blank space for the week to change.' },
-    ],
-    decision: [
-      { kind: 'heading', tone: 'paper', x: 0, y: 0, w: 1040, value: 'Decision surface', title: 'Compare without flattening', body: 'Keep the criteria visible, then make the call yourself.' },
-      { kind: 'panel', tone: 'blue', x: 0, y: 155, w: 380, h: 250, value: 'Option A', title: 'Move now', body: 'Faster learning, higher near-term disruption.' },
-      { kind: 'panel', tone: 'green', x: 410, y: 155, w: 380, h: 250, value: 'Option B', title: 'Wait one cycle', body: 'More evidence, with a real cost of delay.' },
-      { kind: 'slider', tone: 'paper', x: 820, y: 155, w: 320, title: 'Confidence', body: 'How certain are we?', value: 58, min: 0, max: 100 },
-      {
-        kind: 'table',
-        tone: 'paper',
-        x: 0,
-        y: 440,
-        w: 790,
-        h: 280,
-        title: 'Evidence, not vibes',
-        columns: ['Criterion', 'Move now', 'Wait'],
-        rows: [
-          ['Learning speed', 'High', 'Medium'],
-          ['Reversibility', 'Medium', 'High'],
-          ['Cost of delay', 'High', 'Low'],
-        ],
-      },
-      { kind: 'button', tone: 'accent', x: 820, y: 440, w: 320, h: 180, title: 'Mark ready for review', body: 'A local, reversible interaction. It does not make the decision.' },
-    ],
-  };
-
-  return addSurfaceBlocks(editor, recipes[recipe], {
-    coordinateSpace: 'viewport',
-    focusAfter: true,
   });
 }

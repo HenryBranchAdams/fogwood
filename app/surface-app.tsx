@@ -5,9 +5,12 @@ import { Editor, Tldraw } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { SurfaceBlockUtil } from './surface-block';
 import {
-  RecipeName,
+  ProposalControllerState,
+  RecipeId,
+} from './fogwood-runtime';
+import {
+  SurfaceToolController,
   ToolConnection,
-  buildRecipe,
   registerSurfaceTools,
 } from './surface-tools';
 
@@ -20,12 +23,43 @@ type Activity = {
 
 const shapeUtils = [SurfaceBlockUtil];
 
+function diffValue(value: unknown) {
+  if (value === undefined) return 'none';
+  if (value === null) return 'null';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value).slice(0, 80);
+  if (Array.isArray(value)) return `list (${value.length})`;
+  return 'details';
+}
+
+function proposalDiffEntries(diff: ProposalControllerState['diff']) {
+  const entries: string[] = [];
+  for (const spec of diff.adds.specs.slice(0, 16)) entries.push(`Add ${spec.type} · ${spec.kind} · ${spec.label}`);
+  for (const update of diff.updates) {
+    for (const change of update.changes.slice(0, 16)) {
+      for (const [field, values] of Object.entries(change.fields).slice(0, 4)) {
+        entries.push(`Update ${change.id} · ${field}: ${diffValue(values.before)} → ${diffValue(values.after)}`);
+      }
+    }
+  }
+  for (const move of diff.moves) {
+    for (const change of move.changes.slice(0, 16)) {
+      entries.push(`Move ${change.id} · (${change.before.x}, ${change.before.y}, ${change.before.rotation.toFixed(2)}) → (${change.after.x}, ${change.after.y}, ${change.after.rotation.toFixed(2)})`);
+    }
+  }
+  const collateral = new Set(diff.removes.collateral_ids);
+  for (const descriptor of diff.removes.descriptors.slice(0, 32)) {
+    entries.push(`Remove ${descriptor.id} · ${descriptor.label}${collateral.has(descriptor.id) ? ' (child)' : ''}`);
+  }
+  for (const recipe of diff.recipe_expansions) entries.push(`Recipe ${recipe.title} · ${recipe.expected_count} items`);
+  return entries;
+}
+
 const INTRO_ACTIVITY: Activity = {
   id: 'intro',
   kind: 'agent',
   title: 'What should we make together?',
   detail:
-    'You shape the canvas directly. Ask ChatGPT to inspect, compose, or revise the same live artifact.',
+    'You shape the canvas directly. Ask ChatGPT to inspect, propose, or revise the same live artifact.',
 };
 
 function activityId() {
@@ -44,7 +78,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     errors: [],
   });
   const [activity, setActivity] = useState<Activity[]>([INTRO_ACTIVITY]);
+  const [proposal, setProposal] = useState<ProposalControllerState | null>(null);
   const registrationCleanup = useRef<(() => void) | null>(null);
+  const proposalController = useRef<SurfaceToolController | null>(null);
 
   const hasContent = shapeCount > 0;
 
@@ -73,6 +109,11 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           { kind: 'action', title, detail, id: activityId() },
         ]);
       },
+      setProposal,
+      (controller) => {
+        proposalController.current = controller;
+        setProposal(controller.getState());
+      },
     );
   }, []);
 
@@ -80,8 +121,8 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     if (!connection.checked) {
       return {
         className: 'is-checking',
-        label: 'Checking for Site tools',
-        title: 'Checking this tab for Site tools',
+        label: 'Checking for Fogwood tools',
+        title: 'Checking this tab for Fogwood tools',
         detail:
           'The canvas is ready. WebMCP availability is checked separately from whether ChatGPT is open.',
       };
@@ -92,19 +133,19 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         : '';
       return {
         className: 'is-unavailable',
-        label: 'Site tools not active in this tab',
+        label: 'Fogwood tools not active in this tab',
         title: 'Check browser and rollout availability',
         detail:
-          `Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Open Surface does not, this origin is not enabled for the current rollout yet.${providerDetail}`,
+          `Use the latest ChatGPT desktop app with GPT-5.6 Sol or Terra. In Settings → Browser → Permissions, enable Site tools when the switch is available. If another Site works here but Fogwood does not, this origin is not enabled for the current rollout yet.${providerDetail}`,
       };
     }
     if (connection.registered === 0 && connection.failed === 0) {
       return {
         className: 'is-connecting',
-        label: 'Registering Site tools',
-        title: 'Connecting the canvas tools',
+        label: 'Registering Fogwood tools',
+        title: 'Connecting Fogwood tools',
         detail:
-          'The WebMCP interface is available and Open Surface is registering its canvas tools.',
+          'The WebMCP interface is available and Fogwood is registering its bounded canvas tools.',
       };
     }
     if (connection.registered > 0 && connection.failed > 0) {
@@ -121,7 +162,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
     if (connection.registered > 0) {
       return {
         className: 'is-ready',
-        label: `${connection.registered} Site tools ready`,
+        label: `${connection.registered} Fogwood tools ready`,
         title: 'Continue in your ChatGPT conversation',
         detail:
           'Your subscription is the model connection. This Site only exposes the canvas tools ChatGPT can use—no second API key.',
@@ -131,25 +172,36 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
       className: 'is-error',
       label: 'Site tool registration failed',
       title: 'Site tools could not connect',
-      detail: connection.errors[0]
-        ? `WebMCP is available, but none of the canvas tools registered. First rejection: ${connection.errors[0]}`
-        : 'WebMCP is available, but none of the canvas tools registered. Reload the page before trying again.',
+        detail: connection.errors[0]
+        ? `WebMCP is available, but none of the Fogwood tools registered. First rejection: ${connection.errors[0]}`
+        : 'WebMCP is available, but none of the Fogwood tools registered. Reload the page before trying again.',
     };
   }, [connection]);
 
-  function makeRecipe(recipe: RecipeName) {
-    if (!editor) return;
-    const labels: Record<RecipeName, string> = {
-      cockpit: 'Built a project cockpit',
-      week: 'Built a weekly planning surface',
-      decision: 'Built a decision surface',
-    };
-    const ids = buildRecipe(editor, recipe);
-    addActivity({
-      kind: 'action',
-      title: labels[recipe],
-      detail: `${ids.length} editable blocks added in one undoable step.`,
-    });
+  function makeRecipe(recipe: RecipeId) {
+    if (!proposalController.current) return;
+    const result = proposalController.current.stageRecipe(recipe);
+    if (result.status === 'ERROR') {
+      addActivity({ kind: 'system', title: 'Recipe could not be staged', detail: result.message });
+    }
+  }
+
+  function applyProposal() {
+    const result = proposalController.current?.apply();
+    if (result?.status === 'APPLIED') {
+      addActivity({ kind: 'action', title: 'Applied the reviewed proposal', detail: 'All changes are in one undoable transaction.' });
+    } else if (result?.status === 'STALE_STATE') {
+      addActivity({ kind: 'system', title: 'Proposal is stale', detail: 'Inspect the current page and ask Fogwood to propose again.' });
+    } else if (result?.status === 'ERROR') {
+      addActivity({ kind: 'system', title: 'Proposal was not applied', detail: result.message });
+    }
+  }
+
+  function rejectProposal() {
+    const result = proposalController.current?.reject();
+    if (result?.status === 'REJECTED') {
+      addActivity({ kind: 'action', title: 'Rejected the proposal', detail: 'The canvas was not changed.' });
+    }
   }
 
   function clearFromUi() {
@@ -170,7 +222,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
 
   return (
     <main className={`surface-shell ${chatOpen ? 'chat-is-open' : ''}`}>
-      <section className="canvas-pane" aria-label="Open Surface canvas">
+      <section className="canvas-pane" aria-label="Fogwood canvas">
         <Tldraw
           shapeUtils={shapeUtils}
           licenseKey={licenseKey}
@@ -178,9 +230,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           onMount={mountEditor}
         />
 
-        <div className="surface-mark" aria-label="Open Surface">
+        <div className="surface-mark" aria-label="Fogwood">
           <span className="surface-mark-dot" />
-          <span>Open Surface</span>
+          <span>Fogwood</span>
           <span className="surface-mark-state">
             {shapeCount === 0 ? 'blank' : `${shapeCount} items`}
           </span>
@@ -206,14 +258,14 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               or diagram you need right now. Both of you work on the same artifact.
             </p>
             <div className="prompt-examples" aria-label="Starter surfaces">
-              <button type="button" onClick={() => makeRecipe('cockpit')} disabled={!editor}>
-                Project cockpit
+              <button type="button" onClick={() => makeRecipe('evidence-research-map')} disabled={!editor}>
+                Evidence map
               </button>
-              <button type="button" onClick={() => makeRecipe('week')} disabled={!editor}>
-                Plan my week
+              <button type="button" onClick={() => makeRecipe('meeting-to-plan-wall')} disabled={!editor}>
+                Meeting wall
               </button>
-              <button type="button" onClick={() => makeRecipe('decision')} disabled={!editor}>
-                Compare options
+              <button type="button" onClick={() => makeRecipe('static-architecture-map')} disabled={!editor}>
+                Architecture map
               </button>
             </div>
             <p className="empty-footnote">Or leave it completely blank. That is the point.</p>
@@ -241,6 +293,47 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         <div className="agent-context-strip">
           <span>Shared artifact</span>
           <strong>{shapeCount === 0 ? 'Blank surface' : `${shapeCount} canvas items`}</strong>
+        </div>
+
+        <div className="proposal-slot">
+          {proposal && (
+            <section className={`proposal-review proposal-${proposal.status}`} aria-label="Fogwood proposal review">
+            <div className="proposal-review-header">
+              <div>
+                <span className="proposal-eyebrow">Page review</span>
+                <h3>{proposal.proposal.summary}</h3>
+              </div>
+              <span className="proposal-status">{proposal.status === 'pending' ? 'Ready' : proposal.status === 'stale' ? 'Stale' : 'Error'}</span>
+            </div>
+            {proposal.proposal.rationale && <p className="proposal-rationale">{proposal.proposal.rationale}</p>}
+            <div className="proposal-counts" aria-label="Proposal changes">
+              <span><strong>{proposal.diff.counts.adds}</strong> adds</span>
+              <span><strong>{proposal.diff.counts.updates}</strong> updates</span>
+              <span><strong>{proposal.diff.counts.moves}</strong> moves</span>
+              <span><strong>{proposal.diff.counts.removes}</strong> removes</span>
+            </div>
+            {proposalDiffEntries(proposal.diff).length > 0 && (
+              <div className="proposal-diff" aria-label="Proposal details">
+                <span className="proposal-diff-title">Affected objects</span>
+                <ul className="proposal-diff-list">
+                  {proposalDiffEntries(proposal.diff).slice(0, 28).map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>)}
+                </ul>
+                {proposalDiffEntries(proposal.diff).length > 28 && <span className="proposal-diff-more">Showing the first 28 bounded changes.</span>}
+              </div>
+            )}
+            {proposal.diff.warnings.length > 0 && (
+              <ul className="proposal-warnings">
+                {proposal.diff.warnings.slice(0, 4).map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            )}
+            {proposal.message && <p className="proposal-message">{proposal.message}</p>}
+            <div className="proposal-actions">
+              <button type="button" onClick={applyProposal} disabled={proposal.status !== 'pending'}>Apply</button>
+              <button type="button" onClick={rejectProposal}>Reject</button>
+            </div>
+            <p className="proposal-footnote">Applying is page-owned and creates one undo step. Reject never changes the canvas.</p>
+            </section>
+          )}
         </div>
 
         <div className="agent-messages" aria-live="polite">

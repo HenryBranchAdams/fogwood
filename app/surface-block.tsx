@@ -3,35 +3,20 @@ import {
   Editor,
   HTMLContainer,
   T,
-  TLBaseShape,
+  TLShape,
   stopEventPropagation,
 } from 'tldraw';
+import { BLOCK_KINDS, BLOCK_TONES } from './fogwood-runtime';
+
+declare module 'tldraw' {
+  interface TLGlobalShapePropsMap {
+    'surface-block': SurfaceBlockProps;
+  }
+}
 
 export const SURFACE_BLOCK_TYPE = 'surface-block' as const;
 
-export const BLOCK_KINDS = [
-  'panel',
-  'heading',
-  'text',
-  'metric',
-  'checklist',
-  'table',
-  'input',
-  'select',
-  'slider',
-  'button',
-  'progress',
-  'chart',
-] as const;
-
-export const BLOCK_TONES = [
-  'paper',
-  'ink',
-  'accent',
-  'blue',
-  'green',
-  'yellow',
-] as const;
+export { BLOCK_KINDS, BLOCK_TONES } from './fogwood-runtime';
 
 export type SurfaceBlockKind = (typeof BLOCK_KINDS)[number];
 export type SurfaceBlockTone = (typeof BLOCK_TONES)[number];
@@ -47,10 +32,7 @@ export type SurfaceBlockProps = {
   data: string;
 };
 
-export type SurfaceBlockShape = TLBaseShape<
-  typeof SURFACE_BLOCK_TYPE,
-  SurfaceBlockProps
->;
+export type SurfaceBlockShape = TLShape<typeof SURFACE_BLOCK_TYPE>;
 
 type ChecklistItem = { label: string; checked: boolean };
 type SeriesItem = { label: string; value: number };
