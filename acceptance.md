@@ -1,6 +1,7 @@
 # Fogwood Canvas Protocol acceptance
 
-Status: PASS for the bounded local full-surface Route phase. The pinned
+Status: PASS for the bounded local seeded-composition phase; the prior
+full-surface Route phase remains PASS. The pinned
 213-entry corpus now has one immutable `fogwood.example-route.v1` descriptor per
 entry and `fogwood-capabilities` can compose those Routes through a pure
 `fogwood.surface-plan.v1` compiler. This is 213/213 addressing and lowering
@@ -8,7 +9,8 @@ coverage, not proof that 213 upstream tldraw demonstrations executed locally.
 Exact local equivalence, bounded native projection, local read/material,
 host-mediated collaboration, and artifact-handoff evidence remain separate.
 This is the one authoritative acceptance manifest for the empty-canvas,
-capability-ontology, contextual-broker, request-trace, and full-surface phases.
+capability-ontology, contextual-broker, request-trace, full-surface, and seeded
+composition phases.
 
 ## Product decision
 
@@ -33,8 +35,8 @@ deepen a Route without changing the public protocol shape.
 | Stage | `fogwood-propose` validates a proposal against the inspected revision/token pair and stages it without mutation. |
 | Decide | Page-owned Apply revalidates and commits one editor transaction / one undo step; Reject does not change the page revision. |
 
-The public proposal schema accepts exactly one `canvas_ops` or `add_materials`
-action. The Canvas Protocol operation vocabulary is:
+The public proposal schema accepts exactly one `canvas_ops`,
+`seeded_composition`, or `add_materials` action. The Canvas Protocol operation vocabulary is:
 `create`, `draw`, `connect`, `variant`, `update`, `resize`, `align`,
 `distribute`, `stack`, `pack`, `group`, `ungroup`, `reorder`, and `delete`.
 Targets are current shape IDs or
@@ -44,7 +46,7 @@ proposal.
 ## Full-surface Route compiler
 
 - Route schema: `fogwood.example-route.v1`; plan schema:
-  `fogwood.surface-plan.v1`; compiler version: 1; registry version: 6.
+  `fogwood.surface-plan.v1`; compiler version: 1; registry version: 7.
 - The compiler asserts the exact source commit, a pinned ordered-path
   fingerprint `667bfdca`, and a pinned path-to-family matrix fingerprint
   `ffacafa3`; preserving-count corpus or family drift fails module
@@ -96,10 +98,11 @@ proposal.
   `base_revision` / `context_token` pair; planning also takes bounded intent, scope,
   optional desired effects, a planned-item count when new matter must satisfy
   target preconditions, and a step limit.
-- The immutable `fogwood.capability.v1` manifest schema now carries ontology
-  version 2 and qualifies nine local capabilities: create, draw, edit, delete,
-  arrange, native bound connector creation, preserved variant creation,
-  group/ungroup, and reorder. A compound fixture deterministically resolves to
+- The immutable `fogwood.capability.v1` planning ontology carries version 2 and
+  qualifies nine local capabilities: create, draw, edit, delete, arrange,
+  native bound connector creation, preserved variant creation, group/ungroup,
+  and reorder. Seeded remix is a separately discoverable compositional action
+  and does not enter the v1 planner. A compound fixture deterministically resolves to
   `matter.native.create -> layout.arrange -> connector-arrow.create -> layer.reorder`.
 - Two ordinary-language traces are frozen as adapter acceptance cases.
   `Connect these selected ideas` selects only `connector-arrow.create@2` and
@@ -124,6 +127,111 @@ Protocol safety, native binding behavior, preserved-variant behavior, and real
 request traces; scoped builders for the earlier broker; coordinator-owned
 sequential red-green repair and browser integration; and an independent final
 verifier after each candidate was frozen.
+
+## Seeded composition grammar
+
+### Product and routing decision
+
+- A seed is a compositional input, not an epistemic or authority input. It is
+  admitted only after capability, exact scope, locks, safety, permissions, and
+  page authority are fixed.
+- Version 1 never uses a seed for capability routing. A future router may use it
+  only to break a tie between approaches with the same qualification,
+  permissions, and preservation contract. It may never select factual claims,
+  safety outcomes, permissions, semantic IDs, targets, or Apply authority.
+- The smallest public vertical is one `seeded_composition` action behind the
+  existing `fogwood-propose` tool. No new WebMCP transport tool, runtime code
+  loader, template registry, or arbitrary random escape hatch was added.
+
+### Exact request and normalized evidence
+
+The raw request is bounded to:
+
+```json
+{
+  "type": "seeded_composition",
+  "scope": { "kind": "selection" },
+  "seed": "bounded inert text or a safe integer",
+  "wildness": 0.5
+}
+```
+
+An explicit scope may instead contain one to eight unique stable semantic IDs.
+The normalized action records schema `fogwood.seeded-composition.v1`, grammar
+`remix`, algorithm version `1`, PRNG `xorshift32-v1`, source revision, a SHA-256
+source fingerprint, normalized seed and wildness, ordered target IDs, the
+branch-cluster/open-space decision, exact lineage, and the fully lowered Canvas
+Protocol operation list. Proposal receipts bind the same evidence with a
+separate SHA-256 digest.
+
+### Determinism, preservation, and limits
+
+- Identical algorithm version, seed, wildness, and inspected input produce a
+  canonical-equal plan independent of source enumeration order. Different
+  seeds vary geometry and style while preserving the same semantic identities.
+- Variant semantic IDs derive from the source fingerprint, source semantic ID,
+  and algorithm version—not from seed or wildness. The seed cannot affect
+  identity or authority.
+- The grammar preserves exact source shapes and creates separately editable
+  descendants. Manual source geometry is never moved. Locked shapes, locked
+  ancestors, nested targets, rotated sources, unsupported types, legacy or
+  duplicate identities, stale state, and sealed open space fail before stage or
+  before Apply with no page mutation.
+- Source scope plus every bounded clone-relevant target field are covered by
+  the source fingerprint. Duplicate native IDs fail before map construction.
+  Final rotated footprints are checked against every current-page obstacle and
+  sibling variant before a candidate side is accepted.
+- `wildness` is finite and bounded to 0..1. At zero, the grammar only offsets
+  preserved variants; it does not change their scale, rotation, color, or fill.
+- Input is capped at eight targets, 5,000 inspected shapes, a 96-character seed,
+  24 lowered operations, a 100,000-coordinate envelope, 5,000-pixel variant
+  offset, 16–5,000-pixel dimensions, 15-degree output rotation, and 20% scale
+  departure. Oversized scope arrays are refused before element traversal.
+- Independent SHA-256-derived PRNG streams prevent one compositional dimension
+  from perturbing the others. Production seeded planning contains no
+  `Math.random()` call.
+- Replanning and canonical comparison occur at stage and again immediately
+  before Apply. Accepted variants are committed by the existing single editor
+  transaction and history boundary. Reject leaves the revision unchanged; Undo
+  restores the exact original page.
+
+### Qualification evidence
+
+- Focused public tests: 77/77 pass across seeded compilation, runtime schema and
+  revalidation, surface lifecycle, receipt recorder, and receipt ledger.
+- Full `npm test`: 234/234 pass, including the Bazaar compiler precheck.
+  `npx tsc --noEmit`, `npm run lint`, and `npm run build` all exit 0. Build has
+  only the existing chunk-size and vinext route-classification warnings.
+- Fresh local Browser origin: `http://localhost:4197/`. The page reported exactly
+  three registered Fogwood page tools; Browser host exposure separately listed
+  exactly those three tools, and harmless `fogwood-inspect` and
+  `fogwood-propose` calls succeeded. Direct conversation inventory remains a
+  separate unqualified layer.
+- A fresh post-repair request (`final-forest-13`, wildness `0.83`) staged three
+  variants from an explicit stable three-source scope without mutation. The
+  review dock showed algorithm version, seed, wildness, three branches, bottom
+  open side, source revision, and every source-to-variant lineage pair.
+- Apply moved the page from six to nine native shapes while all three sources
+  retained their exact text. One toolbar Undo returned to the exact six-shape
+  revision with zero final-seed variants; Redo restored nine; reload preserved
+  the nine-shape revision and all three provenance records. A second proposal
+  was rejected with revision and count unchanged. A pre-Apply revision returned
+  `STALE_STATE`. Browser warning/error log: none.
+- Screenshots: `/private/tmp/fogwood-seeded-final-staged-4197.png`,
+  `/private/tmp/fogwood-seeded-final-applied-4197.png`, and
+  `/private/tmp/fogwood-seeded-final-reloaded-4197.png`.
+- Independent final verification: PASS after reproducing and repairing seven
+  P2 candidates. The verifier separately exercised both valid source-scope
+  mutation directions, exact text/meta fingerprinting, duplicate native IDs,
+  100 rotated/inter-variant collision cases, 422 accepted scale cases, receipt
+  sidecar rebinding, and guarded oversized explicit/selection arrays. No P1/P2
+  remains in the bounded local vertical. Browser evidence above was coordinator
+  replayed and was not independently browser-certified.
+- Preservation checkpoint before this slice: commit `5c09409` (`feat: add
+  Fogwood dynamic semantic control surface`). Seeded changes remain a distinct
+  working-tree candidate during qualification.
+- ADR `docs/adr/0004-seed-composition-after-authority.md` records the routing
+  boundary and rejected alternatives.
 
 ## Limits and refusals
 

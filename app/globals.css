@@ -1472,6 +1472,75 @@ select {
   line-height: 1.45;
 }
 
+.proposal-seeded-evidence {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(85, 105, 72, 0.2);
+  border-radius: 11px;
+  background: rgba(238, 244, 229, 0.72);
+}
+
+.proposal-seeded-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #65705b;
+  font-size: 9px;
+}
+
+.proposal-seeded-evidence dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+  margin: 9px 0 0;
+}
+
+.proposal-seeded-evidence dl div {
+  min-width: 0;
+}
+
+.proposal-seeded-evidence dt {
+  color: #858b7c;
+  font-size: 8px;
+  font-weight: 720;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.proposal-seeded-evidence dd {
+  margin: 2px 0 0;
+  color: #495244;
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposal-seeded-evidence ul {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid rgba(85, 105, 72, 0.14);
+  list-style: none;
+}
+
+.proposal-seeded-evidence li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: #66705e;
+  font-size: 8px;
+}
+
+.proposal-seeded-evidence code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .proposal-revision {
   display: grid;
   gap: 4px;

@@ -169,6 +169,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
 
   const connectionState = connectionPresentation(connection);
   const entries = proposal ? proposalDiffEntries(proposal.diff) : [];
+  const seededAction = proposal?.proposal.actions.find((action) => action.type === 'seeded_composition');
 
   function applyProposal() {
     const result = proposalController.current?.apply();
@@ -228,6 +229,30 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
                 <span><strong>{proposal.diff.counts.moves}</strong>moves</span>
                 <span><strong>{proposal.diff.counts.removes}</strong>removes</span>
               </div>
+
+              {seededAction && (
+                <section className="proposal-seeded-evidence" aria-label="Seeded composition replay evidence">
+                  <div className="proposal-seeded-heading">
+                    <span className="proposal-diff-title">Seeded remix · originals preserved</span>
+                    <span>v{seededAction.algorithm_version}</span>
+                  </div>
+                  <dl>
+                    <div><dt>Seed</dt><dd><code>{String(seededAction.seed)}</code></dd></div>
+                    <div><dt>Wildness</dt><dd>{Math.round(seededAction.wildness * 100)}%</dd></div>
+                    <div><dt>Composition</dt><dd>{seededAction.layout.branch_count} branches · opens {seededAction.layout.open_side}</dd></div>
+                    <div><dt>Source</dt><dd><code>{seededAction.source_revision}</code></dd></div>
+                  </dl>
+                  <ul>
+                    {seededAction.lineage.slice(0, 8).map((entry) => (
+                      <li key={entry.variant_semantic_id}>
+                        <code>{entry.source_semantic_id}</code>
+                        <span aria-hidden="true">→</span>
+                        <code>{entry.variant_semantic_id}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
 
               {proposal.diff.adds.material_specs.length > 0 && (
                 <section className="proposal-material-diff" aria-label="Qualified material previews">

@@ -263,6 +263,15 @@ function shapeMeta(id: string, fogwood?: FogwoodMeta): JsonObject {
     ...(fogwood?.variant_id ? { variant_id: fogwood.variant_id } : {}),
     ...(fogwood?.parent_variant_id ? { parent_variant_id: fogwood.parent_variant_id } : {}),
     ...(fogwood?.lineage_source_id ? { lineage_source_id: fogwood.lineage_source_id } : {}),
+    ...(fogwood?.seeded_grammar ? { seeded_grammar: fogwood.seeded_grammar } : {}),
+    ...(fogwood?.seeded_algorithm_version !== undefined ? { seeded_algorithm_version: fogwood.seeded_algorithm_version } : {}),
+    ...(fogwood?.seeded_prng ? { seeded_prng: fogwood.seeded_prng } : {}),
+    ...(fogwood?.seeded_seed !== undefined ? { seeded_seed: fogwood.seeded_seed } : {}),
+    ...(fogwood?.seeded_wildness !== undefined ? { seeded_wildness: fogwood.seeded_wildness } : {}),
+    ...(fogwood?.seeded_source_revision ? { seeded_source_revision: fogwood.seeded_source_revision } : {}),
+    ...(fogwood?.seeded_source_fingerprint ? { seeded_source_fingerprint: fogwood.seeded_source_fingerprint } : {}),
+    ...(fogwood?.seeded_branch_index !== undefined ? { seeded_branch_index: fogwood.seeded_branch_index } : {}),
+    ...(fogwood?.seeded_depth !== undefined ? { seeded_depth: fogwood.seeded_depth } : {}),
     ...(fogwood?.relationship_id ? { relationship_id: fogwood.relationship_id } : {}),
     ...(fogwood?.relationship_kind ? { relationship_kind: fogwood.relationship_kind } : {}),
     ...(fogwood?.source_semantic_id ? { source_semantic_id: fogwood.source_semantic_id } : {}),
@@ -532,6 +541,15 @@ function fogwoodMeta(shape: TLShape): FogwoodMeta {
     ...(typeof root.variant_id === 'string' ? { variant_id: root.variant_id.slice(0, 180) } : {}),
     ...(typeof root.parent_variant_id === 'string' ? { parent_variant_id: root.parent_variant_id.slice(0, 180) } : {}),
     ...(typeof root.lineage_source_id === 'string' ? { lineage_source_id: root.lineage_source_id.slice(0, 180) } : {}),
+    ...(typeof root.seeded_grammar === 'string' ? { seeded_grammar: root.seeded_grammar.slice(0, 40) } : {}),
+    ...(typeof root.seeded_algorithm_version === 'number' && Number.isSafeInteger(root.seeded_algorithm_version) ? { seeded_algorithm_version: root.seeded_algorithm_version } : {}),
+    ...(typeof root.seeded_prng === 'string' ? { seeded_prng: root.seeded_prng.slice(0, 40) } : {}),
+    ...((typeof root.seeded_seed === 'string' && root.seeded_seed.length <= 96) || (typeof root.seeded_seed === 'number' && Number.isSafeInteger(root.seeded_seed)) ? { seeded_seed: root.seeded_seed } : {}),
+    ...(typeof root.seeded_wildness === 'number' && Number.isFinite(root.seeded_wildness) && root.seeded_wildness >= 0 && root.seeded_wildness <= 1 ? { seeded_wildness: root.seeded_wildness } : {}),
+    ...(typeof root.seeded_source_revision === 'string' ? { seeded_source_revision: root.seeded_source_revision.slice(0, 120) } : {}),
+    ...(typeof root.seeded_source_fingerprint === 'string' ? { seeded_source_fingerprint: root.seeded_source_fingerprint.slice(0, 80) } : {}),
+    ...(typeof root.seeded_branch_index === 'number' && Number.isSafeInteger(root.seeded_branch_index) ? { seeded_branch_index: root.seeded_branch_index } : {}),
+    ...(typeof root.seeded_depth === 'number' && Number.isSafeInteger(root.seeded_depth) ? { seeded_depth: root.seeded_depth } : {}),
     ...(typeof root.relationship_id === 'string' ? { relationship_id: root.relationship_id.slice(0, 180) } : {}),
     ...(typeof root.relationship_kind === 'string' ? { relationship_kind: root.relationship_kind.slice(0, 40) } : {}),
     ...(typeof root.source_semantic_id === 'string' ? { source_semantic_id: root.source_semantic_id.slice(0, 180) } : {}),
@@ -1494,6 +1512,7 @@ function createVariantShape(
     lineageSourceId: string;
     parentVariantId?: string;
     patches?: { text?: string; color?: string; fill?: string };
+    provenance?: FogwoodMeta;
   },
 ) {
   const source = editor.getShape(input.sourceId as TLShapeId);
@@ -1506,6 +1525,7 @@ function createVariantShape(
   for (const key of ['relationship_id', 'relationship_kind', 'source_semantic_id', 'target_semantic_id', 'relationship_label'] as const) delete variantSourceMeta[key];
   const fogwood = {
     ...variantSourceMeta,
+    ...(input.provenance ?? {}),
     semantic_id: input.semanticId,
     semantic_id_source: 'stable',
     role: 'variant',
@@ -1619,7 +1639,13 @@ function spatialRelationshipShape(editor: Editor, relationship: SemanticRelation
  * Apply a previously validated Canvas Protocol plan to tldraw. The caller owns
  * the surrounding editor transaction and history stopping point.
  */
-export function applyCanvasOpPlan(editor: Editor, plan: CanvasOpPlan) {
+type SeededCompositionAction = Extract<ProposalAction, { type: 'seeded_composition' }>;
+
+export function applyCanvasOpPlan(
+  editor: Editor,
+  plan: CanvasOpPlan,
+  options: { seeded?: SeededCompositionAction } = {},
+) {
   const createdIds = new Map<string, TLShapeId>();
   const resolveId = (id: string) => createdIds.get(id) ?? (id as TLShapeId);
 
@@ -1742,6 +1768,7 @@ export function applyCanvasOpPlan(editor: Editor, plan: CanvasOpPlan) {
     }
 
     if (step.kind === 'variant') {
+      const seededLineage = options.seeded?.lineage.find((entry) => entry.variant_semantic_id === step.op.semantic_id);
       const id = createVariantShape(editor, {
         sourceId: String(resolveId(step.op.id)),
         semanticId: step.op.semantic_id,
@@ -1749,6 +1776,19 @@ export function applyCanvasOpPlan(editor: Editor, plan: CanvasOpPlan) {
         y: step.bounds.y,
         lineageSourceId: step.lineage.lineage_source_id,
         parentVariantId: step.lineage.parent_variant_id,
+        ...(options.seeded && seededLineage ? {
+          provenance: {
+            seeded_grammar: options.seeded.grammar,
+            seeded_algorithm_version: options.seeded.algorithm_version,
+            seeded_prng: options.seeded.prng,
+            seeded_seed: options.seeded.seed,
+            seeded_wildness: options.seeded.wildness,
+            seeded_source_revision: options.seeded.source_revision,
+            seeded_source_fingerprint: options.seeded.source_fingerprint,
+            seeded_branch_index: seededLineage.branch_index,
+            seeded_depth: seededLineage.depth,
+          },
+        } : {}),
       });
       createdIds.set(step.pending_id, id);
       continue;
@@ -1880,7 +1920,7 @@ function preflightProposalCanvasOps(editor: Editor, proposal: ProposalV1) {
   const context = proposalContext(editor);
   const plans: CanvasOpPlan[] = [];
   for (const action of proposal.actions) {
-    if (action.type !== 'canvas_ops') continue;
+    if (action.type !== 'canvas_ops' && action.type !== 'seeded_composition') continue;
     const result = planCanvasOps(context.items, action.ops, context.page_id);
     if (!result.ok) return result.errors.map((error) => error.message).join(' ').slice(0, 300);
     plans.push(result.plan);
@@ -2002,6 +2042,11 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
         if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
         canvasOpPlans.set(action, result.plan);
       }
+      if (action.type === 'seeded_composition') {
+        const result = planCanvasOps(spatialContext.items, action.ops, spatialContext.page_id);
+        if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
+        canvasOpPlans.set(action, result.plan);
+      }
       if (action.type === 'apply_spatial_moves') spatialMovePlans.set(action, planSpatialMoves(spatialContext, action));
       if (action.type === 'add_relationships') relationshipPlans.set(action, [...planRelationships(relationshipContext, action.relationships).relationships]);
     }
@@ -2027,6 +2072,10 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
           const plan = canvasOpPlans.get(action);
           if (!plan) throw new Error('Canvas Protocol plan was not retained through Apply.');
           applyCanvasOpPlan(editor, plan);
+        } else if (action.type === 'seeded_composition') {
+          const plan = canvasOpPlans.get(action);
+          if (!plan) throw new Error('Seeded composition plan was not retained through Apply.');
+          applyCanvasOpPlan(editor, plan, { seeded: action });
         } else if (action.type === 'add_blocks') {
           const ids = addSurfaceBlocks(editor, action.blocks, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
           if (recipeMeta?.recipe_id === 'compare-and-decide' && recipeMeta.recipe_instance_id) {
@@ -2270,7 +2319,7 @@ export function registerSurfaceTools(
     {
       name: 'fogwood-propose',
       title: 'Propose a Fogwood change',
-      description: 'Validate and stage one bounded typed proposal against an inspect content_revision and context_token. Use canvas_ops to mix native creation, drawing, bound connectors, preserved variants, editing, arrangement, grouping, deletion, and z-order in one atomic reviewed change. Staging never mutates the canvas; a person must choose page Apply or Reject.',
+      description: 'Validate and stage one bounded typed proposal against an inspect content_revision and context_token. Use canvas_ops to mix exact native operations, seeded_composition to create reproducible preserved variants from a selected or explicit stable scope, or add_materials for qualified local artifacts. Staging never mutates the canvas; a person must choose page Apply or Reject.',
       inputSchema: PROPOSAL_TOOL_INPUT_SCHEMA,
       annotations: { untrustedContentHint: true },
       execute: (input) => {
@@ -2289,10 +2338,10 @@ export function registerSurfaceTools(
           && isRecord(input.actions[0])
           ? input.actions[0]
           : null;
-        if (!publicAction || !['canvas_ops', 'add_materials'].includes(String(publicAction.type))) {
+        if (!publicAction || !['canvas_ops', 'seeded_composition', 'add_materials'].includes(String(publicAction.type))) {
           return textResult({
             status: 'INVALID_INPUT',
-            error: 'The public Fogwood protocol accepts exactly one canvas_ops or add_materials action per proposal.',
+            error: 'The public Fogwood protocol accepts exactly one canvas_ops, seeded_composition, or add_materials action per proposal.',
           }, true);
         }
         if (isRecord(input) && Array.isArray(input.actions) && input.actions.some((action) => isRecord(action) && action.type === 'add_materials')) {

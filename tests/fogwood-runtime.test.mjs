@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   CAPABILITY_REGISTRY,
   FOGWOOD_CONTEXT_VERSION,
+  FOGWOOD_PARTICIPATION_CONTRACT,
   PROPOSAL_INPUT_SCHEMA,
   PROPOSAL_TOOL_INPUT_SCHEMA,
   RECIPE_REGISTRY,
@@ -358,12 +359,12 @@ test('locked ancestors make update, place, remove, and clear proposals atomic', 
   assert.equal(removal.diff.removes.descriptors.length, 3);
 });
 
-test('public proposal schema exposes only the compact Canvas Protocol and safe local materials', () => {
+test('public proposal schema exposes compact Canvas Protocol, seeded remix, and safe local materials', () => {
   const actionItems = PROPOSAL_INPUT_SCHEMA.properties.actions.items.oneOf;
   assert.equal(PROPOSAL_INPUT_SCHEMA.properties.actions.maxItems, 1);
-  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['canvas_ops', 'add_materials']);
+  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['canvas_ops', 'seeded_composition', 'add_materials']);
   assert.deepEqual(CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-propose').input_schema, PROPOSAL_TOOL_INPUT_SCHEMA);
-  assert.equal(searchCapabilities({ kind: 'action', page_size: 20 }).results.every((entry) => ['canvas_ops', 'add_materials'].includes(entry.id)), true);
+  assert.equal(searchCapabilities({ kind: 'action', page_size: 20 }).results.every((entry) => ['canvas_ops', 'seeded_composition', 'add_materials'].includes(entry.id)), true);
   assert.equal(CAPABILITY_REGISTRY.find((entry) => entry.id === 'primitive.surface-block').input_schema.type, 'string');
   const injectedInstrument = validateProposal({
     base_revision: emptyContext.current_revision,
@@ -372,6 +373,96 @@ test('public proposal schema exposes only the compact Canvas Protocol and safe l
   }, emptyContext);
   assert.equal(injectedInstrument.ok, false);
   assert.equal(injectedInstrument.errors.some((error) => error.code === 'UNKNOWN_FIELD'), true);
+});
+
+test('seeded composition resolves selection into a reproducible reviewed proposal with explicit lineage', () => {
+  const context = {
+    current_revision: 'rev:seeded-runtime',
+    page_id: 'page:main',
+    selection_semantic_ids: ['idea:b', 'idea:a'],
+    selection_complete: true,
+    selection_total: 2,
+    items: [
+      { id: 'shape:a', type: 'geo', x: 100, y: 120, w: 240, h: 120, rotation: 0, parent_id: 'page:main', is_locked: false, semantic_id: 'idea:a', meta: { semantic_id_source: 'stable' }, props: { color: 'blue', fill: 'solid' } },
+      { id: 'shape:b', type: 'note', x: 410, y: 300, w: 220, h: 200, rotation: 0, parent_id: 'page:main', is_locked: false, semantic_id: 'idea:b', meta: { semantic_id_source: 'stable', variant_id: 'variant:parent' }, props: { color: 'yellow' } },
+    ],
+  };
+  const result = validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Remix the selected ideas',
+    actions: [{ type: 'seeded_composition', scope: { kind: 'selection' }, seed: 'orchard', wildness: 0.6 }],
+  }, context);
+  assert.equal(result.ok, true);
+  const action = result.proposal.actions[0];
+  assert.equal(action.type, 'seeded_composition');
+  assert.equal(action.grammar, 'remix');
+  assert.equal(action.algorithm_version, 1);
+  assert.equal(action.source_revision, context.current_revision);
+  assert.equal(action.source_scope, 'selection');
+  assert.deepEqual(action.target_semantic_ids, ['idea:a', 'idea:b']);
+  assert.equal(action.lineage.length, 2);
+  assert.equal(action.lineage[1].parent_variant_id, 'variant:parent');
+  assert.equal(action.ops.filter((op) => op.op === 'variant').length, 2);
+  assert.equal(result.diff.seeded_compositions.length, 1);
+  assert.deepEqual(result.diff.seeded_compositions[0].lineage, action.lineage);
+  assert.equal(result.diff.counts.adds, 2);
+
+  const reappliedValidation = validateProposal(result.proposal, context);
+  assert.equal(reappliedValidation.ok, true);
+  assert.deepEqual(reappliedValidation.proposal, result.proposal);
+
+  const tampered = structuredClone(result.proposal);
+  tampered.actions[0].lineage[0].variant_semantic_id = 'variant:tampered';
+  const refusedTamper = validateProposal(tampered, context);
+  assert.equal(refusedTamper.ok, false);
+  assert.equal(refusedTamper.errors.some((error) => error.code === 'INVALID_SEEDED_PLAN'), true);
+
+  const tamperedScope = structuredClone(result.proposal);
+  tamperedScope.actions[0].source_scope = 'authority-by-seed';
+  const refusedScope = validateProposal(tamperedScope, context);
+  assert.equal(refusedScope.ok, false);
+  assert.equal(refusedScope.errors.some((error) => error.code === 'INVALID_SEEDED_PLAN'), true);
+
+  const changedValidScope = structuredClone(result.proposal);
+  changedValidScope.actions[0].source_scope = 'explicit';
+  const refusedValidScopeMutation = validateProposal(changedValidScope, context);
+  assert.equal(refusedValidScopeMutation.ok, false);
+  assert.equal(refusedValidScopeMutation.errors.some((error) => error.code === 'INVALID_SEEDED_PLAN'), true);
+
+  const explicit = validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Remix the explicit ideas',
+    actions: [{ type: 'seeded_composition', scope: { kind: 'explicit', semantic_ids: ['idea:a', 'idea:b'] }, seed: 'orchard', wildness: 0.6 }],
+  }, context);
+  assert.equal(explicit.ok, true);
+  const changedExplicitScope = structuredClone(explicit.proposal);
+  changedExplicitScope.actions[0].source_scope = 'selection';
+  const refusedExplicitScopeMutation = validateProposal(changedExplicitScope, context);
+  assert.equal(refusedExplicitScopeMutation.ok, false);
+  assert.equal(refusedExplicitScopeMutation.errors.some((error) => error.code === 'INVALID_SEEDED_PLAN'), true);
+
+  const changedCloneContent = {
+    ...context,
+    items: context.items.map((item) => item.semantic_id === 'idea:a'
+      ? { ...item, props: { ...item.props, text: 'changed without revision' } }
+      : item),
+  };
+  const refusedChangedCloneContent = validateProposal(result.proposal, changedCloneContent);
+  assert.equal(refusedChangedCloneContent.ok, false);
+  assert.equal(refusedChangedCloneContent.errors.some((error) => error.code === 'INVALID_SEEDED_PLAN'), true);
+
+  const changedContext = { ...context, current_revision: 'rev:changed' };
+  const stale = validateProposal(result.proposal, changedContext);
+  assert.equal(stale.ok, false);
+  assert.equal(stale.errors[0].code, 'STALE_STATE');
+});
+
+test('seed is discoverable for composition but absent from capability qualification and authority inputs', () => {
+  const capabilitySchema = CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-capabilities').input_schema;
+  assert.equal(capabilitySchema.oneOf.every((branch) => !Object.hasOwn(branch.properties, 'seed')), true);
+  assert.equal(FOGWOOD_PARTICIPATION_CONTRACT.seed_only_after_capability_scope_safety_permissions_and_authority_are_fixed, true);
+  assert.equal(FOGWOOD_PARTICIPATION_CONTRACT.seed_never_controls_facts_safety_permissions_semantic_identity_or_human_authority, true);
+  assert.deepEqual(searchCapabilities({ kind: 'action', query: 'seed remix', page_size: 20 }).results.map((entry) => entry.id), ['seeded_composition']);
 });
 
 test('set_instrument_inputs stages one same-scope scenario with exact deterministic instrument diff', () => {

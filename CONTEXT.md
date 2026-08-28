@@ -81,6 +81,13 @@ _Avoid_: Plan, automatic mutation
 The explicit evidence boundary for claiming that a capability, adapter, recipe, or plan works.
 _Avoid_: Availability inferred from documentation
 
+**Seeded Composition**:
+A reproducible, bounded proposal that preserves exact native sources and creates
+editable variants with explicit lineage. The seed influences only compositional
+choices after capability, scope, safety, permissions, semantic identity, and
+human authority are fixed.
+_Avoid_: Random truth, probabilistic permission, template replacement
+
 ## Full-surface compiler contract
 
 Fogwood exposes the complete pinned Example vocabulary through one compiler,
@@ -107,3 +114,27 @@ Real request traces remain acceptance fixtures for exact execution semantics,
 not a throttle on Route coverage. `Connect these selected ideas` and `Make a
 preserved variant of this selected idea` prove the native transaction seam;
 the 213/213 Route matrix proves the full control-surface addressing layer.
+
+## Seed participation contract
+
+Fogwood has one versioned seeded grammar: `remix` with `xorshift32-v1`. The
+public request names either the current selection or an explicit list of stable
+semantic IDs, a bounded seed, and optional `wildness` from 0 to 1.
+Deterministic code validates the exact scope and source state, derives a source
+fingerprint, finds bounded open space, and lowers the remix to ordinary Canvas
+Protocol `variant`, `resize`, and `update` operations. The normalized action is
+replayable and includes its algorithm version, source revision, source
+fingerprint, layout decision, and lineage.
+
+The compiler rejects duplicate native or semantic IDs, dimensions outside the
+native 16–5,000 range, oversized scopes before traversal, and any candidate
+whose final rotated footprint intersects existing matter or another variant.
+Receipts retain the exact proposal content hash and an evidence-bound envelope
+hash so seed, layout, and lineage cannot be rebound independently.
+
+Seeds do not participate in capability qualification, factual claims, safety,
+permissions, semantic identity, target selection, or human authority. In a
+future planner they may break a tie only after two approaches have identical
+qualification and authority. Version 1 does not use seeds in capability routing
+at all. Apply still requires the exact inspected revision and page-owned review;
+Reject remains side-effect free.

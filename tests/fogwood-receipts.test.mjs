@@ -11,6 +11,8 @@ import {
   createRecipeStagedReceipt,
   createRecipeInsertedReceipt,
   createSnapshotExportedReceipt,
+  hashReceiptProposalEvidenceIdentity,
+  hashReceiptSeededEvidence,
 } from '../app/fogwood-receipts.ts';
 
 function memoryStorage(initial = null) {
@@ -483,6 +485,90 @@ test('identity hashes are canonical and bounded across proposal, package, recipe
     qualification_boundary: 'device-local',
   });
   assert.equal(packageAlias.ok, true);
+});
+
+test('seeded replay evidence is bounded and must match the digest bound into proposal identity', () => {
+  const { ledger } = makeLedger();
+  const evidence = [{
+    grammar: 'remix',
+    algorithm_version: 1,
+    prng: 'xorshift32-v1',
+    seed: 'ledger-seed',
+    wildness: 0.4,
+    source_revision: 'rev:seeded',
+    source_fingerprint: `sha256:${'ab'.repeat(32)}`,
+    layout: { kind: 'branch-cluster', open_side: 'right', branch_count: 1, open_gap: 120, rhythm: 1 },
+    lineage: [{ source_semantic_id: 'idea:a', variant_semantic_id: 'variant:a', lineage_source_id: 'idea:a', branch_index: 0, depth: 0 }],
+  }];
+  const seededEvidenceHash = hashReceiptSeededEvidence(evidence);
+  const proposal = {
+    id: identities.proposal.id,
+    version: identities.proposal.version,
+    content_hash: identities.proposal.hash,
+    seeded_evidence_hash: seededEvidenceHash,
+    hash: hashReceiptProposalEvidenceIdentity({
+      content_hash: identities.proposal.hash,
+      seeded_evidence_hash: seededEvidenceHash,
+    }),
+  };
+  const valid = ledger.validate(createProposalStagedReceipt({
+    proposal,
+    seeded_evidence: evidence,
+    source_revision: 'rev:seeded',
+    base_revision: 'rev:seeded',
+    outcome: 'staged',
+    qualification_boundary: 'device-local seeded proposal evidence',
+  }));
+  assert.equal(valid.ok, true);
+  const tampered = ledger.validate(createProposalStagedReceipt({
+    proposal,
+    seeded_evidence: [{ ...evidence[0], wildness: 0.9 }],
+    source_revision: 'rev:seeded',
+    base_revision: 'rev:seeded',
+    outcome: 'staged',
+    qualification_boundary: 'device-local seeded proposal evidence',
+  }));
+  assert.equal(tampered.ok, false);
+  assert.equal(tampered.errors.some((error) => error.code === 'SEEDED_EVIDENCE_HASH_MISMATCH'), true);
+
+  const changedEvidence = [{ ...evidence[0], seed: 'changed-seed' }];
+  const changedEvidenceHash = hashReceiptSeededEvidence(changedEvidence);
+  const reboundSidecarOnly = ledger.validate(createProposalStagedReceipt({
+    proposal: { ...proposal, seeded_evidence_hash: changedEvidenceHash },
+    seeded_evidence: changedEvidence,
+    source_revision: 'rev:seeded',
+    base_revision: 'rev:seeded',
+    outcome: 'staged',
+    qualification_boundary: 'device-local seeded proposal evidence',
+  }));
+  assert.equal(reboundSidecarOnly.ok, false);
+  assert.equal(reboundSidecarOnly.errors.some((error) => error.code === 'PROPOSAL_EVIDENCE_IDENTITY_MISMATCH'), true);
+
+  const sparseEvidence = new Array(1);
+  const sparseTopLevel = ledger.validate({
+    event: 'proposal-staged',
+    proposal: identities.proposal,
+    seeded_evidence: sparseEvidence,
+    source_revision: 'rev:seeded',
+    base_revision: 'rev:seeded',
+    outcome: 'staged',
+    qualification_boundary: 'device-local seeded proposal evidence',
+  });
+  assert.equal(sparseTopLevel.ok, false);
+  assert.equal(sparseTopLevel.errors.some((error) => error.code === 'INVALID_SEEDED_EVIDENCE'), true);
+
+  const sparseLineage = [{ ...evidence[0], lineage: new Array(1) }];
+  const sparseNested = ledger.validate({
+    event: 'proposal-staged',
+    proposal: identities.proposal,
+    seeded_evidence: sparseLineage,
+    source_revision: 'rev:seeded',
+    base_revision: 'rev:seeded',
+    outcome: 'staged',
+    qualification_boundary: 'device-local seeded proposal evidence',
+  });
+  assert.equal(sparseNested.ok, false);
+  assert.equal(sparseNested.errors.some((error) => error.code === 'INVALID_SEEDED_LINEAGE'), true);
 });
 
 test('constructor cloning rejects cycles and oversized inputs with controlled errors', () => {

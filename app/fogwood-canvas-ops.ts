@@ -617,6 +617,14 @@ export function planCanvasOps(
   }
   if (errors.length > 0) return { ok: false, errors };
 
+  const nativeIds = new Set<string>();
+  for (const item of currentItems) {
+    if (nativeIds.has(item.id)) {
+      return { ok: false, errors: [{ code: 'DUPLICATE_NATIVE_ID', message: 'Current page native shape ids must be unique before Canvas Protocol operations can be staged.', path: 'context.items' }] };
+    }
+    nativeIds.add(item.id);
+  }
+
   const projected = new Map(currentItems.map((item) => [item.id, cloneItem(item)]));
   const childrenByParent = new Map<string, CanvasOpItem[]>();
   for (const item of projected.values()) {

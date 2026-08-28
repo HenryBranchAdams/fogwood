@@ -21,10 +21,13 @@ import {
   createRecipeStagedReceipt,
   createSnapshotExportedReceipt,
   hashReceiptMaterialEvidence,
+  hashReceiptProposalEvidenceIdentity,
+  hashReceiptSeededEvidence,
   type Receipt,
   type ReceiptAppendManyResult,
   type ReceiptDraft,
   type ReceiptMaterialEvidence,
+  type ReceiptSeededCompositionEvidence,
   type createReceiptLedger,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-receipts.ts';
@@ -169,6 +172,20 @@ function materialEvidenceForProposal(actions: readonly ProposalAction[]): Receip
   });
 }
 
+function seededEvidenceForProposal(actions: readonly ProposalAction[]): ReceiptSeededCompositionEvidence[] {
+  return actions.flatMap((action) => action.type === 'seeded_composition' ? [{
+    grammar: action.grammar,
+    algorithm_version: action.algorithm_version,
+    prng: action.prng,
+    seed: action.seed,
+    wildness: action.wildness,
+    source_revision: action.source_revision,
+    source_fingerprint: action.source_fingerprint,
+    layout: action.layout,
+    lineage: action.lineage,
+  }] : []);
+}
+
 function evidenceFailure(code: string, message: string): ReceiptRecorderFailure {
   return { ok: false, status: 'RECIPE_EVIDENCE_ERROR', error: { code, message } };
 }
@@ -243,7 +260,11 @@ function recipeDrafts(
 
 function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeof identityForProposal>) {
   const materialEvidence = materialEvidenceForProposal(event.proposal.actions);
-  const evidence = materialEvidence.length > 0 ? { material_evidence: materialEvidence } : {};
+  const seededEvidence = seededEvidenceForProposal(event.proposal.actions);
+  const evidence = {
+    ...(materialEvidence.length > 0 ? { material_evidence: materialEvidence } : {}),
+    ...(seededEvidence.length > 0 ? { seeded_evidence: seededEvidence } : {}),
+  };
   if (event.type === 'proposal-staged') {
     return createProposalStagedReceipt({
       proposal,
@@ -286,10 +307,26 @@ export function createFogwoodReceiptRecorder(options: FogwoodReceiptRecorderOpti
   const recordProposalLifecycle = (event: ProposalLifecycleEvent): ReceiptRecorderResult => {
     try {
       const materialEvidence = materialEvidenceForProposal(event.proposal.actions);
+      const seededEvidence = seededEvidenceForProposal(event.proposal.actions);
       const baseProposal = identityForProposal(event.proposal);
-      const proposal = materialEvidence.length > 0
-        ? { ...baseProposal, material_evidence_hash: hashReceiptMaterialEvidence(materialEvidence) }
-        : baseProposal;
+      const materialEvidenceHash = materialEvidence.length > 0 ? hashReceiptMaterialEvidence(materialEvidence) : undefined;
+      const seededEvidenceHash = seededEvidence.length > 0 ? hashReceiptSeededEvidence(seededEvidence) : undefined;
+      if (seededEvidenceHash !== undefined && baseProposal.hash === undefined) throw new Error('Seeded proposal identity requires an exact proposal content hash.');
+      const proposal = seededEvidenceHash === undefined
+        ? {
+            ...baseProposal,
+            ...(materialEvidenceHash === undefined ? {} : { material_evidence_hash: materialEvidenceHash }),
+          }
+        : {
+            id: baseProposal.id,
+            version: baseProposal.version,
+            content_hash: baseProposal.hash as string,
+            seeded_evidence_hash: seededEvidenceHash,
+            hash: hashReceiptProposalEvidenceIdentity({
+              content_hash: baseProposal.hash as string,
+              seeded_evidence_hash: seededEvidenceHash,
+            }),
+          };
       const related = recipeDrafts(event, proposal);
       if (!Array.isArray(related)) return related;
       return append([proposalDraft(event, proposal), ...related]);

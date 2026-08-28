@@ -3,8 +3,8 @@ import test from 'node:test';
 
 import { createFogwoodReceiptRecorder, validateRecipePackageAlignment } from '../app/fogwood-receipt-recorder.ts';
 import { readBazaar } from '../app/fogwood-bazaar.ts';
-import { createReceiptLedger } from '../app/fogwood-receipts.ts';
-import { getRecipe } from '../app/fogwood-runtime.ts';
+import { createReceiptLedger, hashReceiptProposalEvidenceIdentity, hashReceiptSeededEvidence } from '../app/fogwood-receipts.ts';
+import { getRecipe, validateProposal } from '../app/fogwood-runtime.ts';
 
 function setup() {
   let stored = null;
@@ -63,6 +63,55 @@ test('generic proposal lifecycle writes one exact append-only receipt per accept
     'proposal-staged',
     'proposal-applied',
   ]);
+});
+
+test('seeded lifecycle receipts expose and cryptographically bind replay and lineage evidence', () => {
+  const context = {
+    current_revision: 'revision:seeded',
+    page_id: 'page:main',
+    selection_semantic_ids: ['idea:a'],
+    selection_complete: true,
+    selection_total: 1,
+    items: [{
+      id: 'shape:a', type: 'geo', x: 40, y: 60, w: 180, h: 100, rotation: 0,
+      parent_id: 'page:main', is_locked: false, semantic_id: 'idea:a',
+      meta: { semantic_id_source: 'stable' }, props: { color: 'blue', fill: 'solid' },
+    }],
+  };
+  const validated = validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Seed a preserved variant',
+    actions: [{ type: 'seeded_composition', scope: { kind: 'selection' }, seed: 'receipt-seed', wildness: 0.65 }],
+  }, context);
+  assert.equal(validated.ok, true);
+  const { recorder } = setup();
+  const result = recorder.recordProposalLifecycle({
+    type: 'proposal-staged',
+    proposal: validated.proposal,
+    source_revision: context.current_revision,
+    base_revision: context.current_revision,
+  });
+  assert.equal(result.ok, true);
+  const receipt = result.receipts[0];
+  assert.equal(receipt.seeded_evidence.length, 1);
+  assert.deepEqual(receipt.seeded_evidence[0], {
+    grammar: 'remix',
+    algorithm_version: 1,
+    prng: 'xorshift32-v1',
+    seed: 'receipt-seed',
+    wildness: 0.65,
+    source_revision: 'revision:seeded',
+    source_fingerprint: validated.proposal.actions[0].source_fingerprint,
+    layout: validated.proposal.actions[0].layout,
+    lineage: validated.proposal.actions[0].lineage,
+  });
+  assert.equal(receipt.proposal.seeded_evidence_hash, hashReceiptSeededEvidence(receipt.seeded_evidence));
+  assert.match(receipt.proposal.content_hash, /^sha256:[0-9a-f]{64}$/);
+  assert.notEqual(receipt.proposal.hash, receipt.proposal.content_hash);
+  assert.equal(receipt.proposal.hash, hashReceiptProposalEvidenceIdentity({
+    content_hash: receipt.proposal.content_hash,
+    seeded_evidence_hash: receipt.proposal.seeded_evidence_hash,
+  }));
 });
 
 test('recipe lifecycle commits proposal and exact runtime/package evidence atomically in action order', () => {

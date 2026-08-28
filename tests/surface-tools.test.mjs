@@ -395,6 +395,8 @@ test('inspect exposes a bounded context token separate from content revision', (
   assert.equal(first.canvas_context.schema, 'fogwood.context.v1');
   assert.equal(first.context_token.length, 16);
   assert.equal(first.content_revision, currentRevision(editor));
+  assert.equal(first.protocol.registry_version, '7');
+  assert.equal(first.capability_ontology.qualified_capability_count, 9);
   assert.equal('camera' in first.canvas_context, false);
   assert.equal('viewport' in first.canvas_context, false);
   assert.equal('hover' in first.canvas_context, false);
@@ -562,6 +564,68 @@ test('planned capabilities flow through proposal staging, one Apply transaction,
   assert.deepEqual(editor.marks, ['Apply agent proposal']);
   editor.undo();
   assert.deepEqual(editor.shapes, []);
+  cleanup();
+});
+
+test('seeded composition stages through WebMCP, preserves sources, applies once, rejects cleanly, and undoes once', async () => {
+  const sources = [
+    {
+      id: 'shape:seed-a', typeName: 'shape', type: 'geo', x: 80, y: 120, rotation: 0, opacity: 1,
+      isLocked: false, index: '0001', parentId: 'page:main',
+      meta: { fogwood: { semantic_id: 'idea:seed-a', semantic_id_source: 'stable', role: 'idea' } },
+      props: { geo: 'rectangle', w: 180, h: 100, color: 'blue', fill: 'solid', richText: { type: 'doc', content: [] } },
+    },
+    {
+      id: 'shape:seed-b', typeName: 'shape', type: 'note', x: 360, y: 260, rotation: 0, opacity: 1,
+      isLocked: false, index: '0002', parentId: 'page:main',
+      meta: { fogwood: { semantic_id: 'idea:seed-b', semantic_id_source: 'stable', role: 'idea', variant_id: 'variant:parent' } },
+      props: { w: 200, h: 200, color: 'yellow', richText: { type: 'doc', content: [] } },
+    },
+  ];
+  const editor = new CanvasProposalEditor(sources);
+  editor.setContext({ selectedShapeIds: ['shape:seed-b', 'shape:seed-a'] });
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const before = clone(editor.shapes);
+  const inspected = inspectSurface(editor);
+  const response = await propose.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Seed a preserved branch-cluster',
+    actions: [{ type: 'seeded_composition', scope: { kind: 'selection' }, seed: 'forest-floor', wildness: 0.7 }],
+  });
+  const staged = JSON.parse(response.content[0].text);
+  assert.equal(staged.status, 'STAGED');
+  assert.equal(staged.proposal.actions[0].algorithm_version, 1);
+  assert.equal(staged.proposal.actions[0].source_revision, inspected.content_revision);
+  assert.equal(staged.proposal.actions[0].lineage.length, 2);
+  assert.deepEqual(editor.shapes, before);
+
+  assert.equal(controller.apply().status, 'APPLIED');
+  assert.deepEqual(editor.shapes.filter((shape) => before.some((source) => source.id === shape.id)), before);
+  const variants = editor.shapes.filter((shape) => !before.some((source) => source.id === shape.id));
+  assert.equal(variants.length, 2);
+  assert.equal(variants.every((shape) => shape.meta?.fogwood?.seeded_grammar === 'remix'), true);
+  assert.equal(variants.every((shape) => shape.meta?.fogwood?.seeded_algorithm_version === 1), true);
+  assert.equal(variants.every((shape) => shape.meta?.fogwood?.seeded_seed === 'forest-floor'), true);
+  assert.equal(variants.every((shape) => shape.meta?.fogwood?.seeded_source_revision === inspected.content_revision), true);
+  assert.deepEqual(editor.marks, ['Apply agent proposal']);
+  editor.undo();
+  assert.deepEqual(editor.shapes, before);
+
+  const rejectBase = inspectSurface(editor);
+  const rejectResponse = await propose.execute({
+    base_revision: rejectBase.content_revision,
+    context_token: rejectBase.context_token,
+    summary: 'Reject another reproducible branch',
+    actions: [{ type: 'seeded_composition', scope: { kind: 'selection' }, seed: 'other-branch', wildness: 0.3 }],
+  });
+  assert.equal(JSON.parse(rejectResponse.content[0].text).status, 'STAGED');
+  const revisionBeforeReject = currentRevision(editor);
+  assert.equal(controller.reject().status, 'REJECTED');
+  assert.equal(currentRevision(editor), revisionBeforeReject);
+  assert.deepEqual(editor.shapes, before);
   cleanup();
 });
 

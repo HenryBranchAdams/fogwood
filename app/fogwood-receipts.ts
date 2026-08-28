@@ -18,6 +18,8 @@ export const RECEIPT_LEDGER_SCHEMA_VERSION = 1 as const;
 export const RECEIPT_STORAGE_KEY = 'fogwood-receipts-local:v1' as const;
 export const RECEIPT_BATCH_LIMIT = 16 as const;
 export const RECEIPT_MATERIAL_EVIDENCE_LIMIT = 32 as const;
+export const RECEIPT_SEEDED_EVIDENCE_LIMIT = 4 as const;
+export const RECEIPT_SEEDED_LINEAGE_LIMIT = 8 as const;
 /** Alias that makes the storage boundary easy to discover from app code. */
 export const FOGWOOD_RECEIPTS_STORAGE_KEY = RECEIPT_STORAGE_KEY;
 
@@ -45,6 +47,8 @@ export type ReceiptIdentity = {
   content_hash?: string;
   /** Binds separately projected material evidence to this proposal identity. */
   material_evidence_hash?: string;
+  /** Binds explicit reproducibility and lineage evidence to this proposal identity. */
+  seeded_evidence_hash?: string;
 };
 
 export type ReceiptArtifact = {
@@ -70,6 +74,31 @@ export type ReceiptMaterialEvidence = {
   prompt_summary: string;
 };
 
+export type ReceiptSeededCompositionEvidence = {
+  grammar: 'remix';
+  algorithm_version: 1;
+  prng: 'xorshift32-v1';
+  seed: string | number;
+  wildness: number;
+  source_revision: string;
+  source_fingerprint: string;
+  layout: {
+    kind: 'branch-cluster';
+    open_side: 'right' | 'bottom' | 'left' | 'top';
+    branch_count: number;
+    open_gap: number;
+    rhythm: number;
+  };
+  lineage: readonly {
+    source_semantic_id: string;
+    variant_semantic_id: string;
+    lineage_source_id: string;
+    parent_variant_id?: string;
+    branch_index: number;
+    depth: number;
+  }[];
+};
+
 export type ReceiptDraft = {
   event: ReceiptEvent;
   source_revision?: string;
@@ -79,6 +108,7 @@ export type ReceiptDraft = {
   package?: ReceiptIdentity;
   recipe?: ReceiptIdentity;
   material_evidence?: readonly ReceiptMaterialEvidence[];
+  seeded_evidence?: readonly ReceiptSeededCompositionEvidence[];
   outcome: ReceiptOutcome;
   locality?: ReceiptLocality;
   qualification_boundary: string;
@@ -103,6 +133,7 @@ export type Receipt = Readonly<{
   package?: Readonly<ReceiptIdentity>;
   recipe?: Readonly<ReceiptIdentity>;
   material_evidence?: readonly ReceiptMaterialEvidence[];
+  seeded_evidence?: readonly ReceiptSeededCompositionEvidence[];
   outcome: ReceiptOutcome;
   qualification_boundary: string;
   warnings: readonly string[];
@@ -259,6 +290,7 @@ const DRAFT_KEYS = [
   'package',
   'recipe',
   'material_evidence',
+  'seeded_evidence',
   'outcome',
   'locality',
   'qualification_boundary',
@@ -506,18 +538,21 @@ function normalizeIdentity(
     addError(errors, 'INVALID_IDENTITY', 'Identity must include id, version, and hash.', path);
     return undefined;
   }
-  if (!hasOnlyKeys(value, ['id', 'version', 'hash', 'content_hash', 'material_evidence_hash'])) addError(errors, 'UNKNOWN_FIELD', 'Identity contains an unknown field.', path);
+  if (!hasOnlyKeys(value, ['id', 'version', 'hash', 'content_hash', 'material_evidence_hash', 'seeded_evidence_hash'])) addError(errors, 'UNKNOWN_FIELD', 'Identity contains an unknown field.', path);
   const id = boundedString(value.id, limits.max_identity_length) ? value.id : undefined;
   if (id === undefined) addError(errors, 'INVALID_IDENTITY_ID', 'Identity id must be a bounded non-empty string.', `${path}.id`);
   const version = normalizeVersion(value.version, path, errors);
   const hash = canonicalHash(value.hash, limits.max_hash_length) ? value.hash : undefined;
   const contentHash = canonicalHash(value.content_hash, limits.max_hash_length) ? value.content_hash : undefined;
   const materialEvidenceHash = canonicalHash(value.material_evidence_hash, limits.max_hash_length) ? value.material_evidence_hash : undefined;
+  const seededEvidenceHash = canonicalHash(value.seeded_evidence_hash, limits.max_hash_length) ? value.seeded_evidence_hash : undefined;
   if (hash === undefined && contentHash === undefined) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity must include a bounded non-empty hash or content_hash.', `${path}.hash`);
   if (value.hash !== undefined && !canonicalHash(value.hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.hash`);
   if (value.content_hash !== undefined && !canonicalHash(value.content_hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity content_hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.content_hash`);
   if (value.material_evidence_hash !== undefined && !canonicalHash(value.material_evidence_hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity material_evidence_hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.material_evidence_hash`);
-  if (hash !== undefined && contentHash !== undefined && hash !== contentHash) addError(errors, 'IDENTITY_HASH_MISMATCH', 'hash and content_hash must match when both are supplied.', path);
+  if (value.seeded_evidence_hash !== undefined && !canonicalHash(value.seeded_evidence_hash, limits.max_hash_length)) addError(errors, 'INVALID_IDENTITY_HASH', 'Identity seeded_evidence_hash must be the canonical sha256:<64 lowercase hex> form.', `${path}.seeded_evidence_hash`);
+  const seededEvidenceEnvelope = path === 'proposal' && seededEvidenceHash !== undefined;
+  if (hash !== undefined && contentHash !== undefined && hash !== contentHash && !seededEvidenceEnvelope) addError(errors, 'IDENTITY_HASH_MISMATCH', 'hash and content_hash must match when both are supplied.', path);
   if (id === undefined || version === undefined || errors.some((error) => error.path === path || error.path?.startsWith(`${path}.`))) return undefined;
   return {
     id,
@@ -525,11 +560,28 @@ function normalizeIdentity(
     ...(hash === undefined ? {} : { hash }),
     ...(contentHash === undefined ? {} : { content_hash: contentHash }),
     ...(materialEvidenceHash === undefined ? {} : { material_evidence_hash: materialEvidenceHash }),
+    ...(seededEvidenceHash === undefined ? {} : { seeded_evidence_hash: seededEvidenceHash }),
   };
 }
 
 export function hashReceiptMaterialEvidence(value: readonly ReceiptMaterialEvidence[]) {
   return `sha256:${sha256Hex(canonicalSerialize(value))}`;
+}
+
+export function hashReceiptSeededEvidence(value: readonly ReceiptSeededCompositionEvidence[]) {
+  return `sha256:${sha256Hex(canonicalSerialize(value))}`;
+}
+
+/** Bind the exact proposal-content identity to its separately reviewable seeded evidence. */
+export function hashReceiptProposalEvidenceIdentity(value: Readonly<{
+  content_hash: string;
+  seeded_evidence_hash: string;
+}>) {
+  return `sha256:${sha256Hex(canonicalSerialize({
+    schema: 'fogwood.receipt-proposal-evidence.v1',
+    content_hash: value.content_hash,
+    seeded_evidence_hash: value.seeded_evidence_hash,
+  }))}`;
 }
 
 function normalizeArtifact(
@@ -628,6 +680,103 @@ function normalizeMaterialEvidence(
   return normalized;
 }
 
+function normalizeSeededEvidence(
+  value: unknown,
+  path: string,
+  limits: ReceiptLedgerLimits,
+  errors: ReceiptValidationError[],
+): ReceiptSeededCompositionEvidence[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length < 1 || value.length > RECEIPT_SEEDED_EVIDENCE_LIMIT) {
+    addError(errors, 'SEEDED_EVIDENCE_LIMIT', `seeded_evidence must contain 1-${RECEIPT_SEEDED_EVIDENCE_LIMIT} entries.`, path);
+    return undefined;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(value, index)) {
+      addError(errors, 'INVALID_SEEDED_EVIDENCE', 'seeded_evidence cannot contain holes.', `${path}[${index}]`);
+      return undefined;
+    }
+  }
+  const normalized: ReceiptSeededCompositionEvidence[] = [];
+  value.forEach((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    if (!isRecord(entry)) {
+      addError(errors, 'INVALID_SEEDED_EVIDENCE', 'Each seeded evidence entry must be an object.', entryPath);
+      return;
+    }
+    const allowed = ['grammar', 'algorithm_version', 'prng', 'seed', 'wildness', 'source_revision', 'source_fingerprint', 'layout', 'lineage'];
+    if (!hasOnlyKeys(entry, allowed)) addError(errors, 'UNKNOWN_FIELD', 'Seeded evidence contains an unknown field.', entryPath);
+    const grammar = entry.grammar === 'remix' ? 'remix' as const : undefined;
+    const algorithmVersion = entry.algorithm_version === 1 ? 1 as const : undefined;
+    const prng = entry.prng === 'xorshift32-v1' ? 'xorshift32-v1' as const : undefined;
+    const seed = typeof entry.seed === 'string' && entry.seed.trim().length > 0 && entry.seed.length <= 96
+      ? entry.seed
+      : typeof entry.seed === 'number' && Number.isSafeInteger(entry.seed)
+        ? entry.seed
+        : undefined;
+    const wildness = isFiniteNumber(entry.wildness) && entry.wildness >= 0 && entry.wildness <= 1 ? entry.wildness : undefined;
+    const sourceRevision = boundedString(entry.source_revision, limits.max_revision_length) ? entry.source_revision : undefined;
+    const sourceFingerprint = canonicalHash(entry.source_fingerprint, limits.max_hash_length) ? entry.source_fingerprint : undefined;
+    if (grammar === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'grammar must be remix.', `${entryPath}.grammar`);
+    if (algorithmVersion === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'algorithm_version must be 1.', `${entryPath}.algorithm_version`);
+    if (prng === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'prng must be xorshift32-v1.', `${entryPath}.prng`);
+    if (seed === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'seed must be a bounded string or safe integer.', `${entryPath}.seed`);
+    if (wildness === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'wildness must be a finite number from 0 to 1.', `${entryPath}.wildness`);
+    if (sourceRevision === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'source_revision must be bounded.', `${entryPath}.source_revision`);
+    if (sourceFingerprint === undefined) addError(errors, 'INVALID_SEEDED_EVIDENCE', 'source_fingerprint must be a canonical SHA-256 identity.', `${entryPath}.source_fingerprint`);
+
+    let layout: ReceiptSeededCompositionEvidence['layout'] | undefined;
+    if (!isRecord(entry.layout) || !hasOnlyKeys(entry.layout, ['kind', 'open_side', 'branch_count', 'open_gap', 'rhythm'])) {
+      addError(errors, 'INVALID_SEEDED_EVIDENCE', 'layout must be the bounded branch-cluster projection.', `${entryPath}.layout`);
+    } else {
+      const side = ['right', 'bottom', 'left', 'top'].includes(String(entry.layout.open_side))
+        ? entry.layout.open_side as ReceiptSeededCompositionEvidence['layout']['open_side']
+        : undefined;
+      const branchCount = isFiniteNumber(entry.layout.branch_count) && Number.isSafeInteger(entry.layout.branch_count) && entry.layout.branch_count >= 1 && entry.layout.branch_count <= RECEIPT_SEEDED_LINEAGE_LIMIT ? entry.layout.branch_count : undefined;
+      const openGap = isFiniteNumber(entry.layout.open_gap) && entry.layout.open_gap >= 0 && entry.layout.open_gap <= 10_000 ? entry.layout.open_gap : undefined;
+      const rhythm = isFiniteNumber(entry.layout.rhythm) && entry.layout.rhythm >= 0.5 && entry.layout.rhythm <= 1.5 ? entry.layout.rhythm : undefined;
+      if (entry.layout.kind !== 'branch-cluster' || side === undefined || branchCount === undefined || openGap === undefined || rhythm === undefined) {
+        addError(errors, 'INVALID_SEEDED_EVIDENCE', 'layout fields exceed the seeded branch-cluster bounds.', `${entryPath}.layout`);
+      } else {
+        layout = { kind: 'branch-cluster', open_side: side, branch_count: branchCount, open_gap: openGap, rhythm };
+      }
+    }
+
+    const lineage: Array<ReceiptSeededCompositionEvidence['lineage'][number]> = [];
+    const lineageLength = Array.isArray(entry.lineage) ? entry.lineage.length : -1;
+    if (!Array.isArray(entry.lineage) || entry.lineage.length < 1 || entry.lineage.length > RECEIPT_SEEDED_LINEAGE_LIMIT) {
+      addError(errors, 'SEEDED_LINEAGE_LIMIT', `lineage must contain 1-${RECEIPT_SEEDED_LINEAGE_LIMIT} entries.`, `${entryPath}.lineage`);
+    } else {
+      for (let lineageIndex = 0; lineageIndex < entry.lineage.length; lineageIndex += 1) {
+        const candidate = entry.lineage[lineageIndex];
+        const lineagePath = `${entryPath}.lineage[${lineageIndex}]`;
+        if (!isRecord(candidate) || !hasOnlyKeys(candidate, ['source_semantic_id', 'variant_semantic_id', 'lineage_source_id', 'parent_variant_id', 'branch_index', 'depth'])) {
+          addError(errors, 'INVALID_SEEDED_LINEAGE', 'Seeded lineage must contain only bounded replay fields.', lineagePath);
+          continue;
+        }
+        const sourceSemanticId = boundedString(candidate.source_semantic_id, limits.max_identity_length) ? candidate.source_semantic_id : undefined;
+        const variantSemanticId = boundedString(candidate.variant_semantic_id, limits.max_identity_length) ? candidate.variant_semantic_id : undefined;
+        const lineageSourceId = boundedString(candidate.lineage_source_id, limits.max_identity_length) ? candidate.lineage_source_id : undefined;
+        const parentVariantId = candidate.parent_variant_id === undefined
+          ? undefined
+          : boundedString(candidate.parent_variant_id, limits.max_identity_length)
+            ? candidate.parent_variant_id
+            : null;
+        const branchIndex = isFiniteNumber(candidate.branch_index) && Number.isSafeInteger(candidate.branch_index) && candidate.branch_index >= 0 && candidate.branch_index < RECEIPT_SEEDED_LINEAGE_LIMIT ? candidate.branch_index : undefined;
+        const depth = isFiniteNumber(candidate.depth) && Number.isSafeInteger(candidate.depth) && candidate.depth >= 0 && candidate.depth < RECEIPT_SEEDED_LINEAGE_LIMIT ? candidate.depth : undefined;
+        if (sourceSemanticId === undefined || variantSemanticId === undefined || lineageSourceId === undefined || parentVariantId === null || branchIndex === undefined || depth === undefined) {
+          addError(errors, 'INVALID_SEEDED_LINEAGE', 'Seeded lineage fields must stay within their declared bounds.', lineagePath);
+          continue;
+        }
+        lineage.push({ source_semantic_id: sourceSemanticId, variant_semantic_id: variantSemanticId, lineage_source_id: lineageSourceId, ...(parentVariantId === undefined ? {} : { parent_variant_id: parentVariantId }), branch_index: branchIndex, depth });
+      }
+    }
+    if (grammar === undefined || algorithmVersion === undefined || prng === undefined || seed === undefined || wildness === undefined || sourceRevision === undefined || sourceFingerprint === undefined || layout === undefined || lineage.length !== lineageLength) return;
+    normalized.push({ grammar, algorithm_version: algorithmVersion, prng, seed, wildness, source_revision: sourceRevision, source_fingerprint: sourceFingerprint, layout, lineage });
+  });
+  return normalized;
+}
+
 /**
  * Normalize and validate an event draft. This function intentionally does not
  * assign receipt IDs, timestamps, or sequence numbers; validation is pure and
@@ -661,10 +810,32 @@ function validateDraft(input: unknown, limits: ReceiptLedgerLimits): ReceiptVali
   const packageIdentity = input.package === undefined ? undefined : normalizeIdentity(input.package, 'package', limits, errors);
   const recipe = input.recipe === undefined ? undefined : normalizeIdentity(input.recipe, 'recipe', limits, errors);
   const materialEvidence = normalizeMaterialEvidence(input.material_evidence, 'material_evidence', limits, errors);
+  const seededEvidence = normalizeSeededEvidence(input.seeded_evidence, 'seeded_evidence', limits, errors);
   if (materialEvidence && materialEvidence.length > 0) {
     const expectedEvidenceHash = hashReceiptMaterialEvidence(materialEvidence);
     if (proposal?.material_evidence_hash !== expectedEvidenceHash) {
       addError(errors, 'MATERIAL_EVIDENCE_HASH_MISMATCH', 'Material evidence must match the digest bound into the proposal identity.', 'material_evidence');
+    }
+  }
+  if (seededEvidence && seededEvidence.length > 0) {
+    const expectedEvidenceHash = hashReceiptSeededEvidence(seededEvidence);
+    if (proposal?.seeded_evidence_hash !== expectedEvidenceHash) {
+      addError(errors, 'SEEDED_EVIDENCE_HASH_MISMATCH', 'Seeded evidence must match the digest bound into the proposal identity.', 'seeded_evidence');
+    }
+  } else if (proposal?.seeded_evidence_hash !== undefined) {
+    addError(errors, 'MISSING_SEEDED_EVIDENCE', 'A proposal seeded_evidence_hash requires its bounded seeded evidence projection.', 'seeded_evidence');
+  }
+  if (proposal?.seeded_evidence_hash !== undefined) {
+    if (proposal.hash === undefined || proposal.content_hash === undefined) {
+      addError(errors, 'MISSING_PROPOSAL_EVIDENCE_IDENTITY', 'Seeded proposal evidence requires both the exact proposal content_hash and its evidence-bound hash.', 'proposal');
+    } else {
+      const expectedProposalHash = hashReceiptProposalEvidenceIdentity({
+        content_hash: proposal.content_hash,
+        seeded_evidence_hash: proposal.seeded_evidence_hash,
+      });
+      if (proposal.hash !== expectedProposalHash) {
+        addError(errors, 'PROPOSAL_EVIDENCE_IDENTITY_MISMATCH', 'The proposal identity must bind its exact content hash to the seeded evidence digest.', 'proposal.hash');
+      }
     }
   }
   const artifact = input.artifact === undefined ? undefined : normalizeArtifact(input.artifact, 'artifact', limits, errors);
@@ -727,6 +898,7 @@ function validateDraft(input: unknown, limits: ReceiptLedgerLimits): ReceiptVali
     ...(packageIdentity === undefined ? {} : { package: packageIdentity }),
     ...(recipe === undefined ? {} : { recipe }),
     ...(materialEvidence === undefined ? {} : { material_evidence: materialEvidence }),
+    ...(seededEvidence === undefined ? {} : { seeded_evidence: seededEvidence }),
     outcome,
     locality: 'device-local' as const,
     qualification_boundary: qualificationBoundary,

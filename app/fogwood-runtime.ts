@@ -12,7 +12,10 @@ import type { InstrumentInputChange, InstrumentShapeLike } from './fogwood-instr
 import { BAZAAR_CATALOG } from './fogwood-bazaar.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { CANVAS_OPS_ACTION_SCHEMA, FOGWOOD_CANVAS_PROTOCOL, planCanvasOps } from './fogwood-canvas-ops.ts';
-import type { CanvasOpsAction } from './fogwood-canvas-ops.ts';
+import type { CanvasOpPlan, CanvasOpsAction } from './fogwood-canvas-ops.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_SEEDED_COMPOSITION, planSeededComposition } from './fogwood-seeded-composition.ts';
+import type { NormalizedSeededCompositionAction } from './fogwood-seeded-composition.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { TLDRAW_EXAMPLE_CATALOG } from './fogwood-tldraw-capabilities.ts';
 import type { TldrawExampleStatus } from './fogwood-tldraw-capabilities.ts';
@@ -34,7 +37,7 @@ import type { CompositionRecipe } from './fogwood-composition.ts';
 
 export const FOGWOOD_PROTOCOL = 'fogwood-agent-runtime';
 export const FOGWOOD_PROTOCOL_VERSION = '2';
-export const FOGWOOD_REGISTRY_VERSION = '6';
+export const FOGWOOD_REGISTRY_VERSION = '7';
 export const FOGWOOD_PROPOSAL_VERSION = '1';
 export const FOGWOOD_CONTEXT_VERSION = 'fogwood.context.v1' as const;
 export const FOGWOOD_CONTEXT_SELECTION_LIMIT = 5_000 as const;
@@ -58,6 +61,9 @@ export const FOGWOOD_PARTICIPATION_CONTRACT = {
   stage_and_stop_for_page_apply_or_reject: true,
   inspect_after_human_manipulation: true,
   branch_mutate_annotate_or_remix_instead_of_overwrite: true,
+  seed_only_after_capability_scope_safety_permissions_and_authority_are_fixed: true,
+  seed_may_break_ties_only_between_equally_qualified_compositions: true,
+  seed_never_controls_facts_safety_permissions_semantic_identity_or_human_authority: true,
   no_implicit_live_provider: true,
 } as const;
 
@@ -141,6 +147,15 @@ export type FogwoodMeta = {
   variant_id?: string;
   parent_variant_id?: string;
   lineage_source_id?: string;
+  seeded_grammar?: string;
+  seeded_algorithm_version?: number;
+  seeded_prng?: string;
+  seeded_seed?: string | number;
+  seeded_wildness?: number;
+  seeded_source_revision?: string;
+  seeded_source_fingerprint?: string;
+  seeded_branch_index?: number;
+  seeded_depth?: number;
   relationship_id?: string;
   relationship_kind?: string;
   source_semantic_id?: string;
@@ -1213,6 +1228,45 @@ const actionSchema = (field: string, maxItems: number, itemSchema: CapabilitySch
 
 const exactActionSchemas: Record<string, CapabilitySchema> = {
   canvas_ops: CANVAS_OPS_ACTION_SCHEMA as unknown as CapabilitySchema,
+  seeded_composition: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: { const: 'seeded_composition' },
+      scope: {
+        oneOf: [
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: { kind: { const: 'selection' } },
+            required: ['kind'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { const: 'explicit' },
+              semantic_ids: {
+                type: 'array',
+                minItems: 1,
+                maxItems: FOGWOOD_SEEDED_COMPOSITION.max_targets,
+                items: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
+              },
+            },
+            required: ['kind', 'semantic_ids'],
+          },
+        ],
+      },
+      seed: {
+        oneOf: [
+          { type: 'string', minLength: 1, maxLength: FOGWOOD_SEEDED_COMPOSITION.max_seed_length },
+          { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+        ],
+      },
+      wildness: { type: 'number', minimum: 0, maximum: 1 },
+    },
+    required: ['type', 'scope', 'seed'],
+  },
   add_blocks: actionSchema('add_blocks', MAX_BLOCKS_PER_ACTION, blockItemSchema),
   add_shapes: actionSchema('add_shapes', MAX_SHAPES_PER_ACTION, shapeItemSchema),
   apply_spatial_moves: actionSchema('apply_spatial_moves', SPATIAL_LIMITS.max_moves_per_action, spatialMoveSchema),
@@ -1303,8 +1357,8 @@ export const PROPOSAL_INPUT_SCHEMA: CapabilitySchema = {
       type: 'array',
       minItems: 1,
       maxItems: 1,
-      description: 'One public action per staged proposal. canvas_ops composes up to 24 native editor operations.',
-      items: { oneOf: [exactActionSchemas.canvas_ops, exactActionSchemas.add_materials] },
+      description: 'One public action per staged proposal. canvas_ops composes up to 24 native editor operations; seeded_composition creates bounded reproducible preserved variants.',
+      items: { oneOf: [exactActionSchemas.canvas_ops, exactActionSchemas.seeded_composition, exactActionSchemas.add_materials] },
     },
   },
   required: ['base_revision', 'summary', 'actions'],
@@ -1467,6 +1521,17 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     use_when: 'A user wants a branch, remix, or mutation without replacing the existing source.',
     keywords: ['variant', 'preserve', 'clone', 'branch', 'remix', 'lineage'],
     effect: 'page-apply',
+  },
+  {
+    id: 'seeded_composition',
+    kind: 'action',
+    version: FOGWOOD_SEEDED_COMPOSITION.algorithm_version,
+    title: 'Remix selected canvas matter reproducibly',
+    summary: 'Preserve exact stable native sources and create a bounded branch-cluster of seeded, separately editable variants in qualified open space.',
+    use_when: 'The user wants surprise, alternatives, remixing, mutation, or reproducible visual variation without overwriting the selected originals.',
+    keywords: ['seed', 'seeded', 'remix', 'mutate', 'variation', 'wildness', 'branch', 'cluster', 'palette', 'rhythm', 'rotation', 'open space', 'lineage'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.seeded_composition,
   },
   {
     id: 'canvas_ops.edit',
@@ -1766,6 +1831,7 @@ const PUBLIC_CAPABILITY_IDS = new Set([
   'canvas_ops.draw',
   'canvas_ops.connect',
   'canvas_ops.variant',
+  'seeded_composition',
   'canvas_ops.edit',
   'canvas_ops.arrange',
   'canvas_ops.group',
@@ -1856,6 +1922,7 @@ export type SetInstrumentInputsAction = {
 
 export type ProposalAction =
   | CanvasOpsAction
+  | NormalizedSeededCompositionAction
   | AddBlocksAction
   | AddShapesAction
   | ApplySpatialMovesAction
@@ -2000,6 +2067,17 @@ export type ProposalDiff = {
   removes: { ids: string[]; total: number; collateral_ids: string[]; descriptors: ProposalItemDescriptor[] };
   recipe_expansions: Array<{ id: string; version: 1 | 2; title: string; expected_count: number; operations: number; format?: string; composition_metrics?: ReturnType<typeof compositionQualification> }>;
   instrument_changes: ProposalInstrumentChangeScope[];
+  seeded_compositions: Array<{
+    grammar: 'remix';
+    algorithm_version: 1;
+    prng: 'xorshift32-v1';
+    seed: string | number;
+    wildness: number;
+    source_revision: string;
+    source_fingerprint: string;
+    layout: NormalizedSeededCompositionAction['layout'];
+    lineage: NormalizedSeededCompositionAction['lineage'];
+  }>;
   counts: { before: number; after: number; adds: number; updates: number; moves: number; removes: number };
   warnings: string[];
 };
@@ -2292,6 +2370,7 @@ export function buildProposalDiff(
   const removes: ProposalDiff['removes'] = { ids: [], total: 0, collateral_ids: [], descriptors: [] };
   const recipe_expansions: ProposalDiff['recipe_expansions'] = [];
   const instrument_changes: ProposalDiff['instrument_changes'] = [];
+  const seeded_compositions: ProposalDiff['seeded_compositions'] = [];
   const spatial_moves: ProposalDiff['spatial_moves'] = [];
   const spatial_creates: ProposalDiff['spatial_creates'] = [];
   const semantic_relationships: ProposalDiff['semantic_relationships'] = [];
@@ -2354,31 +2433,45 @@ export function buildProposalDiff(
     };
   };
   const removeClosure = (roots: readonly string[]) => descendantClosure(roots, context.items);
+  const projectCanvasPlan = (plan: CanvasOpPlan) => {
+    adds.shapes += plan.adds.length;
+    adds.specs.push(...plan.adds.map((addition) => ({
+      type: 'shape' as const,
+      kind: addition.kind,
+      label: addition.label,
+      x: addition.x,
+      y: addition.y,
+      w: addition.w,
+      h: addition.h,
+      semantic_id: addition.semantic_id,
+      ...(addition.role ? { role: addition.role } : {}),
+      ...(addition.variant_id ? { variant_id: addition.variant_id } : {}),
+      ...(addition.parent_variant_id ? { parent_variant_id: addition.parent_variant_id } : {}),
+      ...(addition.lineage_source_id ? { lineage_source_id: addition.lineage_source_id } : {}),
+    })));
+    updates.push(...plan.updates);
+    moves.push(...plan.moves);
+    for (const id of plan.removes) if (!removes.ids.includes(id)) removes.ids.push(id);
+  };
   for (const action of actions) {
     if (action.type === 'canvas_ops') {
       const result = planCanvasOps(context.items, action.ops, context.page_id);
-      if (result.ok) {
-        adds.shapes += result.plan.adds.length;
-        adds.specs.push(...result.plan.adds.map((addition) => ({
-          type: 'shape' as const,
-          kind: addition.kind,
-          label: addition.label,
-          x: addition.x,
-          y: addition.y,
-          w: addition.w,
-          h: addition.h,
-          semantic_id: addition.semantic_id,
-          ...(addition.role ? { role: addition.role } : {}),
-          ...(addition.variant_id ? { variant_id: addition.variant_id } : {}),
-          ...(addition.parent_variant_id ? { parent_variant_id: addition.parent_variant_id } : {}),
-          ...(addition.lineage_source_id ? { lineage_source_id: addition.lineage_source_id } : {}),
-        })));
-        updates.push(...result.plan.updates);
-        moves.push(...result.plan.moves);
-        for (const id of result.plan.removes) {
-          if (!removes.ids.includes(id)) removes.ids.push(id);
-        }
-      }
+      if (result.ok) projectCanvasPlan(result.plan);
+    }
+    if (action.type === 'seeded_composition') {
+      const result = planCanvasOps(context.items, action.ops, context.page_id);
+      if (result.ok) projectCanvasPlan(result.plan);
+      seeded_compositions.push({
+        grammar: action.grammar,
+        algorithm_version: action.algorithm_version,
+        prng: action.prng,
+        seed: action.seed,
+        wildness: action.wildness,
+        source_revision: action.source_revision,
+        source_fingerprint: action.source_fingerprint,
+        layout: action.layout,
+        lineage: action.lineage,
+      });
     }
     if (action.type === 'add_blocks') {
       adds.blocks += action.blocks.length;
@@ -2557,6 +2650,7 @@ export function buildProposalDiff(
     removes,
     recipe_expansions,
     instrument_changes,
+    seeded_compositions,
     counts: {
       before: context.items.length,
       after: context.items.length + adds.total - removes.total,
@@ -2616,6 +2710,61 @@ export function validateProposal(input: unknown, context: ProposalContext, optio
       }
       aggregateAdds += result.plan.adds.length;
       normalizedActions.push(result.plan.normalized_action);
+      continue;
+    }
+    if (raw.type === 'seeded_composition') {
+      if (actionList.length !== 1) addError(errors, 'SEEDED_COMPOSITION_MUST_BE_ALONE', 'seeded_composition must be the only action so every preserved variant remains one reviewed transaction.', path);
+      const isNormalized = 'algorithm_version' in raw
+        || 'source_revision' in raw
+        || 'target_semantic_ids' in raw
+        || 'lineage' in raw
+        || 'ops' in raw;
+      if (isNormalized && raw.source_scope !== 'selection' && raw.source_scope !== 'explicit') {
+        addError(errors, 'INVALID_SEEDED_PLAN', 'The normalized seeded composition has an invalid source scope.', `${path}.source_scope`);
+        continue;
+      }
+      const replaySelection = isNormalized && raw.source_scope === 'selection';
+      const request = isNormalized
+        ? {
+            type: 'seeded_composition',
+            scope: replaySelection
+              ? { kind: 'selection' as const }
+              : { kind: 'explicit' as const, semantic_ids: raw.target_semantic_ids },
+            seed: raw.seed,
+            wildness: raw.wildness,
+          }
+        : raw;
+      const replayContext = replaySelection
+        ? {
+            ...context,
+            selection_semantic_ids: raw.target_semantic_ids as readonly string[],
+            selection_complete: true,
+            selection_total: Array.isArray(raw.target_semantic_ids) ? raw.target_semantic_ids.length : 0,
+          }
+        : context;
+      const seeded = planSeededComposition(replayContext, request);
+      if (!seeded.ok) {
+        for (const error of seeded.errors) addError(errors, error.code, error.message, error.path ? `${path}.${error.path}` : path);
+        continue;
+      }
+      const normalized = seeded.plan.normalized_action;
+      if (isNormalized) {
+        const normalizedKeys = [
+          'type', 'grammar', 'algorithm_version', 'prng', 'source_revision', 'source_scope', 'source_fingerprint',
+          'seed', 'wildness', 'target_semantic_ids', 'layout', 'lineage', 'ops',
+        ];
+        if (!hasOnlyKeys(raw, normalizedKeys) || canonicalSerialize(raw) !== canonicalSerialize(normalized)) {
+          addError(errors, 'INVALID_SEEDED_PLAN', 'The normalized seeded composition no longer matches the exact current source state and algorithm version.', path);
+          continue;
+        }
+      }
+      const canvas = planCanvasOps(context.items, normalized.ops, context.page_id);
+      if (!canvas.ok) {
+        for (const error of canvas.errors) addError(errors, error.code, error.message, `${path}.${error.path}`);
+        continue;
+      }
+      aggregateAdds += canvas.plan.adds.length;
+      normalizedActions.push(normalized);
       continue;
     }
     if (raw.type === 'clear_surface') {

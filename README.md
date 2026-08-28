@@ -23,7 +23,8 @@ Fogwood registers exactly three page tools:
 - `fogwood-propose` stages one proposal bound to both inspected values. It never
   mutates the page; the person must choose Apply or Reject in Fogwood.
 
-`fogwood-propose` accepts a composable `canvas_ops` action. One call may mix:
+`fogwood-propose` accepts a composable `canvas_ops` action or one bounded
+`seeded_composition` remix. A Canvas Protocol call may mix:
 
 - `create` and `draw`
 - `connect` two exact targets with a native bound arrow
@@ -40,6 +41,27 @@ branch, connect, arrange, style, group, and order a composition in one reviewed 
 against the live revision immediately before Apply, commits the accepted batch
 inside one editor transaction and one undo step, and leaves Reject side-effect
 free.
+
+## Seeded composition grammar
+
+`seeded_composition` is a small reproducible remix grammar for one to eight
+selected or explicitly named native shapes. It preserves every source and
+stages separately editable variants in bounded open space. A seed controls the
+branch-cluster arrangement, rhythm, palette, scale, rotation, and spacing; a
+`wildness` value from 0 to 1 bounds how far the variants depart from their
+sources. The exact seed, algorithm version, PRNG, source revision, source
+fingerprint, open-space decision, and source-to-variant lineage are visible in
+the staged proposal and bound into its receipts.
+
+The same seed, algorithm version, and inspected input reproduce the same plan.
+Different seeds vary presentation but do not change source facts, semantic
+identity, safety checks, permissions, or Apply authority. Seed text is inert
+data and Fogwood uses the versioned `xorshift32-v1` generator rather than
+`Math.random()`. Locked or nested targets fail closed; ordinary manual geometry
+is never moved. Exact clone-relevant source data is fingerprinted, and final
+rotated footprints must avoid both current matter and sibling variants before a
+side qualifies as open space. Remix is therefore preserved branching, not
+randomized replacement.
 
 This dispatcher is intentionally smaller than 213 individually registered
 tools. Every pinned Example has an immutable callable Route, while eight deep
@@ -75,10 +97,12 @@ downloads or executes Example source.
 The raw arrow Example does not certify bound-arrow behavior; the connector
 Adapter is separately qualified against the installed tldraw binding APIs.
 
-The `fogwood.capability.v1` manifest schema currently carries ontology version
-2 and qualifies nine local Capabilities: create, draw, edit, delete, arrange,
-create a native bound connector, create a preserved variant, group/ungroup, and
-reorder. Connector and variant adapters were promoted from real request traces:
+The `fogwood.capability.v1` planning ontology currently carries version 2 and
+qualifies nine local Capabilities: create, draw, edit, delete, arrange, create a
+native bound connector, create a preserved variant, group/ungroup, and reorder.
+Reproducible seeded remixing is a separately discoverable compositional action;
+v1 deliberately does not let a seed enter capability routing. Connector and
+variant adapters were promoted from real request traces:
 "Connect these selected ideas" and "Make a preserved variant of this selected
 idea." A specific variant match supersedes generic creation rather than
 producing two competing steps. `available`, `plan`, and `route` modes require the inspected
