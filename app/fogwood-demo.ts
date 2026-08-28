@@ -191,7 +191,7 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
       className: 'is-unavailable',
       label: 'ChatGPT host tools unavailable',
       detail: controllerReady
-        ? 'WebMCP is not exposed in this tab. You can still stage local compositions from the page; a host must separately expose and successfully call the four page tools.'
+        ? 'WebMCP is not exposed in this tab. You can still use the local canvas; a host must separately expose and successfully call the three page tools.'
         : 'WebMCP is not exposed in this tab yet. Wait for the page controller, then local composition staging remains available even without host tools.',
       canStageLocally: controllerReady,
     };
@@ -200,7 +200,7 @@ function hostModel(connection: DemoConnection, controllerReady: boolean): Guided
     return {
       className: 'is-connecting',
       label: 'Registering Fogwood tools',
-      detail: 'The WebMCP interface is available. Fogwood is registering its four bounded inspect, capability, proposal, and Bazaar tools.',
+      detail: 'The WebMCP interface is available. Fogwood is registering its three bounded inspect, capability, and proposal tools.',
       canStageLocally: controllerReady,
     };
   }

@@ -1,102 +1,126 @@
 # Fogwood
 
-Fogwood is a device-local, WebMCP-enabled tldraw canvas where a person and an
-agent shape the same editable artifact. Fogwood turns Codex capabilities into
-editable matter: native shapes, semantic arrows, bounded materials, spatial
-moves, and lineage remain visible on the page instead of being flattened into
-a dashboard or a generated preview.
+Fogwood is an empty, device-local tldraw canvas that Codex can shape through a
+small WebMCP protocol. It does not begin with a dashboard, template gallery, or
+generated composition. The person starts with the ordinary tldraw surface;
+Codex inspects it, discovers relevant canvas capabilities, and stages editable
+native matter for the person to apply or reject.
 
-The default path is the local, declarative `composition.v2` medium. Three
-signature recipes lead the Bazaar:
+The first version deliberately has one job: turn the broad tldraw SDK Example
+corpus into one dynamic semantic control surface without registering hundreds
+of unrelated page tools or exposing the raw Editor API.
 
-- `fogwood.fungi-cities-research-world@2` — fungal and urban clusters, bridges,
-  evidence/analogy separation, questions, a systems diagram, a speculative
-  timeline, and an open image provocation.
-- `fogwood.evidence-constellation@2` — claims, sources, counterarguments, and
-  questions connected by typed `supports`, `contradicts`, and `depends_on`
-  relationships.
-- `fogwood.storyworld-mutation-map@2` — branching places, rules, factions,
-  portals, tensions, scenes, and a preserved variant lineage.
+## WebMCP Canvas Protocol
 
-The four original block recipes remain local, hash-pinned regression fixtures
-under **Block regression fixtures**. They are retained for compatibility, not
-as the first-run product narrative.
+Fogwood registers exactly three page tools:
 
-## Codex participation contract
+- `fogwood-inspect` reads the current page, stable semantic IDs, relationships,
+  asset metadata, selection, an opaque content revision, and a separate opaque
+  context token for ephemeral selection/tool/mode state.
+- `fogwood-capabilities` searches the pinned official tldraw Example corpus,
+  reports contextual native commands, or uses `route` mode to resolve and
+  compose any of the 213 pinned examples through a bounded Adapter Family.
+- `fogwood-propose` stages one proposal bound to both inspected values. It never
+  mutates the page; the person must choose Apply or Reject in Fogwood.
 
-The page owns the artifact and the human decision boundary. A Codex session
-should:
+`fogwood-propose` accepts a composable `canvas_ops` action. One call may mix:
 
-1. Inspect the live canvas and spatial state first.
-2. Discover bounded materials and moves, then inspect the actual host tools and
-   skills just in time. Never claim a host capability without observing it.
-3. Use relevant research, code, image, SVG, data, document, and visualization
-   capabilities outside Fogwood when they are genuinely available.
-4. Return only constrained bytes or data through the Fogwood proposal bridge.
-   Live image bytes, if actually produced, enter through `add_materials`; no
-   generated image is bundled in this repository.
-5. Stage a revision-pinned proposal and stop for the page-owned Apply/Reject
-   decision. The agent never applies a proposal.
-6. Inspect again after human manipulation, then branch, mutate, annotate, or
-   remix. Preserve prior matter and lineage instead of overwriting it.
+- `create` and `draw`
+- `connect` two exact targets with a native bound arrow
+- `variant` one exact source while preserving the source and recording lineage
+- `update` and `resize`
+- `align`, `distribute`, `stack`, and `pack`
+- `group` and `ungroup`
+- `reorder`
+- `delete`
 
-Page registration, host exposure, conversation inventory, and successful tool
-call evidence are separate observations. A registered page tool does not prove
-that the current host can see or call it.
+Created or branched matter receives a stable semantic ID. Later operations in
+the same proposal can target it with `semantic:<id>`, so Codex can create,
+branch, connect, arrange, style, group, and order a composition in one reviewed transaction. The page replans
+against the live revision immediately before Apply, commits the accepted batch
+inside one editor transaction and one undo step, and leaves Reject side-effect
+free.
 
-## WebMCP surface
+This dispatcher is intentionally smaller than 213 individually registered
+tools. Every pinned Example has an immutable callable Route, while eight deep
+Adapter Families own the actual seams: native canvas, local material/artifact,
+editor introspection, control plane, trusted extension/compound, local
+persistence, collaboration/identity, and external artifact handoff. The model
+interprets intent; deterministic code selects, orders, limits, and explains the
+Routes. Routing never stages or mutates the page.
 
-Fogwood exposes exactly four page tools through
-`document.modelContext.registerTool`:
+The compiler separates three continuations instead of inventing complete
+calls: schema-valid local read calls, bounded proposal contracts that Codex must
+fill from inspected canvas facts, and explicit host requirements. The 180
+bounded Routes share deep family adapters; they are not 180 wrappers around
+upstream source or claims of demonstration-equivalent behavior.
 
-- `fogwood-inspect` — read bounded live page state, semantic regions,
-  relationships, assets, and the opaque content revision.
-- `fogwood-capabilities` — search the bounded host-facing capability contract.
-- `fogwood-propose` — validate and stage a typed proposal; it never mutates.
-- `fogwood-bazaar` — exact-pinned, read-only search/read of local data-only
-  packages.
+## Capability ontology and Example corpus
 
-All page mutation goes through the existing proposal lifecycle and page-owned
-Apply/Reject transaction. A composition insert creates native shapes and typed
-relationship arrows in one undo step.
+The local Example corpus covers all 213 entries observed in the official
+tldraw examples source at commit
+`a30c9c8b9c16555d91625e8137826496326898cf`. Each record has one
+`fogwood.example-route.v1` descriptor with its family, adapter, execution lane,
+fidelity, concrete lowering seam, allowed operations, source evidence, and
+qualification boundary. The compiler fails closed if the pinned 213-path
+fingerprint, source commit, or path-to-family matrix fingerprint changes.
 
-## Bazaar vocabulary
+All 213 Routes are callable through `fogwood-capabilities`; source-path intent
+can select every exact Route and compound intent can mix Routes from multiple
+families. Only three Routes currently claim exact Example-to-local-primitive
+equivalence: align/distribute, native arrow creation, and z-order. Other Routes
+state whether they use a bounded native equivalent, a local read/material seam,
+or an observed host/artifact handoff. The corpus is data only; Fogwood never
+downloads or executes Example source.
+The raw arrow Example does not certify bound-arrow behavior; the connector
+Adapter is separately qualified against the installed tldraw binding APIs.
 
-The Bazaar contains data-only materials, moves, adapters, aesthetics,
-algorithms, provocations, compositional recipes, qualification fixtures, and
-examples. Catalog entries are local, bounded, canonically hashed, and code-
-free. Recipe reads require the exact package ID, version, content hash, and
-catalog revision. The page CTA is **Stage composition for review**.
+The `fogwood.capability.v1` manifest schema currently carries ontology version
+2 and qualifies nine local Capabilities: create, draw, edit, delete, arrange,
+create a native bound connector, create a preserved variant, group/ungroup, and
+reorder. Connector and variant adapters were promoted from real request traces:
+"Connect these selected ideas" and "Make a preserved variant of this selected
+idea." A specific variant match supersedes generic creation rather than
+producing two competing steps. `available`, `plan`, and `route` modes require the inspected
+`base_revision` and `context_token`. Planning also accepts bounded intent,
+scope, optional desired effects, an explicit planned-item count when new matter
+must satisfy target preconditions, and a step limit. It returns an ordered Plan,
+supporting Examples, explicit execution policy, and the next `fogwood-propose`
+call. Pure shadow planning may be speculative; host calls, proposal staging,
+and page Apply never are.
 
-## First run
+Fogwood is a dynamic semantic control surface over tldraw, not a remote Editor
+SDK. Context changes which Capabilities are valid, while the three WebMCP
+transport tools stay stable. The content revision covers page-authoritative
+records; the context token independently covers bounded selection, tool,
+read-only, focus, and editing state. Availability and Route selection are advisory and never replace
+execution-time precondition checks. A later change ledger or attention relay can
+build on this pair without expanding the v0.1 mutation surface.
 
-The blank surface is intentionally sparse: start with a ball of clay and a
-fungi/cities spatial seed, sketch before knowing, and leave open space for
-later material. Two quieter alternatives are the evidence constellation and
-storyworld mutation map. Each CTA stages a proposal for review; it never
-auto-applies. Compare & Decide is reachable only as a clearly labelled legacy
-regression fixture.
+## Trust boundary
 
-## Trust and qualification boundaries
+- Canvas content and accepted assets stay device-local.
+- WebMCP staging cannot apply its own proposal.
+- Every mutation is bounded, revision- and context-pinned before stage, and
+  revalidated against page content before Apply.
+- Locked shapes, locked ancestors, and locked descendants of indirectly changed
+  containers fail before the editor transaction.
+- Final shape footprints—not only their anchor coordinates—must remain inside
+  the bounded page envelope.
+- Rotation changes on already rotated shapes fail closed until the inspected
+  model carries exact shape-local geometry instead of only page-axis-aligned
+  bounds.
+- Generated JavaScript, HTML, remote embeds, implicit fetches, and active SVG
+  content are not accepted.
+- Page registration, host exposure, conversation inventory, and a successful
+  call are separate evidence layers.
+- `callable` means the Route compiler accepts and explains that exact Example;
+  it does not mean Fogwood executed upstream source or that a required
+  host/provider is currently present.
 
-- Canvas content, image bytes, and receipts stay device-local.
-- Bazaar packages contain only bounded data, prompts, examples, fixtures, and
-  provenance. They cannot provide executable code, HTML, CSS, scripts,
-  formulas, embeds, fetches, or remote loaders.
-- Composition adapters, aesthetics, and algorithms reference host-owned IDs
-  only. Expansion is deterministic and uses native shape and spatial seams.
-- Every proposal is revision-pinned. Apply rechecks the page and records one
-  undoable transaction; Reject changes nothing.
-- Local checks do not certify host exposure, a live image provider, deployment,
-  publication, or a human decision. Those require direct evidence at the
-  relevant boundary.
-
-The fungi/cities source notes include these primary references in the bounded
-recipe content:
-
-- <https://www.nature.com/articles/s41563-021-01123-y>
-- <https://www.nature.com/articles/s41563-022-01429-5>
-- <https://repository.naturalis.nl/pub/800999/Verbeek-2025-Arbuscular-mycorrhiza-A.pdf>
+The existing blocks, instruments, receipts, materials, compositions, and
+Bazaar packages remain regression-tested internal modules. They are no longer
+the public first-run experience.
 
 ## Run locally
 
@@ -108,8 +132,7 @@ npm run dev
 ```
 
 `TLDRAW_LICENSE_KEY` may be supplied through local environment configuration
-when required by your tldraw license. Do not commit license keys or other
-credentials.
+when required by your tldraw license. Do not commit license keys or credentials.
 
 ## Verify
 
@@ -122,7 +145,10 @@ node scripts/compile-bazaar.mjs --check
 git diff --check
 ```
 
+The current acceptance evidence and explicit qualification boundaries live in
+[`acceptance.md`](acceptance.md).
+
 ## License
 
-Fogwood is available under the [MIT License](LICENSE). tldraw's bundled
-license notice is preserved separately in `public/tldraw-LICENSE.md`.
+Fogwood is available under the [MIT License](LICENSE). tldraw's bundled license
+notice is preserved separately in `public/tldraw-LICENSE.md`.

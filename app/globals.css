@@ -2495,3 +2495,99 @@ select {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Public Fogwood shell: the canvas is the product. Everything else appears
+   only when a proposal needs a page-owned decision or a local error occurs. */
+.surface-shell {
+  display: block;
+  background: #ffffff;
+  transition: none;
+}
+
+.surface-mark {
+  top: 10px;
+  min-height: 30px;
+  gap: 7px;
+  padding: 5px 10px;
+  border-color: rgba(28, 31, 27, 0.1);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 6px 22px rgba(24, 27, 23, 0.06);
+  font-size: 11px;
+  backdrop-filter: blur(12px);
+}
+
+.surface-mark-dot {
+  width: 6px;
+  height: 6px;
+  background: #5c8a61;
+  box-shadow: 0 0 0 3px rgba(92, 138, 97, 0.12);
+}
+
+.surface-mark.is-checking .surface-mark-dot,
+.surface-mark.is-partial .surface-mark-dot {
+  background: #b28b45;
+  box-shadow: 0 0 0 3px rgba(178, 139, 69, 0.13);
+}
+
+.surface-mark.is-unavailable .surface-mark-dot {
+  background: #92968e;
+  box-shadow: 0 0 0 3px rgba(146, 150, 142, 0.12);
+}
+
+.proposal-dock {
+  position: absolute;
+  z-index: 700;
+  right: 12px;
+  bottom: 12px;
+  width: min(390px, calc(100vw - 24px));
+  max-height: min(680px, calc(100vh - 24px));
+  overflow: auto;
+  border: 1px solid rgba(24, 27, 23, 0.13);
+  border-radius: 17px;
+  background: rgba(255, 254, 250, 0.97);
+  box-shadow: 0 24px 70px rgba(24, 27, 23, 0.18), 0 4px 16px rgba(24, 27, 23, 0.07);
+  backdrop-filter: blur(18px);
+}
+
+.proposal-dock .proposal-review {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.surface-notice {
+  position: absolute;
+  z-index: 680;
+  right: 12px;
+  bottom: 12px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 9px 12px;
+  border: 1px solid rgba(24, 27, 23, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 34px rgba(24, 27, 23, 0.1);
+  color: #5d625a;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: left;
+  backdrop-filter: blur(12px);
+}
+
+.proposal-dock + .surface-notice {
+  right: 414px;
+}
+
+@media (max-width: 840px) {
+  .surface-mark {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .proposal-dock + .surface-notice {
+    right: 12px;
+    bottom: auto;
+    top: 52px;
+  }
+}

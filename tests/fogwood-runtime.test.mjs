@@ -2,8 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CAPABILITY_REGISTRY,
+  FOGWOOD_CONTEXT_VERSION,
   PROPOSAL_INPUT_SCHEMA,
+  PROPOSAL_TOOL_INPUT_SCHEMA,
   RECIPE_REGISTRY,
+  buildContextProjection,
+  canonicalSerialize,
+  computeContextToken,
   computePageRevision,
   createProposalController,
   deterministicHash,
@@ -81,18 +86,109 @@ test('revision canonicalization is stable and excludes camera and selection by c
   assert.notEqual(first, computePageRevision('page:main', [...shapes, { id: 'shape:c', type: 'geo', props: {}, x: 3 }], bindings));
 });
 
+test('bounded context projection hashes ephemeral semantic state separately from content revision', () => {
+  const base = {
+    page_id: 'page:main',
+    selected_ids: ['shape:a', 'shape:b'],
+    current_tool_id: 'select',
+    current_tool_path: 'select.idle',
+    readonly: false,
+    focused_group_id: null,
+    editing_shape_id: null,
+    ontology_version: 1,
+    registry_version: '4',
+  };
+  const projection = buildContextProjection(base);
+  assert.equal(projection.schema, FOGWOOD_CONTEXT_VERSION);
+  assert.deepEqual(projection.selected_ids, ['shape:a', 'shape:b']);
+  assert.equal(computeContextToken(projection), deterministicHash(canonicalSerialize(projection)));
+  const token = computeContextToken(projection);
+  for (const change of [
+    { selected_ids: ['shape:b', 'shape:a'] },
+    { current_tool_id: 'draw' },
+    { current_tool_path: 'root.draw.drawing' },
+    { readonly: true },
+    { focused_group_id: 'group:one' },
+    { editing_shape_id: 'shape:a' },
+  ]) {
+    assert.notEqual(computeContextToken(buildContextProjection({ ...base, ...change })), token);
+  }
+  const withEphemeralExcluded = buildContextProjection({ ...base, camera: { x: 100, y: 200, z: 2 }, viewport: { x: 1, y: 2, w: 3, h: 4 }, hover: 'shape:a', extensions: ['future'] });
+  assert.deepEqual(withEphemeralExcluded, projection);
+});
+
+test('context selection digest is bounded to 5000 IDs and previews 128 with completeness', () => {
+  const ids = Array.from({ length: 5_001 }, (_, index) => `shape:${index}`);
+  const projection = buildContextProjection({
+    page_id: 'page:main',
+    selected_ids: ids,
+    readonly: false,
+    focused_group_id: null,
+    editing_shape_id: null,
+    ontology_version: 1,
+    registry_version: '4',
+  });
+  assert.equal(projection.selected_ids.length, 5_000);
+  assert.equal(projection.selected_ids_preview.length, 128);
+  assert.deepEqual(projection.selection_completeness, { complete: false, truncated: true, total: 5_001, returned: 128, limit: 128 });
+  assert.deepEqual(projection.selected_ids_digest_completeness, { complete: false, truncated: true, total: 5_001, returned: 5_000, limit: 5_000 });
+});
+
 test('capability search is deterministic, bounded, and paginated', () => {
   assert.equal(CAPABILITY_REGISTRY.some((entry) => entry.id === 'fogwood-inspect'), true);
   const first = searchCapabilities({ page_size: 3 });
   assert.equal(first.results.length, 3);
   assert.equal(first.has_more, true);
   const second = searchCapabilities({ page_size: 3, cursor: first.next_cursor });
-  assert.equal(second.results[0].id, CAPABILITY_REGISTRY[3].id);
+  assert.equal(first.results.some((entry) => second.results.some((next) => next.id === entry.id)), false);
   const recipes = searchCapabilities({ kind: 'recipe', query: 'architecture', page_size: 20 });
-  assert.deepEqual(recipes.results.map((entry) => entry.id), ['static-architecture-map']);
-  const bazaar = searchCapabilities({ kind: 'tool', query: 'bazaar', page_size: 20 });
-  assert.deepEqual(bazaar.results.map((entry) => entry.id), ['fogwood-bazaar']);
+  assert.deepEqual(recipes.results, []);
+  const protocol = searchCapabilities({ kind: 'action', query: 'draw align group reorder', page_size: 20 });
+  assert.deepEqual(protocol.results.map((entry) => entry.id), ['canvas_ops']);
   assert.equal(JSON.stringify(first).includes('function'), false);
+});
+
+test('the existing capability tool exposes bounded planning and full-surface routing without adding another tool', () => {
+  const tool = CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-capabilities');
+  const branches = tool.input_schema.oneOf;
+  assert.deepEqual(branches.map((branch) => branch.properties.mode.const), ['search', 'available', 'plan', 'route']);
+  const available = branches.find((branch) => branch.properties.mode.const === 'available');
+  const plan = branches.find((branch) => branch.properties.mode.const === 'plan');
+  const route = branches.find((branch) => branch.properties.mode.const === 'route');
+  assert.deepEqual(Object.keys(available.properties), ['mode', 'base_revision', 'context_token']);
+  assert.deepEqual(available.required, ['mode', 'base_revision', 'context_token']);
+  assert.deepEqual(plan.properties.scope.enum, ['new', 'selection', 'page']);
+  assert.deepEqual(route.properties.scope.enum, ['new', 'selection', 'page']);
+  assert.equal(route.properties.example_ids.maxItems, 24);
+  assert.deepEqual(plan.properties.desired_effects.items.enum, [
+    'matter.created',
+    'matter.variant.created',
+    'mark.drawn',
+    'matter.edited',
+    'matter.deleted',
+    'geometry.arranged',
+    'connector-arrow.created',
+    'structure.grouped',
+    'layer.order.changed',
+  ]);
+  assert.equal(plan.properties.intent.maxLength, 500);
+  assert.equal(plan.properties.base_revision.maxLength, 120);
+  assert.deepEqual(plan.properties.planned_item_count, {
+    type: 'integer',
+    minimum: 0,
+    maximum: 24,
+  });
+  assert.deepEqual(plan.properties.context_token, { type: 'string', minLength: 1, maxLength: 64 });
+  assert.equal(PROPOSAL_INPUT_SCHEMA.properties.context_token, undefined);
+  assert.deepEqual(PROPOSAL_TOOL_INPUT_SCHEMA.properties.context_token, { type: 'string', minLength: 1, maxLength: 64 });
+});
+
+test('capability search returns canonical ontology manifests rather than only example names', () => {
+  const result = searchCapabilities({ kind: 'capability', query: 'arrange geometry', page_size: 10 });
+  assert.deepEqual(result.results.map((entry) => entry.id), ['layout.arrange']);
+  assert.equal(result.results[0].manifest.schema, 'fogwood.capability.v1');
+  assert.deepEqual(result.results[0].manifest.effects, ['geometry.arranged']);
+  assert.deepEqual(result.results[0].manifest.adapter.operations, ['align', 'distribute', 'stack', 'pack']);
 });
 
 test('immutable recipes are versioned and their expected counts match their operations', () => {
@@ -262,15 +358,12 @@ test('locked ancestors make update, place, remove, and clear proposals atomic', 
   assert.equal(removal.diff.removes.descriptors.length, 3);
 });
 
-test('proposal schema exposes all strict action variants and bounded nested values', () => {
+test('public proposal schema exposes only the compact Canvas Protocol and safe local materials', () => {
   const actionItems = PROPOSAL_INPUT_SCHEMA.properties.actions.items.oneOf;
-  assert.equal(actionItems.length, 11);
-  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['add_blocks', 'add_shapes', 'apply_spatial_moves', 'add_relationships', 'add_materials', 'update_blocks', 'place_items', 'remove_items', 'clear_surface', 'insert_recipe', 'set_instrument_inputs']);
-  const blockSchema = actionItems[0].properties.blocks.items;
-  assert.equal(blockSchema.properties.items.items.additionalProperties, false);
-  assert.equal(blockSchema.properties.series.items.additionalProperties, false);
-  assert.equal(blockSchema.properties.rows.items.items.type, 'string');
-  assert.deepEqual(CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-propose').input_schema, PROPOSAL_INPUT_SCHEMA);
+  assert.equal(PROPOSAL_INPUT_SCHEMA.properties.actions.maxItems, 1);
+  assert.deepEqual(actionItems.map((schema) => schema.properties.type.const), ['canvas_ops', 'add_materials']);
+  assert.deepEqual(CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-propose').input_schema, PROPOSAL_TOOL_INPUT_SCHEMA);
+  assert.equal(searchCapabilities({ kind: 'action', page_size: 20 }).results.every((entry) => ['canvas_ops', 'add_materials'].includes(entry.id)), true);
   assert.equal(CAPABILITY_REGISTRY.find((entry) => entry.id === 'primitive.surface-block').input_schema.type, 'string');
   const injectedInstrument = validateProposal({
     base_revision: emptyContext.current_revision,

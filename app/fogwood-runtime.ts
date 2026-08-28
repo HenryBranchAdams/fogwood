@@ -9,7 +9,19 @@
 import { applyInstrumentInputChanges } from './fogwood-instrument-adapter.ts';
 import type { InstrumentInputChange, InstrumentShapeLike } from './fogwood-instrument-adapter.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { BAZAAR_CATALOG, FOGWOOD_BAZAAR_CAPABILITY } from './fogwood-bazaar.ts';
+import { BAZAAR_CATALOG } from './fogwood-bazaar.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { CANVAS_OPS_ACTION_SCHEMA, FOGWOOD_CANVAS_PROTOCOL, planCanvasOps } from './fogwood-canvas-ops.ts';
+import type { CanvasOpsAction } from './fogwood-canvas-ops.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { TLDRAW_EXAMPLE_CATALOG } from './fogwood-tldraw-capabilities.ts';
+import type { TldrawExampleStatus } from './fogwood-tldraw-capabilities.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_FULL_SURFACE_VERSION, getFullSurfaceRoute } from './fogwood-capability-compiler.ts';
+import type { FullSurfaceRoute } from './fogwood-capability-compiler.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_CAPABILITY_EFFECTS, FOGWOOD_CAPABILITY_ONTOLOGY, FOGWOOD_CAPABILITY_ONTOLOGY_VERSION, FOGWOOD_CAPABILITY_PLANNED_ITEM_LIMIT } from './fogwood-capability-planner.ts';
+import type { FogwoodCapabilityManifest } from './fogwood-capability-planner.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { isPreparedMaterial, prepareMaterials, MATERIAL_LIMITS, MATERIAL_TEXT_LIMITS } from './fogwood-materials.ts';
 import type { MaterialInput, MaterialDecoder, PreparedMaterial } from './fogwood-materials.ts';
@@ -21,9 +33,12 @@ import { COMPOSITION_FORMAT, compositionQualification, expandCompositionRecipe, 
 import type { CompositionRecipe } from './fogwood-composition.ts';
 
 export const FOGWOOD_PROTOCOL = 'fogwood-agent-runtime';
-export const FOGWOOD_PROTOCOL_VERSION = '1';
-export const FOGWOOD_REGISTRY_VERSION = '1';
+export const FOGWOOD_PROTOCOL_VERSION = '2';
+export const FOGWOOD_REGISTRY_VERSION = '6';
 export const FOGWOOD_PROPOSAL_VERSION = '1';
+export const FOGWOOD_CONTEXT_VERSION = 'fogwood.context.v1' as const;
+export const FOGWOOD_CONTEXT_SELECTION_LIMIT = 5_000 as const;
+export const FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT = 128 as const;
 export { COMPOSITION_FORMAT, compositionQualification, expandCompositionRecipe, isCompositionRecipe, validateCompositionRecipe };
 export const CLEAR_SURFACE_PHRASE = 'clear the surface';
 
@@ -32,6 +47,11 @@ export const FOGWOOD_PARTICIPATION_CONTRACT = {
   inspect_live_canvas_first: true,
   discover_bounded_materials_and_moves: true,
   inspect_actual_host_capabilities_just_in_time: true,
+  use_fogwood_canvas_protocol_to_mix_bounded_editor_operations: true,
+  all_official_tldraw_examples_have_callable_routes: true,
+  route_fidelity_and_live_authority_are_reported_separately: true,
+  plan_qualified_capabilities_against_the_inspected_revision: true,
+  example_source_is_indexed_as_data_not_executed_as_code: true,
   separate_page_registration_host_exposure_conversation_inventory_successful_call: true,
   use_external_capabilities_only_when_observed: true,
   return_only_constrained_bytes_or_data_through_proposal_bridge: true,
@@ -146,6 +166,7 @@ export type InspectableItem = {
   opacity?: number;
   index?: string;
   semantic_id?: string;
+  binding_count?: number;
   meta?: FogwoodMeta;
   props?: JsonRecord;
   text?: string;
@@ -234,6 +255,119 @@ export function deterministicHash(value: string) {
   const secondary = fnv1a32(`fogwood-secondary|${value}`, 0x9e3779b9);
   return `${primary.toString(16).padStart(8, '0')}${secondary.toString(16).padStart(8, '0')}`;
 }
+
+export type FogwoodContextProjectionInput = Readonly<{
+  page_id: string;
+  selected_ids?: readonly unknown[];
+  current_tool_id?: unknown;
+  current_tool_path?: unknown;
+  readonly?: unknown;
+  focused_group_id?: unknown;
+  editing_shape_id?: unknown;
+  ontology_version?: unknown;
+  registry_version?: unknown;
+}>;
+
+export type FogwoodContextCompleteness = Readonly<{
+  complete: boolean;
+  truncated: boolean;
+  total: number;
+  returned: number;
+  limit: number;
+}>;
+
+export type FogwoodContextProjection = Readonly<{
+  schema: typeof FOGWOOD_CONTEXT_VERSION;
+  page_id: string;
+  selected_ids: readonly string[];
+  selected_ids_preview: readonly string[];
+  selection_completeness: FogwoodContextCompleteness;
+  selected_ids_digest_completeness: FogwoodContextCompleteness;
+  current_tool_id: string | null;
+  current_tool_path: string | null;
+  readonly: boolean;
+  focused_group_id: string | null;
+  editing_shape_id: string | null;
+  ontology_version: number;
+  registry_version: string;
+}>;
+
+function contextId(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, 180) : null;
+}
+
+function boundedContextIds(value: unknown): { ids: string[]; total: number } {
+  if (!Array.isArray(value)) return { ids: [], total: 0 };
+  const total = value.length;
+  const ids: string[] = [];
+  const limit = Math.min(total, FOGWOOD_CONTEXT_SELECTION_LIMIT);
+  for (let index = 0; index < limit; index += 1) {
+    if (!(index in value)) {
+      ids.push('');
+      continue;
+    }
+    const candidate = value[index];
+    ids.push(typeof candidate === 'string' ? candidate.slice(0, 180) : '');
+  }
+  return { ids, total };
+}
+
+/**
+ * Build the bounded ephemeral context projection used by semantic planning.
+ * Content records, camera, viewport, hover state, and extension payloads are
+ * intentionally absent so this token cannot replace the authoritative content
+ * revision or become an unbounded host-state digest.
+ */
+export function buildContextProjection(input: FogwoodContextProjectionInput): FogwoodContextProjection {
+  const selected = boundedContextIds(input?.selected_ids);
+  const preview = selected.ids.slice(0, FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT);
+  const previewComplete = selected.total <= FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT;
+  const digestComplete = selected.total <= FOGWOOD_CONTEXT_SELECTION_LIMIT;
+  return Object.freeze({
+    schema: FOGWOOD_CONTEXT_VERSION,
+    page_id: typeof input?.page_id === 'string' ? input.page_id.slice(0, 180) : '',
+    selected_ids: Object.freeze(selected.ids),
+    selected_ids_preview: Object.freeze(preview),
+    selection_completeness: Object.freeze({
+      complete: previewComplete,
+      truncated: !previewComplete,
+      total: selected.total,
+      returned: preview.length,
+      limit: FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT,
+    }),
+    selected_ids_digest_completeness: Object.freeze({
+      complete: digestComplete,
+      truncated: !digestComplete,
+      total: selected.total,
+      returned: selected.ids.length,
+      limit: FOGWOOD_CONTEXT_SELECTION_LIMIT,
+    }),
+    current_tool_id: contextId(input?.current_tool_id),
+    current_tool_path: contextId(input?.current_tool_path),
+    readonly: input?.readonly === true,
+    focused_group_id: contextId(input?.focused_group_id),
+    editing_shape_id: contextId(input?.editing_shape_id),
+    ontology_version: typeof input?.ontology_version === 'number' && Number.isInteger(input.ontology_version)
+      ? input.ontology_version
+      : FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
+    registry_version: typeof input?.registry_version === 'string' && input.registry_version.length > 0
+      ? input.registry_version.slice(0, 64)
+      : FOGWOOD_REGISTRY_VERSION,
+  });
+}
+
+export const projectFogwoodContext = buildContextProjection;
+
+export function computeContextToken(
+  value: FogwoodContextProjection | FogwoodContextProjectionInput,
+) {
+  // Re-project even when callers pass a projection-shaped object so future or
+  // accidental camera/viewport/extension fields can never enter this digest.
+  const projection = buildContextProjection(value as FogwoodContextProjectionInput);
+  return deterministicHash(canonicalSerialize(projection));
+}
+
+export const fogwoodContextToken = computeContextToken;
 
 export function computeRevision(content: unknown) {
   const serialized = canonicalSerialize(content);
@@ -865,7 +999,7 @@ type CapabilitySchema = JsonRecord;
 
 export type Capability = {
   id: string;
-  kind: 'tool' | 'action' | 'primitive' | 'recipe';
+  kind: 'tool' | 'action' | 'primitive' | 'capability' | 'recipe' | 'example';
   version: number;
   title: string;
   summary: string;
@@ -874,6 +1008,13 @@ export type Capability = {
   effect: 'read-only' | 'stage-only' | 'page-apply';
   input_schema?: CapabilitySchema;
   recipe?: AnyRecipeDefinition;
+  status?: TldrawExampleStatus;
+  mapped_capability_ids?: readonly string[];
+  boundary?: string;
+  category?: string;
+  source_url?: string;
+  manifest?: FogwoodCapabilityManifest;
+  route?: FullSurfaceRoute;
 };
 
 export const INSPECT_INPUT_SCHEMA: CapabilitySchema = {
@@ -1071,6 +1212,7 @@ const actionSchema = (field: string, maxItems: number, itemSchema: CapabilitySch
 });
 
 const exactActionSchemas: Record<string, CapabilitySchema> = {
+  canvas_ops: CANVAS_OPS_ACTION_SCHEMA as unknown as CapabilitySchema,
   add_blocks: actionSchema('add_blocks', MAX_BLOCKS_PER_ACTION, blockItemSchema),
   add_shapes: actionSchema('add_shapes', MAX_SHAPES_PER_ACTION, shapeItemSchema),
   apply_spatial_moves: actionSchema('apply_spatial_moves', SPATIAL_LIMITS.max_moves_per_action, spatialMoveSchema),
@@ -1157,16 +1299,105 @@ export const PROPOSAL_INPUT_SCHEMA: CapabilitySchema = {
     base_revision: { type: 'string', minLength: 1, maxLength: 120 },
     summary: { type: 'string', minLength: 1, maxLength: MAX_SUMMARY_LENGTH },
     rationale: { type: 'string', maxLength: MAX_RATIONALE_LENGTH },
-    actions: { type: 'array', minItems: 1, maxItems: MAX_ACTIONS, items: { oneOf: Object.values(exactActionSchemas) } },
+    actions: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 1,
+      description: 'One public action per staged proposal. canvas_ops composes up to 24 native editor operations.',
+      items: { oneOf: [exactActionSchemas.canvas_ops, exactActionSchemas.add_materials] },
+    },
   },
   required: ['base_revision', 'summary', 'actions'],
+};
+
+/**
+ * Public transport schema for fogwood-propose. context_token is a sidecar for
+ * ephemeral selection/tool/permission state and is stripped before the
+ * ProposalV1 validator sees the request, so it never enters proposal identity.
+ */
+export const PROPOSAL_TOOL_INPUT_SCHEMA: CapabilitySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ...(PROPOSAL_INPUT_SCHEMA.properties as JsonRecord),
+    context_token: { type: 'string', minLength: 1, maxLength: 64 },
+  },
+  required: ['base_revision', 'context_token', 'summary', 'actions'],
+};
+export const FOGWOOD_PROPOSAL_INPUT_SCHEMA = PROPOSAL_TOOL_INPUT_SCHEMA;
+
+/** Shared by the registry and the registered page tool to prevent contract drift. */
+export const CAPABILITY_INPUT_SCHEMA: CapabilitySchema = {
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { const: 'search' },
+        query: { type: 'string', maxLength: 120 },
+        kind: { type: 'string', enum: ['tool', 'action', 'primitive', 'capability', 'example'] },
+        status: { type: 'string', enum: ['callable'] },
+        category: { type: 'string', maxLength: 80 },
+        page_size: { type: 'integer', minimum: 1, maximum: 20 },
+        cursor: { type: 'string', pattern: '^\\d+$', maxLength: 16 },
+      },
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { const: 'available' },
+        base_revision: { type: 'string', minLength: 1, maxLength: 120 },
+        context_token: { type: 'string', minLength: 1, maxLength: 64 },
+      },
+      required: ['mode', 'base_revision', 'context_token'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { const: 'plan' },
+        intent: { type: 'string', minLength: 1, maxLength: 500 },
+        base_revision: { type: 'string', minLength: 1, maxLength: 120 },
+        context_token: { type: 'string', minLength: 1, maxLength: 64 },
+        scope: { type: 'string', enum: ['new', 'selection', 'page'] },
+        desired_effects: {
+          type: 'array',
+          maxItems: 12,
+          items: { type: 'string', enum: [...FOGWOOD_CAPABILITY_EFFECTS] },
+        },
+        planned_item_count: { type: 'integer', minimum: 0, maximum: FOGWOOD_CAPABILITY_PLANNED_ITEM_LIMIT },
+        max_steps: { type: 'integer', minimum: 1, maximum: 12 },
+      },
+      required: ['mode', 'intent', 'base_revision', 'context_token', 'scope'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { const: 'route' },
+        intent: { type: 'string', minLength: 1, maxLength: 500 },
+        example_ids: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 24,
+          items: { type: 'string', minLength: 1, maxLength: 160 },
+        },
+        base_revision: { type: 'string', minLength: 1, maxLength: 120 },
+        context_token: { type: 'string', minLength: 1, maxLength: 64 },
+        scope: { type: 'string', enum: ['new', 'selection', 'page'] },
+        max_steps: { type: 'integer', minimum: 1, maximum: 24 },
+      },
+      required: ['mode', 'intent', 'base_revision', 'context_token', 'scope'],
+    },
+  ],
 };
 
 export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
   {
     id: 'fogwood-inspect',
     kind: 'tool',
-    version: 1,
+    version: 2,
     title: 'Inspect Fogwood',
     summary: 'Read the bounded live canvas, spatial grammar, semantic relationships, and editable state.',
     use_when: 'Always inspect the live page first, before searching capabilities or proposing a change.',
@@ -1177,34 +1408,125 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
   {
     id: 'fogwood-capabilities',
     kind: 'tool',
-    version: 1,
-    title: 'Search Fogwood capabilities',
-    summary: 'Search the bounded host-facing vocabulary of materials, moves, adapters, aesthetics, algorithms, provocations, primitives, and recipes.',
-    use_when: 'Inspect the actual available contract before proposing; never assume a host capability or live provider.',
-    keywords: ['search', 'capability', 'materials', 'moves', 'adapters', 'aesthetics', 'algorithms', 'provocation', 'recipe', 'primitive'],
+    version: 2,
+    title: 'Discover or plan Fogwood capabilities',
+    summary: 'Search, resolve, and compose all 213 pinned tldraw example routes or the smaller native semantic ontology against live canvas context.',
+    use_when: 'After inspecting the page, use route mode for the full examples surface or plan mode for exact native semantic operations; never assume a host capability or live provider.',
+    keywords: ['search', 'route', 'compose', 'plan', 'ontology', 'capability', 'effect', 'example', 'adapter', 'recipe', 'qualified'],
     effect: 'read-only',
-    input_schema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        query: { type: 'string', maxLength: 120 },
-        kind: { type: 'string', enum: ['tool', 'action', 'primitive', 'recipe'] },
-        page_size: { type: 'integer', minimum: 1, maximum: 20 },
-        cursor: { type: 'string', maxLength: 16 },
-      },
-    },
+    input_schema: CAPABILITY_INPUT_SCHEMA,
   },
-  FOGWOOD_BAZAAR_CAPABILITY,
   {
     id: 'fogwood-propose',
     kind: 'tool',
-    version: 1,
+    version: 2,
     title: 'Propose a Fogwood change',
     summary: 'Stage one typed, bounded composition or page proposal for page-owned human review.',
     use_when: 'A bounded composition, material, spatial move, semantic edge, or legacy block change is ready after inspecting current page state.',
     keywords: ['proposal', 'composition', 'material', 'spatial', 'semantic', 'stage', 'review', 'apply', 'reject'],
     effect: 'stage-only',
-    input_schema: PROPOSAL_INPUT_SCHEMA,
+    input_schema: PROPOSAL_TOOL_INPUT_SCHEMA,
+  },
+  {
+    id: 'canvas_ops',
+    kind: 'action',
+    version: FOGWOOD_CANVAS_PROTOCOL.version,
+    title: 'Compose native canvas operations',
+    summary: 'Mix bounded native-shape creation, drawing, bound connectors, preserved variants, updates, arrangement, structure, z-order changes, and leaf deletion in one reviewed proposal.',
+    use_when: 'Codex needs to turn a request into native editable canvas matter or reshape exact existing tldraw objects without replacing the page.',
+    keywords: ['canvas protocol', 'create', 'draw', 'connect', 'binding', 'variant', 'lineage', 'update', 'resize', 'align', 'distribute', 'stack', 'pack', 'group', 'ungroup', 'reorder', 'z-order', 'delete', 'mix', 'compose'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.canvas_ops,
+  },
+  {
+    id: 'canvas_ops.draw',
+    kind: 'primitive',
+    version: 1,
+    title: 'Draw a native path',
+    summary: 'Create a bounded editable tldraw draw shape from page-space points.',
+    use_when: 'A sketch, trace, gesture, connector, or irregular mark should stay native and editable.',
+    keywords: ['draw', 'freehand', 'path', 'trace', 'sketch', 'native'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.connect',
+    kind: 'primitive',
+    version: 2,
+    title: 'Connect two native targets',
+    summary: 'Create one editable arrow with native tldraw start and end bindings so it follows either endpoint.',
+    use_when: 'Exactly two current or earlier-created targets should stay visually connected after movement.',
+    keywords: ['connect', 'bound connector', 'arrow binding', 'endpoint', 'follow'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.variant',
+    kind: 'primitive',
+    version: 2,
+    title: 'Create a preserved variant',
+    summary: 'Clone one bounded native source into separately editable matter while preserving source and lineage.',
+    use_when: 'A user wants a branch, remix, or mutation without replacing the existing source.',
+    keywords: ['variant', 'preserve', 'clone', 'branch', 'remix', 'lineage'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.edit',
+    kind: 'primitive',
+    version: 1,
+    title: 'Edit and resize native matter',
+    summary: 'Change allowlisted geometry, text, style, opacity, and bounds on exact unlocked direct-page shapes.',
+    use_when: 'Existing native canvas matter should be refined rather than replaced.',
+    keywords: ['update', 'edit', 'resize', 'text', 'color', 'fill', 'opacity'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.arrange',
+    kind: 'primitive',
+    version: 1,
+    title: 'Arrange native matter',
+    summary: 'Align, distribute, stack, or pack exact unlocked shapes with deterministic page-space geometry.',
+    use_when: 'A composition needs intentional spatial rhythm without normalizing it into a dashboard grid.',
+    keywords: ['align', 'distribute', 'stack', 'pack', 'layout', 'arrange'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.group',
+    kind: 'primitive',
+    version: 1,
+    title: 'Group or ungroup native matter',
+    summary: 'Create or dissolve a bounded tldraw group while preserving its editable children.',
+    use_when: 'Several marks should become one movable unit or an existing unit should become separately editable.',
+    keywords: ['group', 'ungroup', 'containment', 'children'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.reorder',
+    kind: 'primitive',
+    version: 1,
+    title: 'Change canvas z-order',
+    summary: 'Move exact unlocked shapes forward, backward, to front, or to back.',
+    use_when: 'Overlap and visual layering carry meaning in the composition.',
+    keywords: ['reorder', 'z-order', 'front', 'back', 'layer'],
+    effect: 'page-apply',
+  },
+  {
+    id: 'canvas_ops.lock-safety',
+    kind: 'primitive',
+    version: 1,
+    title: 'Respect locked canvas matter',
+    summary: 'Refuse operations that would directly or indirectly change a locked shape or locked ancestor.',
+    use_when: 'The agent must preserve human-locked matter and fail before staging.',
+    keywords: ['locked', 'readonly', 'permission', 'safety', 'ancestor'],
+    effect: 'read-only',
+  },
+  {
+    id: 'persistence.device-local',
+    kind: 'primitive',
+    version: 1,
+    title: 'Device-local persistence',
+    summary: 'Persist accepted tldraw records in the browser using the existing page-owned local store.',
+    use_when: 'The agent needs to understand that accepted matter survives reload locally without a collaboration service.',
+    keywords: ['persistence', 'local storage', 'snapshot', 'device-local', 'reload'],
+    effect: 'read-only',
   },
   {
     id: 'add_blocks',
@@ -1377,11 +1699,54 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     effect: 'page-apply',
     recipe,
   })),
+  ...FOGWOOD_CAPABILITY_ONTOLOGY.map((manifest): Capability => ({
+    id: manifest.id,
+    kind: 'capability',
+    version: manifest.version,
+    title: manifest.title,
+    summary: manifest.intent.use_when,
+    use_when: manifest.intent.use_when,
+    keywords: [...manifest.intent.keywords, ...manifest.effects],
+    effect: 'page-apply',
+    manifest,
+  })),
+  ...TLDRAW_EXAMPLE_CATALOG.map((entry): Capability => ({
+    ...(() => {
+      const route = getFullSurfaceRoute(entry.id);
+      return {
+        route,
+        keywords: [
+          entry.category,
+          entry.slug,
+          entry.status,
+          route.family,
+          route.execution_lane,
+          route.fidelity,
+          route.adapter_id,
+          ...entry.mapped_capability_ids,
+        ],
+        use_when: `Resolve this exact official example through ${route.route_id}; its ${route.fidelity} ${route.execution_lane} path reports any host requirement before execution.`,
+        boundary: route.boundary,
+      };
+    })(),
+    id: entry.id,
+    kind: 'example',
+    version: FOGWOOD_FULL_SURFACE_VERSION,
+    title: entry.title,
+    summary: entry.summary,
+    effect: 'read-only',
+    status: entry.status,
+    mapped_capability_ids: entry.mapped_capability_ids,
+    category: entry.category,
+    source_url: entry.source_url,
+  })),
 ]);
 
 export type CapabilitySearchInput = {
   query?: string;
   kind?: Capability['kind'];
+  status?: TldrawExampleStatus;
+  category?: string;
   page_size?: number;
   cursor?: string;
 };
@@ -1393,6 +1758,24 @@ export type CapabilitySearchResult = {
   has_more: boolean;
 };
 
+const PUBLIC_CAPABILITY_IDS = new Set([
+  'fogwood-inspect',
+  'fogwood-capabilities',
+  'fogwood-propose',
+  'canvas_ops',
+  'canvas_ops.draw',
+  'canvas_ops.connect',
+  'canvas_ops.variant',
+  'canvas_ops.edit',
+  'canvas_ops.arrange',
+  'canvas_ops.group',
+  'canvas_ops.reorder',
+  'canvas_ops.lock-safety',
+  'persistence.device-local',
+  'add_materials',
+  ...FOGWOOD_CAPABILITY_ONTOLOGY.map((manifest) => manifest.id),
+]);
+
 export function searchCapabilities(input: CapabilitySearchInput = {}): CapabilitySearchResult {
   const query = boundedString(input.query, 120).trim().toLowerCase();
   const pageSize = isFiniteNumber(input.page_size)
@@ -1400,18 +1783,25 @@ export function searchCapabilities(input: CapabilitySearchInput = {}): Capabilit
     : 12;
   const offset = input.cursor && /^\d+$/.test(input.cursor) ? Number(input.cursor) : 0;
   const filtered = CAPABILITY_REGISTRY.filter((capability) => {
+    if (capability.kind !== 'example' && !PUBLIC_CAPABILITY_IDS.has(capability.id)) return false;
     if (input.kind && capability.kind !== input.kind) return false;
+    if (input.status && capability.status !== input.status) return false;
+    if (input.category && capability.category !== input.category) return false;
     if (!query) return true;
     const haystack = [
       capability.id,
       capability.title,
       capability.summary,
       capability.use_when,
+      capability.status ?? '',
+      capability.category ?? '',
+      capability.boundary ?? '',
+      ...(capability.mapped_capability_ids ?? []),
       ...capability.keywords,
     ]
       .join(' ')
       .toLowerCase();
-    return haystack.includes(query);
+    return query.split(/\s+/u).every((token) => haystack.includes(token));
   });
   const results = filtered.slice(offset, offset + pageSize).map((capability) => ({
     ...capability,
@@ -1465,6 +1855,7 @@ export type SetInstrumentInputsAction = {
 };
 
 export type ProposalAction =
+  | CanvasOpsAction
   | AddBlocksAction
   | AddShapesAction
   | ApplySpatialMovesAction
@@ -1964,6 +2355,31 @@ export function buildProposalDiff(
   };
   const removeClosure = (roots: readonly string[]) => descendantClosure(roots, context.items);
   for (const action of actions) {
+    if (action.type === 'canvas_ops') {
+      const result = planCanvasOps(context.items, action.ops, context.page_id);
+      if (result.ok) {
+        adds.shapes += result.plan.adds.length;
+        adds.specs.push(...result.plan.adds.map((addition) => ({
+          type: 'shape' as const,
+          kind: addition.kind,
+          label: addition.label,
+          x: addition.x,
+          y: addition.y,
+          w: addition.w,
+          h: addition.h,
+          semantic_id: addition.semantic_id,
+          ...(addition.role ? { role: addition.role } : {}),
+          ...(addition.variant_id ? { variant_id: addition.variant_id } : {}),
+          ...(addition.parent_variant_id ? { parent_variant_id: addition.parent_variant_id } : {}),
+          ...(addition.lineage_source_id ? { lineage_source_id: addition.lineage_source_id } : {}),
+        })));
+        updates.push(...result.plan.updates);
+        moves.push(...result.plan.moves);
+        for (const id of result.plan.removes) {
+          if (!removes.ids.includes(id)) removes.ids.push(id);
+        }
+      }
+    }
     if (action.type === 'add_blocks') {
       adds.blocks += action.blocks.length;
       adds.specs.push(...action.blocks.map((input) => addSpec('block', input)));
@@ -2118,6 +2534,10 @@ export function buildProposalDiff(
   const requestedRemoveIds = new Set(actions.flatMap((action) => {
     if (action.type === 'remove_items') return action.ids;
     if (action.type === 'clear_surface') return context.items.map((item) => item.id);
+    if (action.type === 'canvas_ops') {
+      const result = planCanvasOps(context.items, action.ops, context.page_id);
+      return result.ok ? result.plan.removes : [];
+    }
     return [];
   }));
   removes.collateral_ids = removes.ids.filter((id) => !requestedRemoveIds.has(id));
@@ -2182,6 +2602,20 @@ export function validateProposal(input: unknown, context: ProposalContext, optio
     const path = `actions[${index}]`;
     if (!isRecord(raw) || typeof raw.type !== 'string') {
       addError(errors, 'INVALID_ACTION', 'Each action needs a known type.', path);
+      continue;
+    }
+    if (raw.type === 'canvas_ops') {
+      if (actionList.length !== 1) addError(errors, 'CANVAS_OPS_MUST_BE_ALONE', 'canvas_ops must be the only action so every composed editor operation is reviewed and applied atomically.', path);
+      if (!hasOnlyKeys(raw, ['type', 'ops'])) addError(errors, 'UNKNOWN_FIELD', 'canvas_ops accepts only ops.', path);
+      const result = planCanvasOps(context.items, raw.ops, context.page_id);
+      if (!result.ok) {
+        for (const error of result.errors) {
+          addError(errors, error.code, error.message, `${path}.${error.path}`);
+        }
+        continue;
+      }
+      aggregateAdds += result.plan.adds.length;
+      normalizedActions.push(result.plan.normalized_action);
       continue;
     }
     if (raw.type === 'clear_surface') {

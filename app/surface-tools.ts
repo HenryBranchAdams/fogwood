@@ -1,4 +1,4 @@
-import { AssetRecordType, createShapeId, toRichText } from 'tldraw';
+import { AssetRecordType, b64Vecs, createShapeId, toRichText } from 'tldraw';
 import type { Editor, TLAsset, TLAssetId, TLParentId, TLShape, TLShapeId } from 'tldraw';
 import {
   BLOCK_KINDS,
@@ -6,6 +6,9 @@ import {
   CANVAS_COLORS,
   CANVAS_FILLS,
   CANVAS_SHAPE_KINDS,
+  CAPABILITY_INPUT_SCHEMA,
+  buildContextProjection,
+  computeContextToken,
   computePageRevision,
   createProposalController,
   descendantClosure,
@@ -14,10 +17,12 @@ import {
   FOGWOOD_PROTOCOL,
   FOGWOOD_PROTOCOL_VERSION,
   FOGWOOD_REGISTRY_VERSION,
+  FOGWOOD_CONTEXT_SELECTION_LIMIT,
+  FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT,
   FOGWOOD_PARTICIPATION_CONTRACT,
   getRecipe,
   INSPECT_INPUT_SCHEMA,
-  PROPOSAL_INPUT_SCHEMA,
+  PROPOSAL_TOOL_INPUT_SCHEMA,
   searchCapabilities,
   validateProposal,
   validateProposalAsync,
@@ -38,13 +43,32 @@ import type {
   ProposalV1,
 } from './fogwood-runtime';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { isPreparedMaterial } from './fogwood-materials.ts';
+import { isPreparedMaterial, MATERIAL_LIMITS, SUPPORTED_MATERIAL_MIME_TYPES } from './fogwood-materials.ts';
 import type { MaterialDecoder, PreparedMaterial } from './fogwood-materials';
 import type { JsonObject } from '@tldraw/utils';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { FOGWOOD_PERSISTENCE } from './fogwood-persistence.ts';
+import { FOGWOOD_CANVAS_PROTOCOL, planCanvasOps } from './fogwood-canvas-ops.ts';
+import type { CanvasOpPlan } from './fogwood-canvas-ops.ts';
+import {
+  FOGWOOD_CAPABILITY_ONTOLOGY,
+  FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
+  listCapabilityAvailability,
+  isValidDesiredEffects,
+  planCapabilities,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { FOGWOOD_BAZAAR_TOOL } from './fogwood-bazaar.ts';
+} from './fogwood-capability-planner.ts';
+import type { FogwoodCapabilityPlanningRequest } from './fogwood-capability-planner.ts';
+import {
+  FOGWOOD_FULL_SURFACE_VERSION,
+  FULL_SURFACE_ADAPTERS,
+  FULL_SURFACE_ROUTES,
+  compileFullSurfaceRequest,
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+} from './fogwood-capability-compiler.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { TLDRAW_EXAMPLE_CATALOG, TLDRAW_EXAMPLE_SOURCE } from './fogwood-tldraw-capabilities.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_PERSISTENCE } from './fogwood-persistence.ts';
 import {
   createProposalLifecycleController,
   type ProposalLifecycleEvent,
@@ -211,14 +235,13 @@ function positionFor(
   index: number,
   coordinateSpace: 'viewport' | 'page',
 ) {
-  const viewport = editor.getViewportPageBounds();
   const defaultX = 70 + (index % 3) * 370;
   const defaultY = 90 + Math.floor(index / 3) * 250;
   const rawX = clampNumber(input.x, defaultX, -100_000, 100_000);
   const rawY = clampNumber(input.y, defaultY, -100_000, 100_000);
-  return coordinateSpace === 'viewport'
-    ? { x: viewport.x + rawX, y: viewport.y + rawY }
-    : { x: rawX, y: rawY };
+  if (coordinateSpace === 'page') return { x: rawX, y: rawY };
+  const viewport = editor.getViewportPageBounds();
+  return { x: viewport.x + rawX, y: viewport.y + rawY };
 }
 
 type MutationOptions = {
@@ -715,10 +738,151 @@ function pageContent(editor: Editor) {
   return { shapes, bindings, assets: referencedAssets(editor, shapes), semantic_relationships: currentSemanticRelationships(shapes) };
 }
 
+function bindingCountsByShape(bindings: readonly { fromId: string; toId: string }[]) {
+  const counts = new Map<string, number>();
+  for (const binding of bindings) {
+    counts.set(binding.fromId, (counts.get(binding.fromId) ?? 0) + 1);
+    counts.set(binding.toId, (counts.get(binding.toId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export function currentRevision(editor: Editor) {
   const { shapes, bindings, assets } = pageContent(editor);
   return computePageRevision(editor.getCurrentPageId(), shapes, bindings, assets);
 }
+
+type ContextEditor = Editor & {
+  getCurrentToolId?: () => unknown;
+  getPath?: () => unknown;
+  root?: { getPath?: () => unknown };
+};
+
+function currentSelectionSource(editor: Editor): readonly unknown[] {
+  try {
+    const state = editor.getCurrentPageState();
+    if (Array.isArray(state.selectedShapeIds)) return state.selectedShapeIds;
+  } catch {
+    // Minimal editor doubles may omit ephemeral page-state APIs.
+  }
+  try {
+    if (typeof editor.getSelectedShapeIds === 'function') {
+      const selected = editor.getSelectedShapeIds();
+      if (Array.isArray(selected)) return selected;
+    }
+  } catch {
+    // Selection is optional at the page adapter boundary.
+  }
+  return [];
+}
+
+function currentSelectionIds(editor: Editor): string[] {
+  return currentSelectionSource(editor)
+    .slice(0, FOGWOOD_CONTEXT_SELECTION_LIMIT + 1)
+    .map(String);
+}
+
+function currentContextState(editor: Editor) {
+  const candidate = editor as ContextEditor;
+  let state: { selectedShapeIds?: readonly unknown[]; focusedGroupId?: unknown; editingShapeId?: unknown } = {};
+  try {
+    state = editor.getCurrentPageState() as typeof state;
+  } catch {
+    // Minimal editor doubles may omit ephemeral page-state APIs.
+  }
+  let toolId: unknown;
+  let toolPath: unknown;
+  try {
+    if (typeof candidate.getCurrentToolId === 'function') toolId = candidate.getCurrentToolId();
+  } catch {
+    toolId = undefined;
+  }
+  try {
+    if (typeof candidate.getPath === 'function') toolPath = candidate.getPath();
+    else if (candidate.root && typeof candidate.root.getPath === 'function') toolPath = candidate.root.getPath();
+  } catch {
+    toolPath = undefined;
+  }
+  let readonly = false;
+  try {
+    readonly = typeof editor.getIsReadonly === 'function' && editor.getIsReadonly();
+  } catch {
+    readonly = false;
+  }
+  return {
+    page_id: editor.getCurrentPageId(),
+    selected_ids: currentSelectionSource(editor),
+    current_tool_id: toolId,
+    current_tool_path: toolPath,
+    readonly,
+    focused_group_id: state.focusedGroupId,
+    editing_shape_id: state.editingShapeId,
+    ontology_version: FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
+    registry_version: FOGWOOD_REGISTRY_VERSION,
+  };
+}
+
+/** Project only bounded ephemeral semantic state for the opaque context token. */
+export function canvasContextForEditor(editor: Editor) {
+  return buildContextProjection(currentContextState(editor));
+}
+
+export const projectCanvasContext = canvasContextForEditor;
+
+export function contextTokenForEditor(editor: Editor) {
+  return computeContextToken(canvasContextForEditor(editor));
+}
+
+export const currentContextToken = contextTokenForEditor;
+
+function capabilityFactsForEditor(editor: Editor) {
+  const shapes = editor.getCurrentPageShapes();
+  const selectedShapeIds = currentSelectionIds(editor);
+  const shapeById = new Map(shapes.map((shape) => [String(shape.id), shape]));
+  const hasLockedAncestor = (shapeId: string) => {
+    const visited = new Set<string>();
+    let current = shapeById.get(shapeId);
+    while (current && !visited.has(String(current.id))) {
+      visited.add(String(current.id));
+      if (current.isLocked) return true;
+      current = shapeById.get(String(current.parentId));
+    }
+    return false;
+  };
+  let readonly = false;
+  try {
+    readonly = typeof editor.getIsReadonly === 'function' && editor.getIsReadonly();
+  } catch {
+    readonly = false;
+  }
+  return {
+    current_revision: currentRevision(editor),
+    current_context_token: contextTokenForEditor(editor),
+    page_item_count: shapes.length,
+    selection_count: selectedShapeIds.length,
+    locked_selection_count: selectedShapeIds.filter(hasLockedAncestor).length,
+    locked_page_item_count: shapes.filter((shape) => hasLockedAncestor(String(shape.id))).length,
+    readonly,
+  };
+}
+
+/**
+ * Pure page adapter for capability planning. It projects only bounded facts
+ * from the live editor and delegates to the data-only ontology planner.
+ */
+export function planCapabilityRequestForEditor(
+  editor: Editor,
+  request: FogwoodCapabilityPlanningRequest,
+) {
+  return planCapabilities(request, capabilityFactsForEditor(editor));
+}
+
+/** Return all semantic manifests annotated with current page availability. */
+export function availableCapabilitiesForEditor(editor: Editor) {
+  return listCapabilityAvailability(capabilityFactsForEditor(editor));
+}
+
+export const inspectAvailableCapabilities = availableCapabilitiesForEditor;
 
 export type InstrumentControlUpdateOptions = {
   /** Skip the stopping point when an enclosing UI gesture already owns it. */
@@ -831,7 +995,7 @@ export function createInstrumentControlGesture(editor: Editor): InstrumentContro
   };
 }
 
-function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
+function inspectItem(editor: Editor, shape: TLShape, bindingCount = 0): InspectableItem {
   const bounds = editor.getShapePageBounds(shape);
   const meta = fogwoodMeta(shape);
   const base = {
@@ -848,6 +1012,7 @@ function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
     opacity: shape.opacity,
     index: shape.index,
     semantic_id: meta.semantic_id,
+    binding_count: bindingCount,
     meta,
   } satisfies InspectableItem;
   if (shape.type === 'surface-block') {
@@ -904,7 +1069,8 @@ function inspectItem(editor: Editor, shape: TLShape): InspectableItem {
 export function inspectSurface(editor: Editor, input: { page_size?: number; cursor?: string; binding_page_size?: number; binding_cursor?: string } = {}) {
   const { shapes, bindings, semantic_relationships } = pageContent(editor);
   const assets = referencedAssets(editor, shapes);
-  const allItems = shapes.map((shape) => inspectItem(editor, shape));
+  const bindingCounts = bindingCountsByShape(bindings);
+  const allItems = shapes.map((shape) => inspectItem(editor, shape, bindingCounts.get(String(shape.id)) ?? 0));
   const pageSize = typeof input.page_size === 'number' && Number.isFinite(input.page_size)
     ? Math.max(1, Math.min(128, Math.trunc(input.page_size)))
     : 128;
@@ -920,6 +1086,8 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
   const bindingItems = allBindingItems.slice(bindingOffset, bindingOffset + bindingPageSize);
   const bindingNextOffset = bindingOffset + bindingItems.length;
   const currentState = editor.getCurrentPageState();
+  const canvasContext = canvasContextForEditor(editor);
+  const contextToken = computeContextToken(canvasContext);
   const viewport = editor.getViewportPageBounds();
   const camera = editor.getCamera();
   const pageBounds = editor.getCurrentPageBounds();
@@ -927,10 +1095,11 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
   const nativeCount = shapes.length - blockCount;
   const itemComplete = nextOffset >= allItems.length;
   const bindingComplete = bindingNextOffset >= allBindingItems.length;
-  const selectedShapeIds = [...currentState.selectedShapeIds];
-  const selectionLimit = 128;
+  const selectedShapeIds = [...canvasContext.selected_ids];
+  const selectedShapeTotal = canvasContext.selection_completeness.total;
+  const selectionLimit = FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT;
   const selectedShapeIdsPage = selectedShapeIds.slice(0, selectionLimit);
-  const selectionComplete = selectedShapeIdsPage.length >= selectedShapeIds.length;
+  const selectionComplete = selectedShapeTotal <= selectionLimit;
   const selectedSemanticIds = selectedShapeIdsPage.flatMap((id) => {
     const item = allItems.find((candidate) => candidate.id === id);
     return item?.semantic_id ? [item.semantic_id] : [];
@@ -942,16 +1111,45 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
   const semanticRelationshipLimit = SPATIAL_LIMITS.max_relationships;
   const semanticRelationshipItems = semantic_relationships.slice(0, semanticRelationshipLimit);
   const semanticRelationshipComplete = semanticRelationshipItems.length >= semantic_relationships.length;
+  const publicCanvasContext = {
+    ...canvasContext,
+    selected_ids: canvasContext.selected_ids_preview,
+  };
   return {
     protocol: { name: FOGWOOD_PROTOCOL, version: FOGWOOD_PROTOCOL_VERSION, registry_version: FOGWOOD_REGISTRY_VERSION },
+    canvas_protocol: FOGWOOD_CANVAS_PROTOCOL,
+    capability_ontology: {
+      schema: 'fogwood.capability.v1',
+      version: FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
+      qualified_capability_count: FOGWOOD_CAPABILITY_ONTOLOGY.length,
+      planning_modes: ['search', 'route', 'plan', 'available'],
+      planning_policy: { purity: 'pure', determinism: 'deterministic', speculation: 'shadow-only' },
+      mutation_policy: { revision_keyed: true, speculation: 'never', page_apply_required: true },
+    },
+    tldraw_examples: {
+      source: TLDRAW_EXAMPLE_SOURCE,
+      count: TLDRAW_EXAMPLE_CATALOG.length,
+      status_counts: {
+        callable: TLDRAW_EXAMPLE_CATALOG.filter((entry) => entry.status === 'callable').length,
+      },
+      full_surface: {
+        schema: 'fogwood.example-route.v1',
+        version: FOGWOOD_FULL_SURFACE_VERSION,
+        route_count: FULL_SURFACE_ROUTES.length,
+        adapter_family_count: FULL_SURFACE_ADAPTERS.length,
+        contract: 'Every pinned example has an exact callable route. Route fidelity, local execution, host requirements, and page Apply authority remain separate evidence.',
+      },
+    },
     persistence: FOGWOOD_PERSISTENCE,
     participation_contract: FOGWOOD_PARTICIPATION_CONTRACT,
-    workflow: ['inspect', 'capability search', 'proposal', 'page Apply/Reject'],
-    workflow_contract: 'inspect -> capability search -> proposal -> page Apply/Reject',
+    workflow: ['inspect live canvas', 'route and compose any pinned capability', 'use live host capabilities when explicitly required', 'bring bounded results back through Fogwood', 'stage proposal', 'page Apply/Reject', 'inspect human edits again'],
+    workflow_contract: 'inspect -> full-surface route/plan -> local or observed host capability -> bounded proposal -> page Apply/Reject -> inspect again',
     authority: { agent: 'read current state, search local capabilities, and stage typed proposals', page: 'owns validation and Apply/Reject; only page Apply mutates content' },
     no_code: true,
     content_revision: currentRevision(editor),
     revision_source: 'current-page-shapes-bindings-and-referenced-asset-metadata; camera and selection excluded',
+    context_token: contextToken,
+    canvas_context: publicCanvasContext,
     page: {
       id: editor.getCurrentPageId(),
       bounds: pageBounds ? { x: pageBounds.x, y: pageBounds.y, w: pageBounds.w, h: pageBounds.h } : null,
@@ -959,9 +1157,9 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
     },
     viewport: { page_coordinates: { x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h }, camera: { x: camera.x, y: camera.y, z: camera.z } },
     selection: { shape_ids: selectedShapeIdsPage, semantic_ids: selectedSemanticIds, focused_group_id: currentState.focusedGroupId ?? null, editing_shape_id: currentState.editingShapeId ?? null },
-    selection_count: selectedShapeIds.length,
+    selection_count: selectedShapeTotal,
     selection_semantic_ids: selectedSemanticIds,
-    selection_completeness: { complete: selectionComplete, truncated: !selectionComplete, total: selectedShapeIds.length, returned: selectedShapeIdsPage.length, limit: selectionLimit },
+    selection_completeness: { complete: selectionComplete, truncated: !selectionComplete, total: selectedShapeTotal, returned: selectedShapeIdsPage.length, limit: selectionLimit },
     counts: { shapes: shapes.length, blocks: blockCount, native_shapes: nativeCount, assets: assets.length, bindings: bindings.length, semantic_relationships: semantic_relationships.length, regions: allRegions.length, returned_items: items.length, returned_bindings: bindingItems.length },
     semantic_relationship_count: semantic_relationships.length,
     supported_blocks: [...BLOCK_KINDS],
@@ -1003,7 +1201,8 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
 
 function proposalContext(editor: Editor) {
   const content = pageContent(editor);
-  const items = content.shapes.map((shape) => inspectItem(editor, shape));
+  const bindingCounts = bindingCountsByShape(content.bindings);
+  const items = content.shapes.map((shape) => inspectItem(editor, shape, bindingCounts.get(String(shape.id)) ?? 0));
   let allSelectedShapeIds: readonly string[] = [];
   try {
     allSelectedShapeIds = [...editor.getCurrentPageState().selectedShapeIds];
@@ -1216,7 +1415,8 @@ function cleanupUnreferencedAssets(editor: Editor, assetIds: readonly TLAssetId[
 
 function spatialContextForEditor(editor: Editor) {
   const content = pageContent(editor);
-  const items = content.shapes.map((shape) => inspectItem(editor, shape));
+  const bindingCounts = bindingCountsByShape(content.bindings);
+  const items = content.shapes.map((shape) => inspectItem(editor, shape, bindingCounts.get(String(shape.id)) ?? 0));
   let allSelectedShapeIds: readonly string[] = [];
   try {
     allSelectedShapeIds = [...editor.getCurrentPageState().selectedShapeIds];
@@ -1239,21 +1439,104 @@ function spatialContextForEditor(editor: Editor) {
 }
 
 function cloneShapeRecord(shape: TLShape): Record<string, unknown> {
-  const cloneValue = (value: unknown): unknown => {
-    if (typeof structuredClone === 'function') {
-      try {
-        return structuredClone(value);
-      } catch {
-        // JSON fallback below is sufficient for tldraw's plain shape records.
-      }
-    }
+  if (typeof structuredClone === 'function') {
     try {
-      return JSON.parse(JSON.stringify(value));
+      const clone = structuredClone(shape) as unknown;
+      if (isRecord(clone)) return clone;
     } catch {
-      return value;
+      // JSON fallback below is sufficient for tldraw's plain shape records.
     }
+  }
+  try {
+    const clone = JSON.parse(JSON.stringify(shape)) as unknown;
+    if (isRecord(clone)) return clone;
+  } catch {
+    // Fail closed below rather than returning the original record by reference.
+  }
+  throw new Error('Fogwood could not safely clone the native shape record.');
+}
+
+function hasReusableLocalImageAsset(editor: Editor, source: TLShape) {
+  if (source.type !== 'image' || !isRecord(source.props) || typeof source.props.assetId !== 'string' || typeof editor.getAsset !== 'function') return false;
+  const asset = editor.getAsset(source.props.assetId as TLAssetId);
+  if (!asset || asset.type !== 'image' || !isRecord(asset.props)) return false;
+  const mimeType = asset.props.mimeType;
+  if (typeof mimeType !== 'string' || !SUPPORTED_MATERIAL_MIME_TYPES.includes(mimeType as never)) return false;
+  const maxBytes = mimeType === 'image/svg+xml' ? MATERIAL_LIMITS.max_svg_bytes : MATERIAL_LIMITS.max_raster_bytes;
+  const src = asset.props.src;
+  const prefix = `data:${mimeType};base64,`;
+  if (typeof src !== 'string' || !src.startsWith(prefix)) return false;
+  const base64 = src.slice(prefix.length);
+  if (base64.length === 0 || base64.length > 4 * Math.ceil(maxBytes / 3)) return false;
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(base64)) return false;
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  const byteLength = (base64.length * 3) / 4 - padding;
+  if (!Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > maxBytes) return false;
+  if (!Number.isSafeInteger(asset.props.fileSize) || asset.props.fileSize !== byteLength) return false;
+  const { w, h } = asset.props;
+  if (typeof w !== 'number' || typeof h !== 'number' || !Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return false;
+  if (w > MATERIAL_LIMITS.max_dimension || h > MATERIAL_LIMITS.max_dimension || w * h > MATERIAL_LIMITS.max_pixels) return false;
+  if (mimeType === 'image/svg+xml') {
+    const fogwood = isRecord(asset.meta) && isRecord(asset.meta.fogwood) ? asset.meta.fogwood : undefined;
+    if (!fogwood || fogwood.kind !== 'material' || fogwood.source_status !== 'sanitized' || fogwood.decode_qualified !== true) return false;
+  }
+  return true;
+}
+
+function createVariantShape(
+  editor: Editor,
+  input: {
+    sourceId: string;
+    semanticId: string;
+    variantId?: string;
+    x: number;
+    y: number;
+    lineageSourceId: string;
+    parentVariantId?: string;
+    patches?: { text?: string; color?: string; fill?: string };
+  },
+) {
+  const source = editor.getShape(input.sourceId as TLShapeId);
+  if (!source) throw new Error(`Variant source ${input.sourceId} no longer exists.`);
+  if (source.type === 'image' && !hasReusableLocalImageAsset(editor, source)) throw new Error('Variant image source does not have a current device-local asset.');
+  const clone = cloneShapeRecord(source);
+  const id = createShapeId();
+  const sourceMeta = fogwoodMeta(source);
+  const variantSourceMeta = { ...sourceMeta };
+  for (const key of ['relationship_id', 'relationship_kind', 'source_semantic_id', 'target_semantic_id', 'relationship_label'] as const) delete variantSourceMeta[key];
+  const fogwood = {
+    ...variantSourceMeta,
+    semantic_id: input.semanticId,
+    semantic_id_source: 'stable',
+    role: 'variant',
+    variant_id: input.variantId ?? input.semanticId,
+    ...(input.parentVariantId ? { parent_variant_id: input.parentVariantId } : {}),
+    lineage_source_id: input.lineageSourceId,
+  } satisfies FogwoodMeta;
+  const props = isRecord(clone.props) ? { ...clone.props } : {};
+  if (input.patches?.text !== undefined) {
+    if (source.type === 'image') props.altText = input.patches.text;
+    else if (source.type === 'frame') props.name = input.patches.text;
+    else props.richText = toRichText(input.patches.text);
+  }
+  if (input.patches?.color !== undefined) {
+    props.color = input.patches.color;
+    if ('labelColor' in props) props.labelColor = input.patches.color;
+  }
+  if (input.patches?.fill !== undefined) props.fill = input.patches.fill;
+  clone.id = id;
+  delete clone.index;
+  clone.x = input.x;
+  clone.y = input.y;
+  clone.parentId = editor.getCurrentPageId();
+  clone.isLocked = false;
+  clone.meta = {
+    ...(isRecord(source.meta) ? source.meta : {}),
+    ...shapeMeta(String(id), fogwood),
   };
-  return cloneValue(shape) as Record<string, unknown>;
+  clone.props = props;
+  editor.createShapes([clone] as never);
+  return id as TLShapeId;
 }
 
 function spatialCreateShape(
@@ -1263,41 +1546,16 @@ function spatialCreateShape(
   const source = create.source_shape_id ? editor.getShape(create.source_shape_id as TLShapeId) : undefined;
   if (create.kind === 'variant' && !source) throw new Error(`Variant source ${create.source_shape_id ?? ''} no longer exists.`);
   if (create.kind === 'variant' && source) {
-    const clone = cloneShapeRecord(source);
-    const id = createShapeId();
-    const sourceMeta = fogwoodMeta(source);
-    const variantSourceMeta = { ...sourceMeta };
-    for (const key of ['relationship_id', 'relationship_kind', 'source_semantic_id', 'target_semantic_id', 'relationship_label'] as const) delete variantSourceMeta[key];
-    const fogwood = {
-      ...variantSourceMeta,
-      semantic_id: create.semantic_id,
-      semantic_id_source: 'stable',
-      role: 'variant',
-      variant_id: create.variant_id ?? create.semantic_id,
-      ...(create.parent_variant_id ? { parent_variant_id: create.parent_variant_id } : {}),
-      ...(create.lineage_source_id ? { lineage_source_id: create.lineage_source_id } : {}),
-    } satisfies FogwoodMeta;
-    const props = isRecord(clone.props) ? { ...clone.props } : {};
-    if (create.patches?.text !== undefined) {
-      if (source.type === 'image') props.altText = create.patches.text;
-      else props.richText = toRichText(create.patches.text);
-    }
-    if (create.patches?.color !== undefined) {
-      props.color = create.patches.color;
-      if ('labelColor' in props) props.labelColor = create.patches.color;
-    }
-    if (create.patches?.fill !== undefined) props.fill = create.patches.fill;
-    clone.id = id;
-    clone.x = create.x;
-    clone.y = create.y;
-    clone.parentId = editor.getCurrentPageId();
-    clone.meta = {
-      ...(isRecord(source.meta) ? source.meta : {}),
-      ...shapeMeta(String(id), fogwood),
-    };
-    clone.props = props;
-    editor.createShapes([clone] as never);
-    return id as TLShapeId;
+    return createVariantShape(editor, {
+      sourceId: String(source.id),
+      semanticId: create.semantic_id,
+      variantId: create.variant_id,
+      x: create.x,
+      y: create.y,
+      lineageSourceId: create.lineage_source_id ?? create.source_semantic_id ?? fogwoodMeta(source).semantic_id ?? String(source.id),
+      parentVariantId: create.parent_variant_id,
+      patches: create.patches,
+    });
   }
   const ids = addCanvasShapes(editor, [{
     kind: 'note',
@@ -1355,6 +1613,279 @@ function spatialRelationshipShape(editor: Editor, relationship: SemanticRelation
       ...(relationship.label ? { relationship_label: relationship.label } : {}),
     },
   })[0];
+}
+
+/**
+ * Apply a previously validated Canvas Protocol plan to tldraw. The caller owns
+ * the surrounding editor transaction and history stopping point.
+ */
+export function applyCanvasOpPlan(editor: Editor, plan: CanvasOpPlan) {
+  const createdIds = new Map<string, TLShapeId>();
+  const resolveId = (id: string) => createdIds.get(id) ?? (id as TLShapeId);
+
+  for (const step of plan.steps) {
+    if (step.kind === 'create') {
+      const [id] = addCanvasShapes(editor, [{
+        kind: step.op.kind,
+        semantic_id: step.op.semantic_id,
+        x: step.op.x,
+        y: step.op.y,
+        ...(step.op.w === undefined ? {} : { w: step.op.w }),
+        ...(step.op.h === undefined ? {} : { h: step.op.h }),
+        ...(step.op.end_x === undefined ? {} : { end_x: step.op.end_x }),
+        ...(step.op.end_y === undefined ? {} : { end_y: step.op.end_y }),
+        ...(step.op.text === undefined ? {} : { text: step.op.text }),
+        ...(step.op.color === undefined ? {} : { color: step.op.color }),
+        ...(step.op.fill === undefined ? {} : { fill: step.op.fill }),
+      }], {
+        coordinateSpace: 'page',
+        focusAfter: false,
+        select: false,
+        recordHistory: false,
+        parentId: editor.getCurrentPageId(),
+        fogwood: { role: 'agent-created' },
+      });
+      if (!id) throw new Error(`Canvas Protocol could not create ${step.op.semantic_id}.`);
+      createdIds.set(step.pending_id, id);
+      if (step.op.kind !== 'arrow') editor.resizeToBounds([id], step.bounds);
+      continue;
+    }
+
+    if (step.kind === 'draw') {
+      const id = createShapeId();
+      const localPoints = step.op.points.map((point) => ({
+        x: point.x - step.bounds.x,
+        y: point.y - step.bounds.y,
+      }));
+      editor.createShapes([{
+        id,
+        type: 'draw',
+        x: step.bounds.x,
+        y: step.bounds.y,
+        parentId: editor.getCurrentPageId(),
+        meta: shapeMeta(String(id), {
+          semantic_id: step.op.semantic_id,
+          semantic_id_source: 'stable',
+          role: 'agent-drawing',
+        }),
+        props: {
+          segments: [{ type: 'free', path: b64Vecs.encodePoints2D(localPoints), dim: 2 }],
+          color: step.op.color ?? 'black',
+          fill: step.op.fill ?? 'none',
+          dash: 'draw',
+          size: step.op.size ?? 'm',
+          isComplete: true,
+          isClosed: step.op.closed ?? false,
+          isPen: false,
+          scale: 1,
+          scaleX: 1,
+          scaleY: 1,
+        },
+      }] as never);
+      createdIds.set(step.pending_id, id);
+      continue;
+    }
+
+    if (step.kind === 'connect') {
+      const fromId = resolveId(step.op.from_id);
+      const toId = resolveId(step.op.to_id);
+      const fromShape = editor.getShape(fromId);
+      const toShape = editor.getShape(toId);
+      const fromBounds = fromShape ? editor.getShapePageBounds(fromShape) : undefined;
+      const toBounds = toShape ? editor.getShapePageBounds(toShape) : undefined;
+      if (!fromShape || !toShape || !fromBounds || !toBounds) throw new Error('Bound connector endpoint no longer exists.');
+      const start = { x: fromBounds.x + fromBounds.w / 2, y: fromBounds.y + fromBounds.h / 2 };
+      const end = { x: toBounds.x + toBounds.w / 2, y: toBounds.y + toBounds.h / 2 };
+      const [arrowId] = addCanvasShapes(editor, [{
+        kind: 'arrow',
+        semantic_id: step.op.semantic_id,
+        x: start.x,
+        y: start.y,
+        end_x: end.x,
+        end_y: end.y,
+        ...(step.op.text === undefined ? {} : { text: step.op.text }),
+        ...(step.op.color === undefined ? {} : { color: step.op.color }),
+      }], {
+        coordinateSpace: 'page',
+        focusAfter: false,
+        select: false,
+        recordHistory: false,
+        parentId: editor.getCurrentPageId(),
+        fogwood: {
+          role: 'bound-connector',
+          ...(step.from.semantic_id ? { source_semantic_id: step.from.semantic_id } : {}),
+          ...(step.to.semantic_id ? { target_semantic_id: step.to.semantic_id } : {}),
+        },
+      });
+      if (!arrowId) throw new Error(`Canvas Protocol could not create bound connector ${step.op.semantic_id}.`);
+      createdIds.set(step.pending_id, arrowId);
+      editor.createBindings([{
+        type: 'arrow',
+        fromId: arrowId,
+        toId: fromId,
+        props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false, snap: 'none' },
+      }, {
+        type: 'arrow',
+        fromId: arrowId,
+        toId,
+        props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false, snap: 'none' },
+      }] as never);
+      const bindings = editor.getBindingsFromShape(arrowId, 'arrow');
+      const hasStart = bindings.some((binding) => binding.fromId === arrowId && binding.toId === fromId && binding.props.terminal === 'start');
+      const hasEnd = bindings.some((binding) => binding.fromId === arrowId && binding.toId === toId && binding.props.terminal === 'end');
+      if (bindings.length !== 2 || !hasStart || !hasEnd) {
+        editor.deleteShapes([arrowId]);
+        createdIds.delete(step.pending_id);
+        throw new Error('The reviewed connector did not create exactly two native bindings; no connector was retained.');
+      }
+      continue;
+    }
+
+    if (step.kind === 'variant') {
+      const id = createVariantShape(editor, {
+        sourceId: String(resolveId(step.op.id)),
+        semanticId: step.op.semantic_id,
+        x: step.bounds.x,
+        y: step.bounds.y,
+        lineageSourceId: step.lineage.lineage_source_id,
+        parentVariantId: step.lineage.parent_variant_id,
+      });
+      createdIds.set(step.pending_id, id);
+      continue;
+    }
+
+    if (step.kind === 'update') {
+      const shape = editor.getShape(resolveId(step.op.id));
+      if (!shape) throw new Error(`Canvas Protocol update target ${step.op.id} no longer exists.`);
+      const props: Record<string, unknown> = {};
+      if (step.op.text !== undefined) {
+        if (shape.type === 'frame') props.name = step.op.text;
+        else props.richText = toRichText(step.op.text);
+      }
+      if (step.op.color !== undefined) {
+        props.color = step.op.color;
+        if (isRecord(shape.props) && 'labelColor' in shape.props) props.labelColor = step.op.color;
+      }
+      if (step.op.fill !== undefined) props.fill = step.op.fill;
+      editor.updateShapes([{
+        id: shape.id,
+        type: shape.type,
+        ...(step.op.x === undefined ? {} : { x: step.op.x }),
+        ...(step.op.y === undefined ? {} : { y: step.op.y }),
+        ...(step.op.rotation === undefined ? {} : { rotation: step.op.rotation }),
+        ...(step.op.opacity === undefined ? {} : { opacity: step.op.opacity }),
+        ...(Object.keys(props).length === 0 ? {} : { props }),
+      }] as never);
+      continue;
+    }
+
+    if (step.kind === 'resize') {
+      editor.resizeToBounds([resolveId(step.op.id)], step.after);
+      continue;
+    }
+
+    if (step.kind === 'arrange') {
+      const updates = step.placements.map((placement) => {
+        const shape = editor.getShape(resolveId(placement.id));
+        if (!shape) throw new Error(`Canvas Protocol arrangement target ${placement.id} no longer exists.`);
+        return {
+          id: shape.id,
+          type: shape.type,
+          x: placement.x,
+          y: placement.y,
+          rotation: placement.rotation,
+        };
+      });
+      editor.updateShapes(updates as never);
+      continue;
+    }
+
+    if (step.kind === 'group') {
+      const groupId = createShapeId();
+      const childIds = step.op.ids.map(resolveId);
+      const childShapes = childIds.flatMap((id) => {
+        const shape = editor.getShape(id);
+        return shape ? [shape] : [];
+      });
+      if (childShapes.length !== childIds.length) throw new Error('Canvas Protocol group target no longer exists.');
+      const highestIndex = [...childShapes].sort((left, right) => String(left.index).localeCompare(String(right.index))).at(-1)?.index;
+      editor.createShapes([{
+        id: groupId,
+        type: 'group',
+        parentId: editor.getCurrentPageId(),
+        ...(highestIndex === undefined ? {} : { index: highestIndex }),
+        x: step.bounds.x,
+        y: step.bounds.y,
+        opacity: 1,
+        meta: shapeMeta(String(groupId), {
+          semantic_id: step.op.semantic_id,
+          semantic_id_source: 'stable',
+          role: 'agent-group',
+        }),
+        props: {},
+      }] as never);
+      editor.reparentShapes(childIds, groupId);
+      continue;
+    }
+
+    if (step.kind === 'ungroup') {
+      for (const id of step.op.ids.map(resolveId)) {
+        const group = editor.getShape(id);
+        if (!group || group.type !== 'group') throw new Error(`Canvas Protocol group target ${id} no longer exists.`);
+        const childIds = editor.getSortedChildIdsForParent(group.id);
+        editor.reparentShapes(childIds, group.parentId, group.index);
+        editor.deleteShapes([group.id]);
+      }
+      continue;
+    }
+
+    const ids = step.op.ids.map(resolveId);
+    if (step.kind === 'delete') {
+      editor.deleteShapes(ids);
+      continue;
+    }
+    if (step.op.position === 'front') editor.bringToFront(ids);
+    else if (step.op.position === 'back') editor.sendToBack(ids);
+    else if (step.op.position === 'forward') editor.bringForward(ids, { considerAllShapes: true });
+    else editor.sendBackward(ids, { considerAllShapes: true });
+  }
+}
+
+function preflightCanvasOpPlans(editor: Editor, plans: readonly CanvasOpPlan[]) {
+  for (const plan of plans) {
+    for (const step of plan.steps) {
+      if (step.kind === 'connect') {
+        if (typeof editor.canBindShapes !== 'function' || typeof editor.createBindings !== 'function' || typeof editor.getBindingsFromShape !== 'function') {
+          return 'This tldraw editor does not expose the native binding APIs required by the reviewed connector.';
+        }
+        try {
+          const startAllowed = editor.canBindShapes({ fromShape: 'arrow', toShape: step.from.type as TLShape['type'], binding: 'arrow' });
+          const endAllowed = editor.canBindShapes({ fromShape: 'arrow', toShape: step.to.type as TLShape['type'], binding: 'arrow' });
+          if (!startAllowed || !endAllowed) return 'The reviewed connector endpoints are not compatible with native tldraw arrow bindings.';
+        } catch {
+          return 'The reviewed connector could not pass the native tldraw binding preflight.';
+        }
+      }
+      if (step.kind === 'variant') {
+        const source = editor.getShape(step.op.id as TLShapeId);
+        if (!source || source.type !== step.source.type) return 'The reviewed variant source no longer matches the inspected native shape.';
+        if (source.type === 'image' && !hasReusableLocalImageAsset(editor, source)) return 'The reviewed image variant source does not have a current device-local asset.';
+      }
+    }
+  }
+  return undefined;
+}
+
+function preflightProposalCanvasOps(editor: Editor, proposal: ProposalV1) {
+  const context = proposalContext(editor);
+  const plans: CanvasOpPlan[] = [];
+  for (const action of proposal.actions) {
+    if (action.type !== 'canvas_ops') continue;
+    const result = planCanvasOps(context.items, action.ops, context.page_id);
+    if (!result.ok) return result.errors.map((error) => error.message).join(' ').slice(0, 300);
+    plans.push(result.plan);
+  }
+  return preflightCanvasOpPlans(editor, plans);
 }
 
 export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
@@ -1428,6 +1959,7 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
   const spatialContext = spatialContextForEditor(editor);
   const spatialMovePlans = new Map<ProposalAction, ReturnType<typeof planSpatialMoves>>();
   const relationshipPlans = new Map<ProposalAction, SemanticRelationship[]>();
+  const canvasOpPlans = new Map<ProposalAction, CanvasOpPlan>();
   // v2 relationships intentionally arrive in the same proposal as their
   // native endpoints. Validate those endpoints before mutation by projecting
   // the bounded composition shapes into the spatial grammar; the real arrows
@@ -1465,12 +1997,19 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
     : spatialContext;
   try {
     for (const action of actions) {
+      if (action.type === 'canvas_ops') {
+        const result = planCanvasOps(spatialContext.items, action.ops, spatialContext.page_id);
+        if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
+        canvasOpPlans.set(action, result.plan);
+      }
       if (action.type === 'apply_spatial_moves') spatialMovePlans.set(action, planSpatialMoves(spatialContext, action));
       if (action.type === 'add_relationships') relationshipPlans.set(action, [...planRelationships(relationshipContext, action.relationships).relationships]);
     }
   } catch (error) {
     return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The spatial proposal was rejected before mutation.' };
   }
+  const canvasAdapterError = preflightCanvasOpPlans(editor, [...canvasOpPlans.values()]);
+  if (canvasAdapterError) return { ok: false as const, status: 'ERROR' as const, message: canvasAdapterError };
   const compareBlocksByScope = new Map<string, TLShapeId[]>();
   const createdAssetIds: TLAssetId[] = [];
   try {
@@ -1484,7 +2023,11 @@ export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
           role: recipeMeta ? 'recipe-content' : 'proposal-content',
           ...(recipeMeta ?? {}),
         };
-        if (action.type === 'add_blocks') {
+        if (action.type === 'canvas_ops') {
+          const plan = canvasOpPlans.get(action);
+          if (!plan) throw new Error('Canvas Protocol plan was not retained through Apply.');
+          applyCanvasOpPlan(editor, plan);
+        } else if (action.type === 'add_blocks') {
           const ids = addSurfaceBlocks(editor, action.blocks, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
           if (recipeMeta?.recipe_id === 'compare-and-decide' && recipeMeta.recipe_instance_id) {
             compareBlocksByScope.set(recipeMeta.recipe_instance_id, ids);
@@ -1637,24 +2180,86 @@ export function registerSurfaceTools(
     },
     {
       name: 'fogwood-capabilities',
-      title: 'Search Fogwood capabilities',
-      description: 'Search the bounded host-facing Fogwood vocabulary of materials, moves, adapters, aesthetics, algorithms, provocations, primitives, and recipes. Results contain schemas and definitions only; there is no executable code or fetch URL, and host availability must be observed separately.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          query: { type: 'string', maxLength: 120 },
-          kind: { type: 'string', enum: ['tool', 'action', 'primitive', 'recipe'] },
-          page_size: { type: 'integer', minimum: 1, maximum: 20 },
-          cursor: { type: 'string', pattern: '^\\d+$', maxLength: 16 },
-        },
-      },
+      title: 'Discover or plan Fogwood capabilities',
+      description: 'Search, inspect availability, plan exact native semantics, or route and compose any of the 213 pinned tldraw example capabilities against the inspected revision and context. Routing is pure and read-only; page mutations remain non-speculative and require fogwood-propose followed by page-owned Apply.',
+      inputSchema: CAPABILITY_INPUT_SCHEMA,
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: (input) => {
         const value = isRecord(input) ? input : {};
-        if (Object.keys(value).some((key) => !['query', 'kind', 'page_size', 'cursor'].includes(key))) return textResult({ status: 'INVALID_INPUT', error: 'Unknown capability-search field.' }, true);
+        const mode = value.mode === undefined ? 'search' : value.mode;
+        if (!['search', 'plan', 'route', 'available'].includes(String(mode))) return textResult({ status: 'INVALID_INPUT', error: 'mode must be search, plan, route, or available.' }, true);
+        const allowedFields = mode === 'plan'
+          ? ['mode', 'intent', 'base_revision', 'context_token', 'scope', 'desired_effects', 'planned_item_count', 'max_steps']
+          : mode === 'route'
+            ? ['mode', 'intent', 'example_ids', 'base_revision', 'context_token', 'scope', 'max_steps']
+          : mode === 'available'
+            ? ['mode', 'base_revision', 'context_token']
+            : ['mode', 'query', 'kind', 'status', 'category', 'page_size', 'cursor'];
+        if (Object.keys(value).some((key) => !allowedFields.includes(key))) return textResult({ status: 'INVALID_INPUT', error: `Unknown capability-${mode} field.` }, true);
+        if (mode === 'available') {
+          if (typeof value.base_revision !== 'string' || value.base_revision.length < 1 || value.base_revision.length > 120) return textResult({ status: 'INVALID_INPUT', error: 'base_revision must contain 1-120 characters.' }, true);
+          if (typeof value.context_token !== 'string' || value.context_token.length < 1 || value.context_token.length > 64) return textResult({ status: 'INVALID_INPUT', error: 'context_token must contain 1-64 characters.' }, true);
+          const liveRevision = currentRevision(editor);
+          if (value.base_revision !== liveRevision) return textResult({ status: 'STALE_STATE', message: 'The inspected canvas revision is no longer current.', recovery: 'Call fogwood-inspect, then retry fogwood-capabilities with its returned base_revision and context_token.' }, true);
+          const liveContextToken = contextTokenForEditor(editor);
+          if (value.context_token !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The inspected semantic context is no longer current.', recovery: 'Call fogwood-inspect, then retry fogwood-capabilities with its returned base_revision and context_token.' }, true);
+          const manifests = availableCapabilitiesForEditor(editor);
+          return textResult({
+            status: 'available',
+            base_revision: liveRevision,
+            context_token: liveContextToken,
+            ontology_version: FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
+            registry_version: FOGWOOD_REGISTRY_VERSION,
+            manifests,
+            counts: {
+              available: manifests.filter((entry) => entry.availability === 'available').length,
+              blocked: manifests.filter((entry) => entry.availability === 'blocked').length,
+            },
+          });
+        }
+        if (mode === 'plan') {
+          if (typeof value.intent !== 'string' || value.intent.length < 1 || value.intent.length > 500) return textResult({ status: 'INVALID_INPUT', error: 'intent must contain 1-500 characters.' }, true);
+          if (typeof value.base_revision !== 'string' || value.base_revision.length < 1 || value.base_revision.length > 120) return textResult({ status: 'INVALID_INPUT', error: 'base_revision must contain 1-120 characters.' }, true);
+          if (typeof value.context_token !== 'string' || value.context_token.length < 1 || value.context_token.length > 64) return textResult({ status: 'INVALID_INPUT', error: 'context_token must contain 1-64 characters.' }, true);
+          if (!['new', 'selection', 'page'].includes(String(value.scope))) return textResult({ status: 'INVALID_INPUT', error: 'scope must be new, selection, or page.' }, true);
+          if (value.desired_effects !== undefined && !isValidDesiredEffects(value.desired_effects)) {
+            return textResult({ status: 'INVALID_INPUT', error: 'desired_effects contains an unsupported or sparse value.' }, true);
+          }
+          if (value.planned_item_count !== undefined && (typeof value.planned_item_count !== 'number' || !Number.isInteger(value.planned_item_count) || value.planned_item_count < 0 || value.planned_item_count > 24)) return textResult({ status: 'INVALID_INPUT', error: 'planned_item_count must be an integer from 0 to 24.' }, true);
+          if (value.max_steps !== undefined && (typeof value.max_steps !== 'number' || !Number.isInteger(value.max_steps) || value.max_steps < 1 || value.max_steps > 12)) return textResult({ status: 'INVALID_INPUT', error: 'max_steps must be an integer from 1 to 12.' }, true);
+          const result = planCapabilityRequestForEditor(editor, value as unknown as FogwoodCapabilityPlanningRequest);
+          const staleContext = result.errors.find((error) => error.code === 'STALE_CONTEXT');
+          if (staleContext) return textResult({ status: 'STALE_CONTEXT', message: staleContext.message, recovery: staleContext.recovery, errors: result.errors }, true);
+          onActivity?.('Fogwood planned capabilities', `${result.steps.length} qualified capability steps returned without changing the page.`);
+          return textResult(result, result.status === 'refused');
+        }
+        if (mode === 'route') {
+          if (typeof value.intent !== 'string' || value.intent.length < 1 || value.intent.length > 500) return textResult({ status: 'INVALID_INPUT', error: 'intent must contain 1-500 characters.' }, true);
+          if (typeof value.base_revision !== 'string' || value.base_revision.length < 1 || value.base_revision.length > 120) return textResult({ status: 'INVALID_INPUT', error: 'base_revision must contain 1-120 characters.' }, true);
+          if (typeof value.context_token !== 'string' || value.context_token.length < 1 || value.context_token.length > 64) return textResult({ status: 'INVALID_INPUT', error: 'context_token must contain 1-64 characters.' }, true);
+          if (!['new', 'selection', 'page'].includes(String(value.scope))) return textResult({ status: 'INVALID_INPUT', error: 'scope must be new, selection, or page.' }, true);
+          if (value.example_ids !== undefined) {
+            if (!Array.isArray(value.example_ids) || value.example_ids.length < 1 || value.example_ids.length > 24) return textResult({ status: 'INVALID_INPUT', error: 'example_ids must contain 1-24 exact example IDs.' }, true);
+            for (let index = 0; index < value.example_ids.length; index += 1) {
+              if (!(index in value.example_ids) || typeof value.example_ids[index] !== 'string' || value.example_ids[index].length < 1 || value.example_ids[index].length > 160) return textResult({ status: 'INVALID_INPUT', error: 'example_ids must be a dense array of bounded strings.' }, true);
+            }
+          }
+          if (value.max_steps !== undefined && (typeof value.max_steps !== 'number' || !Number.isInteger(value.max_steps) || value.max_steps < 1 || value.max_steps > 24)) return textResult({ status: 'INVALID_INPUT', error: 'max_steps must be an integer from 1 to 24.' }, true);
+          const liveRevision = currentRevision(editor);
+          if (value.base_revision !== liveRevision) return textResult({ status: 'STALE_STATE', message: 'The inspected canvas revision is no longer current.', recovery: 'Call fogwood-inspect, then retry route mode with its returned base_revision and context_token.' }, true);
+          const liveContextToken = contextTokenForEditor(editor);
+          if (value.context_token !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The inspected semantic context is no longer current.', recovery: 'Call fogwood-inspect, then retry route mode with its returned base_revision and context_token.' }, true);
+          const result = compileFullSurfaceRequest(
+            value as unknown as Parameters<typeof compileFullSurfaceRequest>[0],
+            capabilityFactsForEditor(editor),
+          );
+          onActivity?.('Fogwood routed full-surface capabilities', `${result.steps.length} exact example routes resolved without changing the page.`);
+          return textResult(result, result.status === 'refused');
+        }
         if (value.query !== undefined && (typeof value.query !== 'string' || value.query.length > 120)) return textResult({ status: 'INVALID_INPUT', error: 'query must be at most 120 characters.' }, true);
-        if (value.kind !== undefined && !['tool', 'action', 'primitive', 'recipe'].includes(String(value.kind))) return textResult({ status: 'INVALID_INPUT', error: 'kind must be tool, action, primitive, or recipe.' }, true);
+        if (value.kind !== undefined && !['tool', 'action', 'primitive', 'capability', 'example'].includes(String(value.kind))) return textResult({ status: 'INVALID_INPUT', error: 'kind must be tool, action, primitive, capability, or example.' }, true);
+        if (value.status !== undefined && value.status !== 'callable') return textResult({ status: 'INVALID_INPUT', error: 'status must be callable.' }, true);
+        if (value.category !== undefined && (typeof value.category !== 'string' || value.category.length > 80)) return textResult({ status: 'INVALID_INPUT', error: 'category must be at most 80 characters.' }, true);
         if (value.page_size !== undefined && (typeof value.page_size !== 'number' || !Number.isInteger(value.page_size) || value.page_size < 1 || value.page_size > 20)) return textResult({ status: 'INVALID_INPUT', error: 'page_size must be an integer from 1 to 20.' }, true);
         if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 16)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
         const result = searchCapabilities(value as CapabilitySearchInput);
@@ -1665,43 +2270,56 @@ export function registerSurfaceTools(
     {
       name: 'fogwood-propose',
       title: 'Propose a Fogwood change',
-      description: 'Validate and stage one bounded typed composition or page proposal against an inspect content_revision. The proposal never mutates the canvas; a person must review the diff and choose page Apply or Reject.',
-      inputSchema: PROPOSAL_INPUT_SCHEMA,
+      description: 'Validate and stage one bounded typed proposal against an inspect content_revision and context_token. Use canvas_ops to mix native creation, drawing, bound connectors, preserved variants, editing, arrangement, grouping, deletion, and z-order in one atomic reviewed change. Staging never mutates the canvas; a person must choose page Apply or Reject.',
+      inputSchema: PROPOSAL_TOOL_INPUT_SCHEMA,
       annotations: { untrustedContentHint: true },
       execute: (input) => {
+        if (!isRecord(input)) return textResult({ status: 'INVALID_INPUT', error: 'The public Fogwood proposal must be an object.' }, true);
+        if (typeof input.base_revision !== 'string' || input.base_revision.length < 1 || input.base_revision.length > 120) return textResult({ status: 'INVALID_INPUT', error: 'base_revision must contain 1-120 characters.' }, true);
+        if (typeof input.context_token !== 'string' || input.context_token.length < 1 || input.context_token.length > 64) return textResult({ status: 'INVALID_INPUT', error: 'context_token must contain 1-64 characters.' }, true);
+        const liveRevision = currentRevision(editor);
+        if (input.base_revision !== liveRevision) return textResult({ status: 'STALE_STATE', message: 'The inspected canvas revision is no longer current.', recovery: 'Call fogwood-inspect, then retry fogwood-propose with its returned base_revision and context_token.' }, true);
+        const liveContextToken = contextTokenForEditor(editor);
+        if (input.context_token !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The inspected semantic context is no longer current.', recovery: 'Call fogwood-inspect, then retry fogwood-propose with its returned base_revision and context_token.' }, true);
+        const proposalInput = { ...input };
+        delete proposalInput.context_token;
+        const publicAction = isRecord(input)
+          && Array.isArray(input.actions)
+          && input.actions.length === 1
+          && isRecord(input.actions[0])
+          ? input.actions[0]
+          : null;
+        if (!publicAction || !['canvas_ops', 'add_materials'].includes(String(publicAction.type))) {
+          return textResult({
+            status: 'INVALID_INPUT',
+            error: 'The public Fogwood protocol accepts exactly one canvas_ops or add_materials action per proposal.',
+          }, true);
+        }
         if (isRecord(input) && Array.isArray(input.actions) && input.actions.some((action) => isRecord(action) && action.type === 'add_materials')) {
-          return validateProposalAsync(input, proposalContext(editor), { decodeRaster }).then((validation) => {
+          return validateProposalAsync(proposalInput, proposalContext(editor), { decodeRaster }).then((validation) => {
             if (!validation.ok) {
               const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
               return textResult({ status: stale ? 'STALE_STATE' : 'INVALID_PROPOSAL', errors: validation.errors }, true);
             }
+            if (contextTokenForEditor(editor) !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The semantic context changed while the material was being decoded.', recovery: 'Call fogwood-inspect, then retry fogwood-propose with its returned base_revision and context_token.' }, true);
             const staged = controller.stage(validation.proposal, validation.diff);
             if (staged.status !== 'STAGED') return textResult({ status: staged.status, message: staged.message }, true);
             onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
             return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
           });
         }
-        const validation = validateProposal(input, proposalContext(editor));
+        const validation = validateProposal(proposalInput, proposalContext(editor));
         if (!validation.ok) {
           const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
           return textResult({ status: stale ? 'STALE_STATE' : 'INVALID_PROPOSAL', errors: validation.errors }, true);
         }
+        if (contextTokenForEditor(editor) !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The semantic context changed before the proposal was staged.', recovery: 'Call fogwood-inspect, then retry fogwood-propose with its returned base_revision and context_token.' }, true);
+        const adapterError = preflightProposalCanvasOps(editor, validation.proposal);
+        if (adapterError) return textResult({ status: 'ADAPTER_UNAVAILABLE', message: adapterError }, true);
         const staged = controller.stage(validation.proposal, validation.diff);
         if (staged.status !== 'STAGED') return textResult({ status: staged.status, message: staged.message }, true);
         onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
         return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
-      },
-    },
-    {
-      ...FOGWOOD_BAZAAR_TOOL,
-      title: 'Browse the Fogwood Bazaar',
-      execute: (input) => {
-        const result = FOGWOOD_BAZAAR_TOOL.execute(input);
-        if (result.ok) {
-          const count = 'results' in result ? result.results.length : Object.keys(result.sections).length;
-          onActivity?.('Fogwood read the local Bazaar', `${count} bounded local catalog result${count === 1 ? '' : 's'} returned.`);
-        }
-        return textResult(result, !result.ok);
       },
     },
   ];
