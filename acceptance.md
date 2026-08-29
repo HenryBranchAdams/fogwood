@@ -718,6 +718,37 @@ dashboard-like explanatory furniture.
 
 ## Remaining boundaries
 
+## Origin-tagged changes-since inspection — issue #5
+
+`fogwood-inspect` now owns an optional bounded delta lane without adding a
+fourth tool. The page-local `fogwood.change-ledger.v1` retains at most 256
+entries and 512 KiB across at most eight device-local pages. Entries cap native,
+semantic, and relationship identities at 64 each and say when that projection
+is incomplete. `since_sequence`, `change_page_size`, and `change_cursor` return
+recent changes or `CHANGE_CURSOR_EXPIRED` with an explicit full-inspect recovery.
+The canvas remains authoritative; the ledger cannot mutate it or authorize
+Apply.
+
+The public tldraw `Store.listen({scope:'document'})` adapter ignores ephemeral
+instance records, filters active-page document records, and assigns `human`,
+`fogwood:<plan_id>`, `system:undo`, `system:redo`, or `system:migration` origins.
+Exact revision history distinguishes Undo and Redo without treating the ledger
+as history authority. Inspect also returns auto-acknowledged Fogwood sequences
+separately from wake-worthy human/system sequences, so a relay can carry only
+binding ID, latest sequence, and revision while canvas facts remain in WebMCP.
+
+Focused tests cover storage retention, byte and identity bounds, pagination,
+cursor expiry, reload, page filtering, plan correlation, human changes,
+Undo/Redo classification, cleanup, and public inspect compatibility. Local
+Browser at `http://localhost:4211/` observed sequence 3 tagged to exact plan
+`sha256:394d4196a0463aed53fc0485d27e505ed2da473c5a8ee1f895eaa9a480afb78c`.
+A real tldraw selection plus keyboard geometry nudge moved semantic ID
+`ledger:claimed-origin` from x=620 to x=621 and `changes-since` returned sequence
+4, origin `human`, kind `update`, the native ID, semantic ID, and current
+geometry on the same inspect. The in-app Browser surface did not provide a
+low-level pointer-drag primitive; the equivalent real user geometry edit is
+qualified, while literal drag automation remains a browser-harness boundary.
+
 ## Prepared-plan identity and spatial review — issues #2 and #4
 
 Fogwood now assigns every completely prepared plan a page-computed SHA-256

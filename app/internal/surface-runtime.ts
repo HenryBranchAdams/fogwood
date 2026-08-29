@@ -47,6 +47,8 @@ import { isPreparedMaterial, MATERIAL_LIMITS, SUPPORTED_MATERIAL_MIME_TYPES } fr
 import type { MaterialDecoder, PreparedMaterial } from '../fogwood-materials';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { buildPreparedCanvasPreview } from '../review/prepared-plan-preview.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { createEditorChangeCapture, createFogwoodChangeLedger, FOGWOOD_CHANGE_STORAGE_KEY } from '../runtime/change-ledger.ts';
 import type { JsonObject } from '@tldraw/utils';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { sha256Hex } from '../fogwood-identities.ts';
@@ -2090,6 +2092,38 @@ export function registerSurfaceTools(
   onProposalLifecycle?: (event: ProposalLifecycleEvent) => void,
   options: SurfaceMaterialOptions = {},
 ) {
+  const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
+  let memoryChangeLedger = '';
+  const changeStorage = {
+    read: () => {
+      try { return containerDocument.defaultView?.localStorage?.getItem(FOGWOOD_CHANGE_STORAGE_KEY) ?? (memoryChangeLedger || null); }
+      catch { return memoryChangeLedger || null; }
+    },
+    write: (value: string) => {
+      memoryChangeLedger = value;
+      try { containerDocument.defaultView?.localStorage?.setItem(FOGWOOD_CHANGE_STORAGE_KEY, value); } catch { /* Evidence storage is optional and never mutation authority. */ }
+    },
+  };
+  const changeLedgers = new Map<string, ReturnType<typeof createFogwoodChangeLedger>>();
+  const changeLedger = () => {
+    const pageId = String(editor.getCurrentPageId());
+    let ledger = changeLedgers.get(pageId);
+    if (!ledger) {
+      ledger = createFogwoodChangeLedger(changeStorage, pageId);
+      changeLedgers.set(pageId, ledger);
+    }
+    return ledger;
+  };
+  const changeCapture = createEditorChangeCapture({
+    store: editor.store,
+    getLedger: changeLedger,
+    getRevision: () => currentRevision(editor),
+    getCurrentPageId: () => String(editor.getCurrentPageId()),
+    getCurrentRecordIds: () => {
+      const content = pageContent(editor);
+      return new Set([String(editor.getCurrentPageId()), ...content.shapes.map((record) => String(record.id)), ...content.bindings.map((record) => String(record.id)), ...content.assets.map((record) => String(record.id))]);
+    },
+  });
   const baseController = createFogwoodSurface(
     {
       getRevision: () => currentRevision(editor),
@@ -2104,7 +2138,7 @@ export function registerSurfaceTools(
       },
       prepare: (proposal, diff) => prepareProposalPlan(editor, proposal, diff),
       apply: (plan) => 'action_lowerings' in plan
-        ? executePreparedProposal(editor, plan as EditorPreparedCanvasPlan)
+        ? changeCapture.runWithOrigin(`fogwood:${plan.plan_id}`, () => executePreparedProposal(editor, plan as EditorPreparedCanvasPlan))
         : { ok: false, status: 'ERROR', message: 'The reviewed proposal is missing its page-owned lowering.' },
     },
     onProposalChange,
@@ -2117,7 +2151,6 @@ export function registerSurfaceTools(
   const controller: SurfaceToolController = lifecycleController;
   onController?.(controller);
 
-  const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
   const decodeRaster = options.decodeRaster ?? browserRasterDecoder(containerDocument);
 
   const tools: WebMcpTool[] = [
@@ -2129,14 +2162,20 @@ export function registerSurfaceTools(
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: (input) => {
         const value = isRecord(input) ? input : {};
-        if (Object.keys(value).some((key) => !['page_size', 'cursor', 'binding_page_size', 'binding_cursor'].includes(key))) return textResult({ status: 'INVALID_INPUT', error: 'Unknown inspect field.' }, true);
+        if (Object.keys(value).some((key) => !['page_size', 'cursor', 'binding_page_size', 'binding_cursor', 'since_sequence', 'change_page_size', 'change_cursor'].includes(key))) return textResult({ status: 'INVALID_INPUT', error: 'Unknown inspect field.' }, true);
         if (value.page_size !== undefined && (typeof value.page_size !== 'number' || !Number.isInteger(value.page_size) || value.page_size < 1 || value.page_size > 128)) return textResult({ status: 'INVALID_INPUT', error: 'page_size must be an integer from 1 to 128.' }, true);
         if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 12)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
         if (value.binding_page_size !== undefined && (typeof value.binding_page_size !== 'number' || !Number.isInteger(value.binding_page_size) || value.binding_page_size < 1 || value.binding_page_size > 256)) return textResult({ status: 'INVALID_INPUT', error: 'binding_page_size must be an integer from 1 to 256.' }, true);
         if (value.binding_cursor !== undefined && (typeof value.binding_cursor !== 'string' || !/^\d+$/.test(value.binding_cursor) || value.binding_cursor.length > 12)) return textResult({ status: 'INVALID_INPUT', error: 'binding_cursor must be a bounded numeric string.' }, true);
+        if (value.since_sequence !== undefined && (typeof value.since_sequence !== 'number' || !Number.isSafeInteger(value.since_sequence) || value.since_sequence < 0)) return textResult({ status: 'INVALID_INPUT', error: 'since_sequence must be a non-negative safe integer.' }, true);
+        if (value.change_page_size !== undefined && (typeof value.change_page_size !== 'number' || !Number.isInteger(value.change_page_size) || value.change_page_size < 1 || value.change_page_size > 128)) return textResult({ status: 'INVALID_INPUT', error: 'change_page_size must be an integer from 1 to 128.' }, true);
+        if (value.change_cursor !== undefined && (typeof value.change_cursor !== 'number' || !Number.isSafeInteger(value.change_cursor) || value.change_cursor < 0)) return textResult({ status: 'INVALID_INPUT', error: 'change_cursor must be a non-negative safe integer.' }, true);
         const inspected = baseController.read({ kind: 'inspect', input: value }) as ReturnType<typeof inspectSurface>;
+        const changes = value.since_sequence === undefined
+          ? { change_sequence: changeLedger().latestSequence() }
+          : changeLedger().read({ since_sequence: value.since_sequence, page_size: typeof value.change_page_size === 'number' ? value.change_page_size : undefined, cursor: typeof value.change_cursor === 'number' ? value.change_cursor : undefined });
         onActivity?.('Fogwood inspected the page', `${inspected.counts.shapes} canvas items read without changing them.`);
-        return textResult(inspected);
+        return textResult({ ...inspected, ...changes });
       },
     },
     {
@@ -2298,10 +2337,14 @@ export function registerSurfaceTools(
   ];
 
   const ContainerAbortController = containerDocument.defaultView?.AbortController ?? AbortController;
-  return registerWebMcpTools({
+  const unregister = registerWebMcpTools({
     tools,
     getModelContext: () => containerDocument.modelContext,
     createAbortController: () => new ContainerAbortController(),
     onConnection,
   });
+  return () => {
+    changeCapture.dispose();
+    unregister();
+  };
 }

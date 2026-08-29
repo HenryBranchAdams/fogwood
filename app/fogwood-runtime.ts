@@ -542,6 +542,9 @@ export const INSPECT_INPUT_SCHEMA: CapabilitySchema = {
     cursor: { type: 'string', pattern: '^\\d+$', maxLength: 12 },
     binding_page_size: { type: 'integer', minimum: 1, maximum: 256 },
     binding_cursor: { type: 'string', pattern: '^\\d+$', maxLength: 12 },
+    since_sequence: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    change_page_size: { type: 'integer', minimum: 1, maximum: 128 },
+    change_cursor: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   },
 };
 

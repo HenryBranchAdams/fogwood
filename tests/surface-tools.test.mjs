@@ -766,6 +766,57 @@ test('public prepared-plan identity makes exact retries idempotent and correlate
   cleanup();
 });
 
+test('fogwood-inspect returns bounded plan-origin changes and explicit undo deltas through the existing tool', async () => {
+  const editor = new CanvasProposalEditor();
+  let storeListener = () => {};
+  editor.store.listen = (listener, filters) => {
+    assert.deepEqual(filters, { scope: 'document' });
+    storeListener = listener;
+    return () => { storeListener = () => {}; };
+  };
+  const originalRun = editor.run.bind(editor);
+  editor.run = (fn, options) => {
+    const before = new Map(editor.shapes.map((shape) => [shape.id, clone(shape)]));
+    const result = originalRun(fn, options);
+    const added = Object.fromEntries(editor.shapes.filter((shape) => !before.has(shape.id)).map((shape) => [shape.id, clone(shape)]));
+    storeListener({ source: 'user', changes: { added, updated: {}, removed: {} } });
+    return result;
+  };
+  const originalUndo = editor.undo.bind(editor);
+  editor.undo = () => {
+    const before = new Map(editor.shapes.map((shape) => [shape.id, clone(shape)]));
+    originalUndo();
+    const removed = Object.fromEntries([...before].filter(([id]) => !editor.shapes.some((shape) => shape.id === id)));
+    storeListener({ source: 'user', changes: { added: {}, updated: {}, removed } });
+  };
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const inspect = editor.registeredTools.find((tool) => tool.name === 'fogwood-inspect');
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const initial = JSON.parse((await inspect.execute({})).content[0].text);
+  assert.equal(initial.change_sequence, 0);
+  const staged = JSON.parse((await propose.execute({
+    base_revision: initial.content_revision,
+    context_token: initial.context_token,
+    summary: 'Create one change-ledger proof',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'create', semantic_id: 'ledger:proof', kind: 'note', x: 80, y: 100, w: 180, h: 120, text: 'Ledger proof' }] }],
+  })).content[0].text);
+  assert.equal(controller.apply().status, 'APPLIED');
+  const afterApply = JSON.parse((await inspect.execute({ since_sequence: 0, change_page_size: 8 })).content[0].text);
+  assert.equal(afterApply.status, 'OK');
+  assert.equal(afterApply.changes.length, 1);
+  assert.equal(afterApply.changes[0].origin, `fogwood:${staged.plan_id}`);
+  assert.deepEqual(afterApply.changes[0].semantic_ids, ['ledger:proof']);
+  assert.deepEqual(afterApply.attention.auto_acknowledged_sequences, [afterApply.changes[0].sequence]);
+  assert.deepEqual(afterApply.attention.wake_worthy_sequences, []);
+  editor.undo();
+  const afterUndo = JSON.parse((await inspect.execute({ since_sequence: afterApply.change_sequence })).content[0].text);
+  assert.equal(afterUndo.changes[0].origin, 'system:undo');
+  assert.equal(afterUndo.changes[0].kind, 'delete');
+  assert.deepEqual(afterUndo.attention.wake_worthy_sequences, [afterUndo.changes[0].sequence]);
+  cleanup();
+});
+
 test('prepared-plan digest commits to the exact accepted material bytes', async () => {
   const editor = new CanvasProposalEditor();
   let controller;
