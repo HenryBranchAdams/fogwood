@@ -1,150 +1,75 @@
 # Fogwood
 
-Fogwood is an empty, device-local tldraw canvas that Codex can shape through a
-small WebMCP protocol. It does not begin with a dashboard, template gallery, or
-generated composition. The person starts with the ordinary tldraw surface;
-Codex inspects it, discovers relevant canvas capabilities, and stages editable
-native matter for the person to apply or reject.
+Fogwood is an empty, device-local tldraw surface where Codex turns intent and
+available capabilities into bounded, editable matter. It is a place to sketch,
+juxtapose, connect, annotate, branch, and revise—not a dashboard, template
+gallery, raw tldraw SDK facade, or automatic mutation system. The person always
+sees a staged change and chooses Apply or Reject.
 
-The first version deliberately has one job: turn the broad tldraw SDK Example
-corpus into one dynamic semantic control surface without registering hundreds
-of unrelated page tools or exposing the raw Editor API.
+The current implementation is intentionally small. One page-owned
+`FogwoodSurface` holds the only pending review. During staging it prepares and
+deep-freezes one `PreparedCanvasPlan`; Apply performs its final revision and
+precondition check, then commits the frozen lowering in one `editor.run`
+history boundary. If execution fails, tldraw's history mark is rolled back with
+`bailToMark`. Reject is side-effect free.
 
 ## WebMCP Canvas Protocol
 
-Fogwood registers exactly three page tools:
+Fogwood registers exactly three stable page tools:
 
-- `fogwood-inspect` reads the current page, stable semantic IDs, relationships,
-  asset metadata, selection, an opaque content revision, and a separate opaque
-  context token for ephemeral selection/tool/mode state.
-- `fogwood-capabilities` searches the pinned official tldraw Example corpus,
-  reports contextual native commands, or uses `route` mode to resolve and
-  compose any of the 213 pinned examples through a bounded Adapter Family.
-- `fogwood-propose` stages one proposal bound to both inspected values. It never
-  mutates the page; the person must choose Apply or Reject in Fogwood.
+- `fogwood-inspect` reads bounded live canvas facts, selection, semantic IDs,
+  relationships, assets, content revision, and context token.
+- `fogwood-capabilities` discovers the bounded local moves, materials, and
+  capability vocabulary relevant to the inspected page. The pinned tldraw
+  examples are searchable knowledge and qualification vocabulary, not runtime
+  tools.
+- `fogwood-propose` validates and stages exactly one public action. It never
+  applies a change; page-owned Apply or Reject is required.
 
-`fogwood-propose` accepts a composable `canvas_ops` action or one bounded
-`seeded_composition` remix. A Canvas Protocol call may mix:
+The public proposal actions are exactly:
 
-- `create` and `draw`
-- `connect` two exact targets with a native bound arrow
-- `variant` one exact source while preserving the source and recording lineage
-- `update` and `resize`
-- `align`, `distribute`, `stack`, and `pack`
-- `group` and `ungroup`
-- `reorder`
-- `delete`
+- `canvas_ops` for native tldraw creation, drawing, connection, variants,
+  arrangement, grouping, ordering, edits, and deletion;
+- `seeded_composition` for deterministic, bounded, preserved remixes; and
+- `add_materials` for qualified local raster or sanitized SVG material.
 
-Created or branched matter receives a stable semantic ID. Later operations in
-the same proposal can target it with `semantic:<id>`, so Codex can create,
-branch, connect, arrange, style, group, and order a composition in one reviewed transaction. The page replans
-against the live revision immediately before Apply, commits the accepted batch
-inside one editor transaction and one undo step, and leaves Reject side-effect
-free.
+Every staged action is revision-bound, inspected before review, and rechecked
+before Apply. Accepted matter remains movable, annotatable, connectable,
+branchable, and editable on the canvas.
 
-## Seeded composition grammar
+## Seeded composition
 
-`seeded_composition` is a small reproducible remix grammar for one to eight
-selected or explicitly named native shapes. It preserves every source and
-stages separately editable variants in bounded open space. A seed controls the
-branch-cluster arrangement, rhythm, palette, scale, rotation, and spacing; a
-`wildness` value from 0 to 1 bounds how far the variants depart from their
-sources. The exact seed, algorithm version, PRNG, source revision, source
-fingerprint, open-space decision, and source-to-variant lineage are visible in
-the staged proposal and bound into its receipts.
+The `remix@1` grammar uses `xorshift32-v1` to vary layout, rhythm, palette,
+scale, rotation, and open space while preserving source geometry and lineage.
+The same seed, algorithm version, and inspected input reproduce the same plan;
+different seeds only change composition. `wildness` is bounded from 0 to 1.
+Seeds never choose facts, safety outcomes, permissions, semantic IDs, targets,
+or human authority. They may break a future tie only after approaches are
+otherwise equally qualified.
 
-The same seed, algorithm version, and inspected input reproduce the same plan.
-Different seeds vary presentation but do not change source facts, semantic
-identity, safety checks, permissions, or Apply authority. Seed text is inert
-data and Fogwood uses the versioned `xorshift32-v1` generator rather than
-`Math.random()`. Locked or nested targets fail closed; ordinary manual geometry
-is never moved. Exact clone-relevant source data is fingerprinted, and final
-rotated footprints must avoid both current matter and sibling variants before a
-side qualifies as open space. Remix is therefore preserved branching, not
-randomized replacement.
+## Bazaar and examples
 
-This dispatcher is intentionally smaller than 213 individually registered
-tools. Every pinned Example has an immutable callable Route, while eight deep
-Adapter Families own the actual seams: native canvas, local material/artifact,
-editor introspection, control plane, trusted extension/compound, local
-persistence, collaboration/identity, and external artifact handoff. The model
-interprets intent; deterministic code selects, orders, limits, and explains the
-Routes. Routing never stages or mutates the page.
+The local Bazaar is a hashed, bounded, code-free collection of knowledge:
+materials, moves, adapters, aesthetics, algorithms, provocations, recipes, and
+qualification fixtures. Packages describe what a capability can do and what it
+does not qualify. They are not executable runtime recipes and the full catalog
+is not eagerly imported into the active canvas bundle.
 
-The compiler separates three continuations instead of inventing complete
-calls: schema-valid local read calls, bounded proposal contracts that Codex must
-fill from inspected canvas facts, and explicit host requirements. The 180
-bounded Routes share deep family adapters; they are not 180 wrappers around
-upstream source or claims of demonstration-equivalent behavior.
-
-## Capability ontology and Example corpus
-
-The local Example corpus covers all 213 entries observed in the official
-tldraw examples source at commit
-`a30c9c8b9c16555d91625e8137826496326898cf`. Each record has one
-`fogwood.example-route.v1` descriptor with its family, adapter, execution lane,
-fidelity, concrete lowering seam, allowed operations, source evidence, and
-qualification boundary. The compiler fails closed if the pinned 213-path
-fingerprint, source commit, or path-to-family matrix fingerprint changes.
-
-All 213 Routes are callable through `fogwood-capabilities`; source-path intent
-can select every exact Route and compound intent can mix Routes from multiple
-families. Only three Routes currently claim exact Example-to-local-primitive
-equivalence: align/distribute, native arrow creation, and z-order. Other Routes
-state whether they use a bounded native equivalent, a local read/material seam,
-or an observed host/artifact handoff. The corpus is data only; Fogwood never
-downloads or executes Example source.
-The raw arrow Example does not certify bound-arrow behavior; the connector
-Adapter is separately qualified against the installed tldraw binding APIs.
-
-The `fogwood.capability.v1` planning ontology currently carries version 2 and
-qualifies nine local Capabilities: create, draw, edit, delete, arrange, create a
-native bound connector, create a preserved variant, group/ungroup, and reorder.
-Reproducible seeded remixing is a separately discoverable compositional action;
-v1 deliberately does not let a seed enter capability routing. Connector and
-variant adapters were promoted from real request traces:
-"Connect these selected ideas" and "Make a preserved variant of this selected
-idea." A specific variant match supersedes generic creation rather than
-producing two competing steps. `available`, `plan`, and `route` modes require the inspected
-`base_revision` and `context_token`. Planning also accepts bounded intent,
-scope, optional desired effects, an explicit planned-item count when new matter
-must satisfy target preconditions, and a step limit. It returns an ordered Plan,
-supporting Examples, explicit execution policy, and the next `fogwood-propose`
-call. Pure shadow planning may be speculative; host calls, proposal staging,
-and page Apply never are.
-
-Fogwood is a dynamic semantic control surface over tldraw, not a remote Editor
-SDK. Context changes which Capabilities are valid, while the three WebMCP
-transport tools stay stable. The content revision covers page-authoritative
-records; the context token independently covers bounded selection, tool,
-read-only, focus, and editing state. Availability and Route selection are advisory and never replace
-execution-time precondition checks. A later change ledger or attention relay can
-build on this pair without expanding the v0.1 mutation surface.
+The 213 pinned tldraw example routes remain useful addressing and qualification
+vocabulary. They are not 213 registered WebMCP tools and do not claim that
+upstream example code executes locally. The browser-facing surface remains the
+three tools above.
 
 ## Trust boundary
 
-- Canvas content and accepted assets stay device-local.
-- WebMCP staging cannot apply its own proposal.
-- Every mutation is bounded, revision- and context-pinned before stage, and
-  revalidated against page content before Apply.
-- Locked shapes, locked ancestors, and locked descendants of indirectly changed
-  containers fail before the editor transaction.
-- Final shape footprints—not only their anchor coordinates—must remain inside
-  the bounded page envelope.
-- Rotation changes on already rotated shapes fail closed until the inspected
-  model carries exact shape-local geometry instead of only page-axis-aligned
-  bounds.
-- Generated JavaScript, HTML, remote embeds, implicit fetches, and active SVG
-  content are not accepted.
-- Page registration, host exposure, conversation inventory, and a successful
-  call are separate evidence layers.
-- `callable` means the Route compiler accepts and explains that exact Example;
-  it does not mean Fogwood executed upstream source or that a required
-  host/provider is currently present.
-
-The existing blocks, instruments, receipts, materials, compositions, and
-Bazaar packages remain regression-tested internal modules. They are no longer
-the public first-run experience.
+Fogwood accepts device-local, bounded data only. It does not execute generated
+JavaScript or HTML, fetch remote URLs, embed untrusted content, or accept active
+SVG behavior. Asset bytes are validated, sanitized where needed, hashed over
+the exact accepted bytes, and recorded with minimal provenance before Apply.
+The existing `fogwood-receipts-local:v1` parser and legacy recipe/snapshot
+constructors remain readable. New lifecycle transitions emit one generic
+proposal receipt each. `open-surface-local`, the surface-block renderer, and
+direct user gestures remain compatible with persisted pages.
 
 ## Run locally
 
@@ -170,7 +95,8 @@ git diff --check
 ```
 
 The current acceptance evidence and explicit qualification boundaries live in
-[`acceptance.md`](acceptance.md).
+[`acceptance.md`](acceptance.md). Earlier full-surface, request-trace, and
+seeded-composition results are retained there as historical provenance.
 
 ## License
 

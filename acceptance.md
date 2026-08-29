@@ -1,16 +1,125 @@
-# Fogwood Canvas Protocol acceptance
+# Fogwood acceptance manifest
 
-Status: PASS for the bounded local seeded-composition phase; the prior
-full-surface Route phase remains PASS. The pinned
-213-entry corpus now has one immutable `fogwood.example-route.v1` descriptor per
-entry and `fogwood-capabilities` can compose those Routes through a pure
-`fogwood.surface-plan.v1` compiler. This is 213/213 addressing and lowering
-coverage, not proof that 213 upstream tldraw demonstrations executed locally.
-Exact local equivalence, bounded native projection, local read/material,
-host-mediated collaboration, and artifact-handoff evidence remain separate.
-This is the one authoritative acceptance manifest for the empty-canvas,
-capability-ontology, contextual-broker, request-trace, full-surface, and seeded
-composition phases.
+Status: PASS — local and in-app Browser autophagy boundary.
+
+This is the one authoritative acceptance manifest. The current phase simplifies
+Fogwood into an empty, device-local tldraw surface where Codex turns intent and
+observed capabilities into bounded editable matter. It is not a dashboard,
+template gallery, raw SDK facade, or automatic mutation system. The person must
+review every staged change and choose page-owned Apply or Reject.
+
+The active public boundary is exactly three stable WebMCP tools:
+`fogwood-inspect`, `fogwood-capabilities`, and `fogwood-propose`. The public
+proposal action union is exactly `canvas_ops`, `seeded_composition`, or
+`add_materials`. The 213 pinned tldraw routes remain searchable addressing and
+qualification vocabulary; they are not 213 runtime tools and do not prove that
+upstream examples execute locally.
+
+## Current autophagy contract
+
+`FogwoodSurface` is the sole pending-review authority. During stage, the page
+adapter prepares one immutable `PreparedCanvasPlan` containing the validated
+proposal, exact source revision/context evidence, prepared materials, seeded
+evidence, preflight, transaction contract, and digest. The plan is deeply
+frozen before the person sees it; Apply consumes its prepared lowerings without
+decoding or regenerating them.
+
+Apply performs a final revision and precondition check, then opens one tldraw
+history boundary and one `editor.run`. If execution or its postcondition fails,
+the captured history mark is restored with `bailToMark`; only newly created,
+unreferenced assets may be cleaned up. Reject leaves the page unchanged. A
+successful Apply is one undo step.
+
+The Bazaar remains a local, declarative, bounded, content-hashed knowledge
+collection for materials, moves, adapters, aesthetics, algorithms,
+provocations, recipes, and qualification fixtures. Packages are not executable
+runtime recipes and the full generated catalog is not eagerly imported into the
+active page. New lifecycle transitions emit one generic proposal receipt per
+transition. The `fogwood-receipts-local:v1` parser, legacy recipe/snapshot
+events and constructors, `open-surface-local`, the `surface-block` renderer,
+and direct user gestures remain compatible.
+
+Dead dashboard-era product code removed in this phase:
+
+- `app/bazaar-panel.tsx`
+- `app/fogwood-demo.ts`
+- `app/fogwood-snapshot.ts`
+- `tests/fogwood-demo.test.mjs`
+- `tests/fogwood-snapshot.test.mjs`
+- their retired gallery, starter, chat, and snapshot CSS selector families
+
+The current candidate has passed the local, Browser, and independent-verifier
+gates recorded below. Deployment, live external providers, and direct
+conversation inventory remain separate, explicitly unqualified boundaries.
+
+## Acceptance matrix — current phase
+
+| Boundary | Required evidence | State |
+| --- | --- | --- |
+| Doctrine and architecture | README, CONTEXT, ADR 0005, and this manifest describe the empty spatial medium, `FogwoodSurface`, and `PreparedCanvasPlan`. | PASS |
+| Public WebMCP boundary | Exactly `fogwood-inspect`, `fogwood-capabilities`, `fogwood-propose`; no page-owned apply tool. | PASS |
+| Public proposal union | Exactly `canvas_ops`, `seeded_composition`, `add_materials`; advertised ungroup/material ID, MIME, canonical-base64, byte, and batch limits match runtime refusal limits. | PASS |
+| Prepared-plan staging | All lowerings/material decoders prepared once; plan frozen before review; exact digest retained. | PASS |
+| Human authority | Page-owned Apply/Reject only; stale revision/precondition refusal; no automatic mutation. | PASS |
+| Atomic transaction | One history boundary and `editor.run`; `bailToMark` rollback on partial failure; one-step Undo. | PASS |
+| Material safety | Bounded raster and sanitized SVG; exact-byte SHA-256; no network, scripts, active SVG, or malformed assets. | PASS |
+| Compatibility | `open-surface-local`, surface-block/direct gestures, receipt-v1 parser, and legacy receipt constructors/events still read. | PASS |
+| Bazaar | Local declarative hashed knowledge; no executable recipe import in the active runtime. | PASS |
+| 213-example vocabulary | 213/213 local addressing/knowledge records; no claim of 213 runtime tools or upstream execution. | PASS |
+| Browser rendering | Fresh blank canvas, spatial composition, proposal review, Apply/Reject, one-step Undo, reload persistence, no dashboard furniture. | PASS |
+| Page registration | Current origin and exact registered page tools. | PASS — `http://[::1]:4193/`, three tools |
+| Browser / host exposure | Current host inventory of page tools. | PASS — in-app Browser WebMCP inventory |
+| Conversation inventory | Direct top-level conversation tool inventory, separate from Browser. | NOT EXPOSED DIRECTLY — Browser-mediated tools only |
+| Harmless WebMCP call | Successful inspect/capabilities/propose call with no unauthorized mutation. | PASS |
+| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | UNQUALIFIED |
+| Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS — no confirmed P1/P2 |
+
+## Evidence ledger — current phase
+
+Record exact command output, origin, screenshot paths, and commit/version here;
+do not promote an unrun check to PASS.
+
+| Check | Result / evidence |
+| --- | --- |
+| `npm test` | PASS — 215/215; pretest compiler check PASS |
+| `npx tsc --noEmit` | PASS |
+| `npm run lint` | PASS — no warnings |
+| `npm run build` | PASS — only the known >500 kB chunk and vinext route-classification warnings |
+| `node scripts/compile-bazaar.mjs --check` | PASS — 7 packages, `sha256:3dcaddef57608136e331a49975f9b176f5c4261180163eadbe6ef471646a596a` |
+| `git diff --check` | PASS |
+| Browser blank-canvas render | PASS — `/private/tmp/fogwood-autophagy-blank.png` |
+| Browser stage / Apply / Reject | PASS — native review `/private/tmp/fogwood-autophagy-staged.png`; applied `/private/tmp/fogwood-autophagy-applied.png`; Reject retained the exact empty revision |
+| Browser material bridge | PASS — sanitized SVG review `/private/tmp/fogwood-autophagy-material-staged.png`; applied `/private/tmp/fogwood-autophagy-material-applied.png`; active/remote SVG returned `SVG_ACTIVE_CONTENT` before review |
+| Browser user-context loop | PASS — clicking `idea:spark` changed only `context_token`; selection-scoped seeded review `/private/tmp/fogwood-autophagy-seeded-staged.png`; Reject retained all three existing shapes |
+| Browser Undo / reload persistence | PASS — one Undo removed the three-item native transaction; reload retained the empty state; a second Apply survived reload with the same content revision; one later Undo removed only the SVG shape and asset |
+| Browser responsive render | PASS — 390x844 screenshot `/private/tmp/fogwood-autophagy-mobile.png`; viewport reset after the check |
+| WebMCP page registration | PASS — exactly three tools at `http://[::1]:4193/` |
+| WebMCP host exposure | PASS — in-app Browser returned the same three page tools and their current schemas |
+| Harmless successful WebMCP call | PASS — `fogwood-inspect`, `fogwood-capabilities` available/plan, and stage-only `fogwood-propose`; page Apply remained a separate human action |
+| Direct conversation inventory | NOT EXPOSED DIRECTLY — this session reached Fogwood only through the in-app Browser WebMCP bridge |
+| Deployment provenance | PENDING — commit/url/version: `<value>` |
+| Independent verifier | PASS — all mandated checks rerun; schema/runtime repair rechecked; no confirmed P1/P2; supplied screenshots are native-tldraw and anti-dashboard |
+
+## Current risks and explicit boundaries
+
+- Live Codex image generation, research, external providers, and other host
+  capabilities are not implied by page registration. If unavailable, artifact
+  ingestion remains fixture-qualified only.
+- Page registration, Browser exposure, conversation inventory, and successful
+  invocation are separate evidence layers.
+- Browser or hosted qualification does not follow from local tests/builds.
+- The full example corpus remains vocabulary and provenance; it is not a claim
+  that every upstream demonstration or SDK feature runs in Fogwood.
+- Persisted pages and old ledgers may contain historical block, recipe, or
+  snapshot records; compatibility means reading them safely, not reviving old
+  dashboard UI or executable runtime paths.
+
+## Historical qualification archive
+
+The sections below preserve evidence and provenance from earlier phases. Their
+old PASS statements describe the candidate and boundary named in each section,
+not the current autophagy candidate. Current status is governed by the matrix
+above.
 
 ## Product decision
 

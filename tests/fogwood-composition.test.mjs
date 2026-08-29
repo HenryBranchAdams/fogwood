@@ -1,74 +1,75 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   COMPOSITION_FORMAT,
-  COMPOSITION_REGISTRY,
   compositionQualification,
   expandCompositionRecipe,
-  getRecipe,
   validateCompositionRecipe,
-  validateProposal,
-} from '../app/fogwood-runtime.ts';
+} from '../app/fogwood-composition.ts';
 
-const emptyContext = {
-  current_revision: 'fogwood-agent-runtime/1-composition-test',
-  page_id: 'page:composition-test',
-  items: [],
-};
+const recipePaths = [
+  'fogwood.evidence-constellation/v2/recipes/evidence-constellation.json',
+  'fogwood.fungi-cities-research-world/v2/recipes/fungi-cities-research-world.json',
+  'fogwood.storyworld-mutation-map/v2/recipes/storyworld-mutation-map.json',
+];
 
-test('v2 composition registry exposes three native signature recipes with deterministic qualification', () => {
+function readRecipe(relativePath) {
+  return JSON.parse(fs.readFileSync(path.resolve('bazaar/packages', relativePath), 'utf8'));
+}
+
+const recipes = recipePaths.map(readRecipe);
+
+test('declarative composition packages validate without a runtime recipe registry', () => {
   assert.equal(COMPOSITION_FORMAT, 'composition.v2');
-  assert.deepEqual(
-    COMPOSITION_REGISTRY.map((recipe) => recipe.id),
-    [
-      'fogwood.evidence-constellation',
-      'fogwood.fungi-cities-research-world',
-      'fogwood.storyworld-mutation-map',
-    ],
-  );
-  for (const recipe of COMPOSITION_REGISTRY) {
+  assert.deepEqual(recipes.map((recipe) => recipe.id), [
+    'fogwood.evidence-constellation',
+    'fogwood.fungi-cities-research-world',
+    'fogwood.storyworld-mutation-map',
+  ]);
+  for (const source of recipes) {
+    const validated = validateCompositionRecipe(source);
+    assert.equal(validated.ok, true, JSON.stringify(validated));
+    const recipe = validated.recipe;
     assert.equal(recipe.version, 2);
     assert.equal(recipe.format, COMPOSITION_FORMAT);
-    assert.equal(recipe.items.length > 0, true);
-    assert.equal(recipe.edges.length > 0, true);
+    assert.equal(recipe.status, 'immutable');
+    assert.equal(recipe.expected_count, recipe.items.length + recipe.edges.length);
     assert.equal(recipe.items.every((item) => item.kind !== 'surface-block'), true);
-    assert.equal(
-      recipe.id === 'fogwood.fungi-cities-research-world'
-        ? recipe.items.some((item) => item.role === 'portal' || item.role === 'provocation')
-        : true,
-      true,
-    );
+    assert.equal(recipe.items.every((item) => typeof item.semantic_id === 'string'), true);
+    assert.equal(recipe.edges.every((edge) => typeof edge.kind === 'string'), true);
     const qualification = compositionQualification(recipe);
     assert.equal(qualification.default_surface_blocks, 0);
     assert.equal(qualification.native_material_ratio >= 0.7, true);
     assert.equal(qualification.typed_edge_ratio >= 0.6, true);
     assert.equal(qualification.deterministic_repeat, true);
     assert.equal(qualification.no_live_provider, true);
-    assert.equal(recipe.expected_count, recipe.items.length + recipe.edges.length);
     assert.deepEqual(expandCompositionRecipe(recipe), expandCompositionRecipe(recipe));
   }
 });
 
-test('v2 recipes are exact runtime identities and carry stable composition metadata through expansion', () => {
-  const recipe = getRecipe('fogwood.evidence-constellation', 2);
-  assert.ok(recipe);
-  const validated = validateCompositionRecipe(recipe);
-  assert.equal(validated.ok, true);
+test('composition knowledge expands to declarative native-shape and typed-edge batches', () => {
+  const recipe = validateCompositionRecipe(recipes[0]).recipe;
   const operations = expandCompositionRecipe(recipe, { x: 100, y: 80 });
   assert.equal(operations.some((operation) => operation.type === 'add_shapes'), true);
   assert.equal(operations.some((operation) => operation.type === 'add_relationships'), true);
   const shapes = operations.flatMap((operation) => operation.type === 'add_shapes' ? operation.shapes : []);
+  assert.equal(shapes.length, recipe.items.length);
   assert.equal(shapes.every((shape) => shape.composition_id === recipe.id), true);
   assert.equal(shapes.every((shape) => typeof shape.semantic_id === 'string'), true);
+  assert.equal(shapes[0].x, recipe.items[0].x + 100);
+  assert.equal(shapes[0].y, recipe.items[0].y + 80);
   const edgeAction = operations.find((operation) => operation.type === 'add_relationships');
   assert.ok(edgeAction);
+  assert.equal(edgeAction.relationships.length, recipe.edges.length);
   assert.equal(edgeAction.relationships.every((edge) => recipe.items.some((item) => item.semantic_id === edge.source_semantic_id)), true);
   assert.equal(edgeAction.relationships.every((edge) => recipe.items.some((item) => item.semantic_id === edge.target_semantic_id)), true);
 });
 
-test('signature compositions carry spatial meaning instead of a repeated dashboard grid', () => {
-  for (const recipe of COMPOSITION_REGISTRY) {
+test('signature compositions carry spatial meaning rather than a repeated dashboard grid', () => {
+  for (const recipe of recipes) {
     const regionIds = new Set(recipe.items.map((item) => item.region_id));
     const shapeKinds = new Set(recipe.items.map((item) => item.kind));
     const coordinatePairs = new Set(recipe.items.map((item) => `${item.x},${item.y}`));
@@ -81,52 +82,8 @@ test('signature compositions carry spatial meaning instead of a repeated dashboa
   }
 });
 
-test('insert_recipe accepts v2 through the existing proposal seam and rejects an unknown composition', () => {
-  const valid = validateProposal({
-    base_revision: emptyContext.current_revision,
-    summary: 'Stage a composition',
-    actions: [{ type: 'insert_recipe', recipe_id: 'fogwood.evidence-constellation', version: 2 }],
-  }, emptyContext);
-  assert.equal(valid.ok, true);
-  assert.equal(valid.diff.recipe_expansions[0].version, 2);
-  assert.equal(valid.diff.recipe_expansions[0].format, COMPOSITION_FORMAT);
-  assert.equal(valid.diff.semantic_relationships.length > 0, true);
-  assert.equal(valid.diff.counts.adds, getRecipe('fogwood.evidence-constellation', 2).expected_count);
-
-  const invalid = validateProposal({
-    base_revision: emptyContext.current_revision,
-    summary: 'Bad composition',
-    actions: [{ type: 'insert_recipe', recipe_id: 'fogwood.missing', version: 2 }],
-  }, emptyContext);
-  assert.equal(invalid.ok, false);
-  assert.equal(invalid.errors.some((error) => error.code === 'UNKNOWN_RECIPE'), true);
-});
-
-test('anchored composition preview uses the exact coordinates that Apply will materialize', () => {
-  for (const recipe of COMPOSITION_REGISTRY) {
-    const firstItem = recipe.items[0];
-    assert.ok(firstItem);
-    const result = validateProposal({
-      base_revision: emptyContext.current_revision,
-      summary: `Stage anchored ${recipe.title}`,
-      actions: [{
-        type: 'insert_recipe',
-        recipe_id: recipe.id,
-        version: 2,
-        anchor: { x: 100, y: 80 },
-      }],
-    }, emptyContext);
-    assert.equal(result.ok, true);
-    const preview = result.diff.adds.specs.find((spec) => spec.semantic_id === firstItem.semantic_id);
-    assert.ok(preview, `${recipe.id} needs an exact staged shape preview`);
-    assert.equal(preview.x, firstItem.x + 100, `${recipe.id} preview x must include the anchor`);
-    assert.equal(preview.y, firstItem.y + 80, `${recipe.id} preview y must include the anchor`);
-  }
-});
-
-test('composition.v2 validation rejects code, network payloads, untrusted host IDs, and mismatched semantics', () => {
-  const source = getRecipe('fogwood.evidence-constellation', 2);
-  assert.ok(source);
+test('composition validation rejects executable, remote, untrusted, and semantically dangling content', () => {
+  const source = recipes[0];
 
   const withCode = structuredClone(source);
   withCode.code = 'fetch("https://example.invalid")';

@@ -6,9 +6,9 @@ import { createProposalLifecycleController } from '../app/fogwood-proposal-lifec
 const proposal = Object.freeze({
   base_revision: 'revision:before',
   summary: 'Review a bounded change',
-  actions: [{ type: 'insert_recipe', recipe_id: 'compare-and-decide', version: 1 }],
+  actions: [{ type: 'canvas_ops', ops: [{ op: 'create', semantic_id: 'idea:review', kind: 'note', x: 80, y: 80, w: 220, h: 140, text: 'Review me' }] }],
 });
-const diff = Object.freeze({ counts: { adds: 12, updates: 0, moves: 0, removes: 0 } });
+const diff = Object.freeze({ counts: { adds: 1, updates: 0, moves: 0, removes: 0 } });
 
 function baseController() {
   let state = null;

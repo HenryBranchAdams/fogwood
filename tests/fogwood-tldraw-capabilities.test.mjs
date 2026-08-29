@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -15,6 +15,60 @@ import {
   validateProposal,
 } from '../app/fogwood-runtime.ts';
 import { FOGWOOD_CANVAS_PROTOCOL, planCanvasOps } from '../app/fogwood-canvas-ops.ts';
+
+test('the public shell has no unreachable product modules or retired control-plane CSS', async () => {
+  const appFiles = await readdir(new URL('../app/', import.meta.url));
+  for (const file of ['bazaar-panel.tsx', 'fogwood-demo.ts', 'fogwood-snapshot.ts']) {
+    assert.equal(appFiles.includes(file), false, `${file} remains reachable only as dead product code`);
+  }
+
+  const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
+  for (const selector of [
+    '.chat-is-open',
+    '.chat-toggle',
+    '.canvas-actions',
+    '.surface-export-status',
+    '.snapshot-toggle',
+    '.bazaar-',
+    '.empty-invitation',
+    '.guided-',
+    '.prompt-examples',
+    '.copy-feedback',
+    '.starter-divider',
+    '.empty-footnote',
+    '.legacy-starter',
+    '.agent-',
+    '.message-',
+    '.receipt-summary',
+    '.proposal-slot',
+    '.workflow-',
+    '.native-chat-handoff',
+    '.site-tools-recovery',
+    '.proposal-revision',
+    '.proposal-instrument-',
+  ]) {
+    assert.equal(css.includes(selector), false, `retired selector family remains: ${selector}`);
+  }
+
+  assert.match(css, /\.surface-block/);
+  assert.match(css, /\.proposal-seeded-evidence/);
+  assert.match(css, /\.proposal-material-diff/);
+  assert.match(css, /prefers-reduced-motion/);
+});
+
+test('the acceptance manifest names the autophagy kernel and its three-tool public boundary', async () => {
+  const acceptance = await readFile(new URL('../acceptance.md', import.meta.url), 'utf8');
+  assert.match(acceptance, /autophagy/i);
+  assert.match(acceptance, /FogwoodSurface/);
+  assert.match(acceptance, /PreparedCanvasPlan/);
+  assert.match(acceptance, /fogwood-receipts-local:v1/);
+  assert.match(acceptance, /fogwood-inspect/);
+  assert.match(acceptance, /fogwood-capabilities/);
+  assert.match(acceptance, /fogwood-propose/);
+
+  const publicTools = [...acceptance.matchAll(/`(fogwood-(?:inspect|capabilities|propose))`/g)].map((match) => match[1]);
+  assert.deepEqual([...new Set(publicTools)].sort(), ['fogwood-capabilities', 'fogwood-inspect', 'fogwood-propose']);
+});
 
 test('the public shell is a blank tldraw surface without product-gallery chrome', async () => {
   const source = await readFile(new URL('../app/surface-app.tsx', import.meta.url), 'utf8');

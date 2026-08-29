@@ -17,6 +17,7 @@ export const FOGWOOD_CANVAS_PROTOCOL = {
   remote_fetch: false,
   max_ops: 24,
   max_targets_per_op: 64,
+  max_ungroup_targets: 32,
   max_draw_points: 256,
   max_draw_delta: 65_504,
   max_context_items: 5_000,
@@ -1157,7 +1158,7 @@ export function planCanvasOps(
 
     if (raw.op === 'ungroup') {
       if (!hasOnlyKeys(raw, ['op', 'ids'])) addError(errors, 'UNKNOWN_FIELD', 'ungroup contains an unknown field.', path);
-      const items = normalizeIds(raw.ids, `${path}.ids`, 1, 32, projected, semanticToId, childrenByParent, pageId, errors);
+      const items = normalizeIds(raw.ids, `${path}.ids`, 1, FOGWOOD_CANVAS_PROTOCOL.max_ungroup_targets, projected, semanticToId, childrenByParent, pageId, errors);
       for (const item of items) if (item.type !== 'group') addError(errors, 'INVALID_GROUP_TARGET', 'ungroup accepts group shape IDs only.', `${path}.ids`);
       if (items.length > 0) {
         const op: UngroupCanvasOp = { op: 'ungroup', ids: items.map((item) => item.id) };
@@ -1222,10 +1223,10 @@ export function planCanvasOps(
   };
 }
 
-const idArraySchema = (minItems: number) => ({
+const idArraySchema = (minItems: number, maxItems: number = FOGWOOD_CANVAS_PROTOCOL.max_targets_per_op) => ({
   type: 'array',
   minItems,
-  maxItems: FOGWOOD_CANVAS_PROTOCOL.max_targets_per_op,
+  maxItems,
   items: { type: 'string', minLength: 1, maxLength: 220, description: 'Current shape id or semantic:<stable-semantic-id> reference.' },
 });
 
@@ -1372,7 +1373,7 @@ export const CANVAS_OPS_ACTION_SCHEMA = {
           {
             type: 'object',
             additionalProperties: false,
-            properties: { op: { const: 'ungroup' }, ids: idArraySchema(1) },
+            properties: { op: { const: 'ungroup' }, ids: idArraySchema(1, FOGWOOD_CANVAS_PROTOCOL.max_ungroup_targets) },
             required: ['op', 'ids'],
           },
           {

@@ -60,14 +60,14 @@ test('sha256Hex hashes UTF-8 bytes synchronously using standard vectors', () => 
 
 test('proposal and recipe identities hash exact canonical content and fit receipt identity shape', () => {
   const proposal = {
-    summary: 'Add note',
-    actions: [{ type: 'add_blocks', coordinate_space: 'page', blocks: [{ title: 'Hello', kind: 'text' }] }],
+    summary: 'Draw a thought',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'draw', semantic_id: 'mark:thought', points: [{ x: 0, y: 0 }, { x: 40, y: 30 }] }] }],
     base_revision: 'rev:1',
   };
   assert.deepEqual(identityForProposal(proposal), {
     id: 'proposal',
     version: 1,
-    hash: 'sha256:22fec006427028ee0ab540edf6cb333a18282b6d0e505fd3b0399c5c450aaa56',
+    hash: 'sha256:7b48f201b4ee5405891aaa963278d1d5048cc21c1a3c6bb49694510fb0f9a7c3',
   });
 
   const recipe = {

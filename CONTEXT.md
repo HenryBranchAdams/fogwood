@@ -1,140 +1,144 @@
-# Fogwood Capability Planning
+# Fogwood context
 
-Fogwood turns open-ended intent into reviewable canvas changes. Its language
-separates what a person wants, what can be done, how it is implemented, and
-what the page has authorized.
+Fogwood is a device-local, code-free tldraw surface. Its job is to turn a
+person's intent and the capabilities available to Codex into bounded editable
+matter. The blank canvas is the product; blocks, recipes, and examples are
+supporting material. A useful result must remain spatially meaningful when the
+person moves, annotates, connects, branches, or mutates it.
 
-## Language
+Fogwood is not a dashboard generator, template gallery, raw tldraw SDK facade,
+or autonomous page writer. Fogwood itself never executes generated JavaScript,
+HTML, remote embeds, or active SVG. Codex may use its own tools in its bounded
+environment, but the page only accepts constrained local artifacts and
+human-reviewed proposals.
 
-**Intent**:
-A bounded description of the outcome a person wants from the current canvas.
-_Avoid_: Prompt, command, tool request
+## Operating loop
 
-**Canvas Fact**:
-An inspectable truth about the current page that may enable or prevent a capability.
-_Avoid_: Hidden state, assumption
+```text
+intent or sketch
+  -> Codex inspects the live canvas and available host capabilities
+  -> Codex discovers local Fogwood materials and spatial moves
+  -> Codex creates bounded source material when useful
+  -> Fogwood prepares one immutable plan
+  -> person reviews and chooses Apply or Reject
+  -> person manipulates the canvas
+  -> Codex inspects again and branches, annotates, or mutates
+```
 
-**Capability**:
-A reusable ability defined by its preconditions, effects, preservation promises, and authority class.
-_Avoid_: Example, function, tool
+The page registers exactly three stable WebMCP tools:
 
-**Host Capability**:
-A capability supplied by the live Codex host rather than by Fogwood, whose availability must be observed before use.
-_Avoid_: Guaranteed integration, provider
+1. `fogwood-inspect` — bounded live page facts and revision/context evidence;
+2. `fogwood-capabilities` — contextual discovery of local moves, materials,
+   adapters, and example/qualification vocabulary; and
+3. `fogwood-propose` — validation and staging of one public action.
 
-**Adapter**:
-A qualified translation from one capability into bounded Fogwood actions.
-_Avoid_: Capability, example mapping
+The only public proposal actions are `canvas_ops`, `seeded_composition`, and
+`add_materials`. The WebMCP call cannot apply its own proposal. Apply and Reject
+are page-owned decisions.
 
-**Route**:
-An immutable, versioned call record connecting one exact pinned Example to an
-Adapter Family, execution lane, lowering seam, fidelity, and authority boundary.
-Every pinned Example has a Route; Route selection is not proof that an upstream
-demonstration executed.
-_Avoid_: Raw Editor method, source import, success claim
+## Canonical terms
 
-**Adapter Family**:
-One deep implementation boundary shared by Routes with the same authority and
-trust model: native canvas, local material/artifact, editor introspection,
-control plane, trusted extension/compound, local persistence,
-collaboration/identity, or external artifact handoff.
-_Avoid_: One-off Example wrapper, wildcard executor
+**Intent** — a bounded description of an outcome a person wants from the
+current canvas. It is not a hidden command or permission.
 
-**Supersession**:
-A manifest-level rule saying that one more specific Capability replaces a more general lexical match for the same intent. It is used sparingly; for example, a preserved-variant request selects `matter.variant.create` instead of also selecting generic `matter.native.create`.
-_Avoid_: Global priority score, hidden prompt heuristic
+**Canvas fact** — a bounded, inspectable truth about the current page, including
+shape geometry, stable semantic IDs, relationships, selection, content
+revision, and context token.
 
-**Recipe**:
-A reusable ordered graph of compatible capabilities that achieves a higher-level intent.
-_Avoid_: Template, dashboard
+**Capability** — a reusable ability with explicit preconditions, effects,
+preservation promises, and authority class. Availability is advisory; stage
+and Apply recheck exact preconditions.
 
-**Example**:
-Pinned source evidence whose exact ID can be routed without importing or
-executing the upstream demonstration.
-_Avoid_: Raw SDK function, executable source
+**Host capability** — a capability supplied by the live Codex host. It must be
+observed in the current host before use. Page registration, host exposure,
+conversation inventory, and a successful call are separate evidence layers.
 
-**Material**:
-A bounded local artifact that can become editable or manipulable canvas matter.
-_Avoid_: Remote embed, executable content
+**Material** — bounded local raster, sanitized SVG-derived output, text, data,
+or other artifact that can become editable or manipulable canvas matter. It is
+not a remote embed or executable content.
 
-**Plan**:
-An explainable, ordered selection of capabilities whose preconditions and compatibility have been checked against current facts.
-_Avoid_: Proposal, unvalidated tool chain
+**Spatial move** — a deterministic operation over native matter, such as
+scatter, cluster, branch, orbit, montage, trace, annotate, or mutate. Moves
+preserve manual geometry and locked objects unless the reviewed proposal says
+otherwise.
 
-**Availability**:
-An advisory statement that a versioned capability's broad preconditions match the currently inspected canvas context. Exact targets are still revalidated when a proposal is staged and applied.
-_Avoid_: Permission, proof of execution
+**Relationship** — a typed, inspectable edge or lineage record such as
+`supports`, `contradicts`, `depends_on`, `causes`, `blocks`, `echoes`, or
+`mutates_into`.
 
-**Content Revision**:
-An opaque digest of page-authoritative shapes, bindings, and referenced local asset metadata.
-_Avoid_: Selection revision, context token
+**PreparedCanvasPlan** — the complete, deep-frozen lowering created during
+stage. It contains the proposal, exact revision/context evidence, prepared
+materials, seeded evidence, preflight result, transaction contract, and digest.
+Apply consumes this plan; it does not decode, reinterpret, or regenerate it.
 
-**Context Token**:
-An opaque digest of bounded ephemeral state that can change semantic command relevance without changing page content: current page, ordered selection, active tool/path, read-only mode, focused group, and editing shape.
-_Avoid_: Content revision, authentication token
+**FogwoodSurface** — the sole pending-review authority. It owns the staged plan,
+publishes it to the page UI, and exposes page-owned Apply/Reject. There is no
+second pending controller in the browser.
 
-**Proposal**:
-A revision-pinned plan translated into exact Fogwood actions and staged for page-owned Apply or Reject.
-_Avoid_: Plan, automatic mutation
+**Proposal** — a revision-pinned request staged for human review. Staging never
+mutates the page.
 
-**Qualification**:
-The explicit evidence boundary for claiming that a capability, adapter, recipe, or plan works.
-_Avoid_: Availability inferred from documentation
+**Receipt** — device-local evidence of a lifecycle transition. New transitions
+emit one generic proposal receipt. The `fogwood-receipts-local:v1` parser,
+legacy recipe/snapshot event types and constructors, and old receipt storage key
+remain compatible.
 
-**Seeded Composition**:
-A reproducible, bounded proposal that preserves exact native sources and creates
-editable variants with explicit lineage. The seed influences only compositional
-choices after capability, scope, safety, permissions, semantic identity, and
-human authority are fixed.
-_Avoid_: Random truth, probabilistic permission, template replacement
+**Qualification** — the exact evidence boundary for claiming that a capability
+or adapter works. A searchable example or route is not proof that upstream
+source executed.
 
-## Full-surface compiler contract
+## Prepared-plan invariants
 
-Fogwood exposes the complete pinned Example vocabulary through one compiler,
-while keeping execution small and inspectable:
+- Stage validates the inspected content revision and context where required,
+  prepares all material decoders/lowerings once, and deep-freezes plan-owned
+  data before review.
+- Apply checks the current revision and exact preconditions immediately before
+  one `editor.run` / one history boundary. On an execution error or failed
+  postcondition it uses the tldraw history mark and `bailToMark` to restore the
+  prior page atomically.
+- Reject performs no page mutation. Accepted changes remain one-step undoable.
+- Exact accepted asset bytes are bounded and SHA-256 identified. Network URLs,
+  scripts, event handlers, external SVG references, `foreignObject`, and other
+  active content fail closed.
+- Seeded composition uses versioned deterministic randomness only for
+  presentation and open-space choices. It cannot choose facts, safety,
+  permissions, semantic IDs, targets, or authority.
+- User geometry, locked objects, semantic relationships, and prior variants are
+  preserved unless an explicit reviewed operation targets them.
 
-1. `fogwood-inspect` returns current content revision and semantic context.
-2. `fogwood-capabilities` `route` mode accepts bounded intent or exact Example
-   IDs and selects up to 24 immutable Routes.
-3. Each Route names a concrete lowering seam and allowed operations; no wildcard
-   Editor dispatch, generated code, dynamic import, HTML, or remote fetch exists.
-4. Local Routes point to Canvas Protocol, materials, inspect, or persistence.
-   Collaboration and active-content Routes return typed observed-host or local
-   artifact requirements rather than pretending external work happened.
-5. Route output separates schema-valid local read calls, bounded proposal
-   contracts that still require context-derived arguments, and explicit host
-   requirements. The 180 bounded Routes share family adapters and do not claim
-   upstream demonstration equivalence.
-6. The compiler is pure, deterministic, revision/context keyed, and returns
-   `page_mutated: false`.
-7. Mutating results still pass through `fogwood-propose`, page-owned Apply or
-   Reject, and the existing atomic transaction and Undo boundary.
+## Bazaar and tldraw examples
 
-Real request traces remain acceptance fixtures for exact execution semantics,
-not a throttle on Route coverage. `Connect these selected ideas` and `Make a
-preserved variant of this selected idea` prove the native transaction seam;
-the 213/213 Route matrix proves the full control-surface addressing layer.
+Bazaar packages are local, declarative, bounded, and content-hashed. They are
+knowledge descriptors for materials, moves, adapters, aesthetics, algorithms,
+provocations, recipes, and qualification fixtures. They are not executable
+runtime recipes and the full generated catalog is not eagerly loaded by the
+active page.
 
-## Seed participation contract
+The 213 pinned tldraw examples are searchable addressing and qualification
+vocabulary. They are neither 213 page tools nor a promise that each upstream
+example can execute locally. Any concrete behavior must lower through the
+closed Fogwood protocol and remain subject to page review.
 
-Fogwood has one versioned seeded grammar: `remix` with `xorshift32-v1`. The
-public request names either the current selection or an explicit list of stable
-semantic IDs, a bounded seed, and optional `wildness` from 0 to 1.
-Deterministic code validates the exact scope and source state, derives a source
-fingerprint, finds bounded open space, and lowers the remix to ordinary Canvas
-Protocol `variant`, `resize`, and `update` operations. The normalized action is
-replayable and includes its algorithm version, source revision, source
-fingerprint, layout decision, and lineage.
+## Compatibility boundary
 
-The compiler rejects duplicate native or semantic IDs, dimensions outside the
-native 16–5,000 range, oversized scopes before traversal, and any candidate
-whose final rotated footprint intersects existing matter or another variant.
-Receipts retain the exact proposal content hash and an evidence-bound envelope
-hash so seed, layout, and lineage cannot be rebound independently.
+The old `open-surface-local` persistence key and `surface-block` renderer/direct
+user gestures remain supported while the public direction stays native-shape
+first. Existing block, instrument, material, seeded, receipt, and Bazaar tests
+are regression coverage, not the first-run product grammar. Dead dashboard-era
+modules and gallery CSS were removed in the autophagy phase; their deletion is
+recorded in `acceptance.md`.
 
-Seeds do not participate in capability qualification, factual claims, safety,
-permissions, semantic identity, target selection, or human authority. In a
-future planner they may break a tie only after two approaches have identical
-qualification and authority. Version 1 does not use seeds in capability routing
-at all. Apply still requires the exact inspected revision and page-owned review;
-Reject remains side-effect free.
+## Historical decisions
+
+The prior capability graph, contextual broker, full-example addressing, and
+seeded-composition decisions remain in:
+
+- [`docs/adr/0001-plan-with-a-capability-graph.md`](docs/adr/0001-plan-with-a-capability-graph.md)
+- [`docs/adr/0002-contextual-broker-behind-stable-webmcp-tools.md`](docs/adr/0002-contextual-broker-behind-stable-webmcp-tools.md)
+- [`docs/adr/0003-compile-the-full-example-surface.md`](docs/adr/0003-compile-the-full-example-surface.md), superseded for active runtime execution by ADR 0005
+- [`docs/adr/0004-seed-composition-after-authority.md`](docs/adr/0004-seed-composition-after-authority.md), still current for seed routing
+- [`docs/adr/0005-prepared-plan-autophagy.md`](docs/adr/0005-prepared-plan-autophagy.md)
+
+Historical qualification results and commit provenance remain in the archive
+section of [`acceptance.md`](acceptance.md). They must not be read as current
+host, deployment, or upstream-example qualification.

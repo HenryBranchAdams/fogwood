@@ -53,9 +53,6 @@ function proposalDiffEntries(diff: ProposalControllerState['diff']) {
   for (const descriptor of diff.removes.descriptors.slice(0, 24)) {
     entries.push(`Remove ${descriptor.id} · ${descriptor.label}`);
   }
-  for (const recipe of diff.recipe_expansions) {
-    entries.push(`Expand ${recipe.title} · ${recipe.expected_count} items`);
-  }
   return entries;
 }
 

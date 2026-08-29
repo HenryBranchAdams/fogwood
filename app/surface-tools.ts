@@ -8,19 +8,18 @@ import {
   CANVAS_SHAPE_KINDS,
   CAPABILITY_INPUT_SCHEMA,
   buildContextProjection,
+  canonicalSerialize,
   computeContextToken,
   computePageRevision,
-  createProposalController,
-  descendantClosure,
   deterministicHash,
-  expandRecipe,
   FOGWOOD_PROTOCOL,
   FOGWOOD_PROTOCOL_VERSION,
   FOGWOOD_REGISTRY_VERSION,
   FOGWOOD_CONTEXT_SELECTION_LIMIT,
   FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT,
   FOGWOOD_PARTICIPATION_CONTRACT,
-  getRecipe,
+  FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA,
+  isRetiredActionType,
   INSPECT_INPUT_SCHEMA,
   PROPOSAL_TOOL_INPUT_SCHEMA,
   searchCapabilities,
@@ -37,9 +36,9 @@ import type {
   FogwoodMeta,
   InspectableItem,
   ProposalAction,
-  ProposalControllerResult,
   ProposalControllerState,
   ProposalDiff,
+  PreparedMaterialEvidence,
   ProposalV1,
 } from './fogwood-runtime';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
@@ -74,19 +73,17 @@ import {
   type ProposalLifecycleEvent,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-proposal-lifecycle.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { createFogwoodSurface } from './fogwood-surface.ts';
+import type { PreparedCanvasPlan } from './fogwood-runtime.ts';
 import {
-  COMPARE_INSTRUMENT_INSTANCE_IDS,
-  applyInstrumentInputChanges,
   applyInstrumentControlChange,
-  compareShapeIdsFromRecipeBlocks,
-  createCompareInstrumentScope,
   inspectInstrumentData,
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 } from './fogwood-instrument-adapter.ts';
-import type { InstrumentShapeLike } from './fogwood-instrument-adapter.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { isStableSemanticId, planRelationships, planSpatialMoves, relationshipSemanticId, SPATIAL_LIMITS } from './fogwood-spatial.ts';
-import type { SemanticRelationship, SpatialCreatePlan } from './fogwood-spatial.ts';
+import { isStableSemanticId, relationshipSemanticId, SPATIAL_LIMITS } from './fogwood-spatial.ts';
+import type { SemanticRelationship } from './fogwood-spatial.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { registerWebMcpTools } from './webmcp-registration.ts';
 import type { ModelContext, ToolConnection, WebMcpTool } from './webmcp-registration';
@@ -219,13 +216,8 @@ function textResult(value: unknown, isError = false): ToolResult {
   };
 }
 
-/** Keep the activity feed meaningful for semantic scenarios that change no item count. */
-export function proposalActivityDetail(diff: Pick<ProposalDiff, 'instrument_changes' | 'counts'>) {
-  const controlCount = diff.instrument_changes.reduce((sum, scope) => sum + scope.controls.length, 0);
-  const derivedCount = diff.instrument_changes.reduce((sum, scope) => sum + scope.derived.length, 0);
-  if (controlCount > 0 || derivedCount > 0) {
-    return `${controlCount} control change${controlCount === 1 ? '' : 's'} and ${derivedCount} predicted output${derivedCount === 1 ? '' : 's'} await review.`;
-  }
+/** Keep the activity feed meaningful for every current protocol proposal. */
+export function proposalActivityDetail(diff: Pick<ProposalDiff, 'counts'>) {
   return `${diff.counts.adds} additions, ${diff.counts.updates} updates, ${diff.counts.moves} moves, ${diff.counts.removes} removals await review.`;
 }
 
@@ -251,6 +243,8 @@ type MutationOptions = {
   recordHistory?: boolean;
   parentId?: string;
   fogwood?: FogwoodMeta;
+  /** Optional IDs allocated during stage so later lowerings stay stable. */
+  shapeIds?: readonly TLShapeId[];
 };
 
 function shapeMeta(id: string, fogwood?: FogwoodMeta): JsonObject {
@@ -292,7 +286,7 @@ export function addSurfaceBlocks(editor: Editor, inputs: unknown[], options: Mut
     const kind = normalizeKind(input.kind);
     const size = DEFAULT_SIZES[kind];
     const position = positionFor(editor, input, index, coordinateSpace);
-    const id = createShapeId();
+    const id = options.shapeIds?.[index] ?? createShapeId();
     return {
       id,
       type: 'surface-block' as const,
@@ -445,61 +439,6 @@ function addCanvasShapes(editor: Editor, inputs: unknown[], options: MutationOpt
   if (options.select !== false) editor.select(...ids);
   if (options.focusAfter !== false) editor.zoomToSelection({ animation: { duration: 320 } });
   return ids;
-}
-
-function updateSurfaceBlocks(editor: Editor, rawUpdates: unknown[], options: MutationOptions = {}) {
-  const updates = rawUpdates.filter(isRecord).slice(0, 48);
-  const shapeUpdates: Array<Record<string, unknown>> = [];
-  for (const input of updates) {
-    if (typeof input.id !== 'string') continue;
-    const shape = editor.getShape(input.id as TLShapeId);
-    if (!shape || shape.type !== 'surface-block') continue;
-    const props: Record<string, unknown> = {};
-    if ('kind' in input) props.kind = normalizeKind(input.kind);
-    if ('tone' in input) props.tone = normalizeTone(input.tone);
-    if ('title' in input) props.title = boundedText(input.title, 180);
-    if ('body' in input) props.body = boundedText(input.body, 2_000);
-    if ('value' in input) props.value = boundedText(input.value, 500);
-    if ('w' in input) props.w = clampNumber(input.w, shape.props.w, 120, 1_400);
-    if ('h' in input) props.h = clampNumber(input.h, shape.props.h, 56, 1_000);
-    if (['items', 'columns', 'rows', 'options', 'series', 'min', 'max', 'step'].some((key) => key in input)) {
-      props.data = makeBlockData({ ...parseBlockData(shape.props.data), ...input });
-    }
-    shapeUpdates.push({
-      id: shape.id,
-      type: 'surface-block',
-      ...(input.x === undefined ? {} : { x: clampNumber(input.x, shape.x, -100_000, 100_000) }),
-      ...(input.y === undefined ? {} : { y: clampNumber(input.y, shape.y, -100_000, 100_000) }),
-      props,
-    });
-  }
-  if (shapeUpdates.length > 0) {
-    if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Update Fogwood blocks');
-    editor.updateShapes(shapeUpdates as never);
-  }
-  return shapeUpdates.map((update) => update.id as TLShapeId);
-}
-
-function placeCanvasItems(editor: Editor, rawPlacements: unknown[], options: MutationOptions = {}) {
-  const placements = rawPlacements.filter(isRecord).slice(0, 100);
-  const updates: Array<Record<string, unknown>> = [];
-  for (const input of placements) {
-    if (typeof input.id !== 'string') continue;
-    const shape = editor.getShape(input.id as TLShapeId);
-    if (!shape) continue;
-    updates.push({
-      id: shape.id,
-      type: shape.type,
-      x: clampNumber(input.x, shape.x, -100_000, 100_000),
-      y: clampNumber(input.y, shape.y, -100_000, 100_000),
-      ...(input.rotation === undefined ? {} : { rotation: clampNumber(input.rotation, shape.rotation, -Math.PI * 4, Math.PI * 4) }),
-    });
-  }
-  if (updates.length > 0) {
-    if (options.recordHistory !== false) editor.markHistoryStoppingPoint('Place Fogwood items');
-    editor.updateShapes(updates as never);
-  }
-  return updates.map((update) => update.id as TLShapeId);
 }
 
 function getNativeShapeText(editor: Editor, shape: TLShape) {
@@ -1231,7 +1170,6 @@ function proposalContext(editor: Editor) {
   return {
     current_revision: currentRevision(editor),
     items,
-    instrument_shapes: instrumentShapesForEditor(editor),
     page_id: editor.getCurrentPageId(),
     selection_semantic_ids: selectedShapeIds.flatMap((id) => {
       const item = items.find((candidate) => candidate.id === id);
@@ -1242,62 +1180,6 @@ function proposalContext(editor: Editor) {
     regions: currentRegions(content.shapes),
     semantic_relationships: content.semantic_relationships,
   };
-}
-
-function instrumentShapesForEditor(editor: Editor): InstrumentShapeLike[] {
-  return editor.getCurrentPageShapes().map((shape) => ({
-    id: String(shape.id),
-    type: shape.type,
-    parent_id: String(shape.parentId),
-    is_locked: shape.isLocked,
-    props: shape.type === 'surface-block'
-      ? (shape as Extract<TLShape, { type: 'surface-block' }>).props
-      : undefined,
-  }));
-}
-
-function expandActions(actions: readonly ProposalAction[], recipeInstanceIdFor: (recipeId: string) => string) {
-  return actions.flatMap((action) => {
-    if (action.type !== 'insert_recipe') return [action];
-    const recipe = getRecipe(action.recipe_id, action.version);
-    if (!recipe) return [];
-    const recipeInstanceId = recipeInstanceIdFor(recipe.id);
-    return expandRecipe(recipe, action.anchor).map((operation) => ({
-      ...operation,
-      recipeMeta: {
-        recipe_id: recipe.id,
-        composition_id: recipe.version === 2 ? recipe.id : undefined,
-        recipe_version: recipe.version,
-        recipe_instance_id: recipeInstanceId,
-      },
-    }));
-  });
-}
-
-function recipeInstanceIds(editor: Editor) {
-  const ids = new Set<string>();
-  for (const shape of editor.getCurrentPageShapes()) {
-    const meta = fogwoodMeta(shape);
-    if (meta.recipe_instance_id) ids.add(meta.recipe_instance_id);
-    if (shape.type !== 'surface-block') continue;
-    const block = shape as Extract<TLShape, { type: 'surface-block' }>;
-    const data = parseBlockData(block.props.data);
-    if (!isRecord(data.instrument)) continue;
-    if (typeof data.instrument.recipe_instance_id === 'string') ids.add(data.instrument.recipe_instance_id);
-  }
-  return ids;
-}
-
-function nextRecipeInstanceId(editor: Editor, recipeId: string, used: Set<string>): string | undefined {
-  const existing = recipeInstanceIds(editor);
-  for (let index = 1; index <= 10_000; index += 1) {
-    const candidate = `${recipeId}:${index}`;
-    if (!existing.has(candidate) && !used.has(candidate)) {
-      used.add(candidate);
-      return candidate;
-    }
-  }
-  return undefined;
 }
 
 function materialDataUrl(material: PreparedMaterial) {
@@ -1327,6 +1209,14 @@ function materialAssetMeta(material: PreparedMaterial): JsonObject {
   };
 }
 
+type PreparedMaterialLowering = Readonly<{
+  material: PreparedMaterial;
+  src: string;
+  assetId: TLAssetId;
+  asset?: TLAsset;
+  shape: Record<string, unknown>;
+}>;
+
 function findContentAddressedAsset(editor: Editor, material: PreparedMaterial, expectedSrc: string, expectedId: TLAssetId) {
   return assetRecords(editor).find((asset) => {
     if (asset.type !== 'image' || !isRecord(asset.meta) || !isRecord(asset.meta.fogwood)) return false;
@@ -1348,21 +1238,26 @@ function findContentAddressedAsset(editor: Editor, material: PreparedMaterial, e
   });
 }
 
-function addMaterialShapes(
+/**
+ * Turn qualified materials into immutable page records during stage.  In
+ * particular, data URLs, asset identities, and shape IDs are all resolved
+ * before the human review state is published. Apply only inserts these frozen
+ * records; it never decodes or reinterprets a transfer.
+ */
+function prepareMaterialLowerings(
   editor: Editor,
   materials: readonly PreparedMaterial[],
-  createdAssetIds: TLAssetId[],
-) {
-  if (materials.length === 0) return [] as TLShapeId[];
+): PreparedMaterialLowering[] {
+  if (materials.length === 0) return [];
   if (typeof editor.createAssets !== 'function' || typeof editor.createShapes !== 'function') throw new Error('This page adapter does not expose the built-in tldraw asset and image-shape APIs.');
   const pageId = editor.getCurrentPageId() as TLParentId;
-  const shapes: Array<Record<string, unknown>> = [];
+  const lowerings: PreparedMaterialLowering[] = [];
   for (const material of materials) {
     if (!isPreparedMaterial(material) || !material.decode_qualified) throw new Error('Material decode proof was not retained through Apply.');
     const src = materialDataUrl(material);
     const assetId = AssetRecordType.createId(`fogwood-material-${material.content_hash.slice('sha256:'.length)}`) as TLAssetId;
     const existing = findContentAddressedAsset(editor, material, src, assetId);
-    let asset = existing;
+    let asset: TLAsset | undefined = existing;
     if (!asset) {
       if (assetRecords(editor).some((candidate) => candidate.id === assetId)) throw new Error('The content-addressed asset id is already occupied by different bytes or metadata.');
       asset = AssetRecordType.create({
@@ -1379,44 +1274,65 @@ function addMaterialShapes(
         },
         meta: materialAssetMeta(material),
       });
-      editor.createAssets([asset]);
-      createdAssetIds.push(asset.id);
     }
     const imageAsset = asset as TLAsset & { type: 'image'; props: { w: number; h: number } };
     const shapeId = createShapeId();
-    shapes.push({
-      id: shapeId,
-      type: 'image',
-      x: material.x,
-      y: material.y,
-      parentId: pageId,
-      meta: {
-        fogwood: {
-          semantic_id: material.semantic_id,
-          semantic_id_source: 'stable',
-          role: 'proposal-material',
-          material_hash: material.content_hash,
-          byte_length: material.byte_length,
-          source_status: material.source_status,
-          originating_capability: material.originating_capability,
-          qualification_boundary: material.qualification_boundary,
+    lowerings.push({
+      material,
+      src,
+      assetId,
+      ...(existing ? {} : { asset }),
+      shape: {
+        id: shapeId,
+        type: 'image',
+        x: material.x,
+        y: material.y,
+        parentId: pageId,
+        meta: {
+          fogwood: {
+            semantic_id: material.semantic_id,
+            semantic_id_source: 'stable',
+            role: 'proposal-material',
+            material_hash: material.content_hash,
+            byte_length: material.byte_length,
+            source_status: material.source_status,
+            originating_capability: material.originating_capability,
+            qualification_boundary: material.qualification_boundary,
+          },
         },
-      },
-      props: {
-        w: material.w,
-        h: material.h,
-        playing: false,
-        url: '',
-        assetId: imageAsset.id,
-        crop: null,
-        flipX: false,
-        flipY: false,
-        altText: material.alt || material.label || material.semantic_id,
+        props: {
+          w: material.w,
+          h: material.h,
+          playing: false,
+          url: '',
+          assetId: imageAsset.id,
+          crop: null,
+          flipX: false,
+          flipY: false,
+          altText: material.alt || material.label || material.semantic_id,
+        },
       },
     });
   }
-  editor.createShapes(shapes as never);
-  return shapes.map((shape) => shape.id as TLShapeId);
+  return lowerings;
+}
+
+function applyMaterialLowerings(
+  editor: Editor,
+  lowerings: readonly PreparedMaterialLowering[],
+  createdAssetIds: TLAssetId[],
+) {
+  for (const lowering of lowerings) {
+    let asset = findContentAddressedAsset(editor, lowering.material, lowering.src, lowering.assetId);
+    if (!asset && lowering.asset) {
+      if (assetRecords(editor).some((candidate) => candidate.id === lowering.assetId)) throw new Error('The staged content-addressed asset id is occupied by different bytes or metadata.');
+      editor.createAssets([lowering.asset]);
+      createdAssetIds.push(lowering.assetId);
+      asset = findContentAddressedAsset(editor, lowering.material, lowering.src, lowering.assetId);
+    }
+    if (!asset) throw new Error('The staged local material asset is no longer available.');
+    editor.createShapes([lowering.shape] as never);
+  }
 }
 
 function cleanupUnreferencedAssets(editor: Editor, assetIds: readonly TLAssetId[]) {
@@ -1431,29 +1347,25 @@ function cleanupUnreferencedAssets(editor: Editor, assetIds: readonly TLAssetId[
   if (orphaned.length > 0) editor.deleteAssets(orphaned);
 }
 
-function spatialContextForEditor(editor: Editor) {
-  const content = pageContent(editor);
-  const bindingCounts = bindingCountsByShape(content.bindings);
-  const items = content.shapes.map((shape) => inspectItem(editor, shape, bindingCounts.get(String(shape.id)) ?? 0));
-  let allSelectedShapeIds: readonly string[] = [];
-  try {
-    allSelectedShapeIds = [...editor.getCurrentPageState().selectedShapeIds];
-  } catch {
-    // Minimal editor doubles may omit ephemeral selection APIs.
+/**
+ * Undo the currently running Apply back to the mark created immediately
+ * before it. tldraw's `run` batches history but deliberately does not roll
+ * back when an operation throws; `bailToMark` is the public API that reverses
+ * that batch and discards the mark. Asset records are intentionally written
+ * outside the normal history stream, so their newly-created, unreferenced
+ * records are cleaned up separately.
+ */
+function rollbackPreparedApply(editor: Editor, markId: string | undefined, createdAssetIds: readonly TLAssetId[]) {
+  if (markId) {
+    try {
+      editor.bailToMark(markId);
+    } catch {
+      // A real tldraw editor should never fail this public history operation.
+      // Keep the cleanup below best-effort and let the caller report the
+      // original Apply failure rather than masking it with rollback noise.
+    }
   }
-  const selectedShapeIds = allSelectedShapeIds.slice(0, 128);
-  return {
-    page_id: editor.getCurrentPageId(),
-    items,
-    selection_semantic_ids: selectedShapeIds.flatMap((id) => {
-      const item = items.find((candidate) => candidate.id === id);
-      return item?.semantic_id ? [item.semantic_id] : [];
-    }),
-    selection_complete: allSelectedShapeIds.length <= 128,
-    selection_total: allSelectedShapeIds.length,
-    regions: currentRegions(content.shapes),
-    semantic_relationships: content.semantic_relationships,
-  };
+  cleanupUnreferencedAssets(editor, createdAssetIds);
 }
 
 function cloneShapeRecord(shape: TLShape): Record<string, unknown> {
@@ -1557,82 +1469,6 @@ function createVariantShape(
   clone.props = props;
   editor.createShapes([clone] as never);
   return id as TLShapeId;
-}
-
-function spatialCreateShape(
-  editor: Editor,
-  create: SpatialCreatePlan,
-) {
-  const source = create.source_shape_id ? editor.getShape(create.source_shape_id as TLShapeId) : undefined;
-  if (create.kind === 'variant' && !source) throw new Error(`Variant source ${create.source_shape_id ?? ''} no longer exists.`);
-  if (create.kind === 'variant' && source) {
-    return createVariantShape(editor, {
-      sourceId: String(source.id),
-      semanticId: create.semantic_id,
-      variantId: create.variant_id,
-      x: create.x,
-      y: create.y,
-      lineageSourceId: create.lineage_source_id ?? create.source_semantic_id ?? fogwoodMeta(source).semantic_id ?? String(source.id),
-      parentVariantId: create.parent_variant_id,
-      patches: create.patches,
-    });
-  }
-  const ids = addCanvasShapes(editor, [{
-    kind: 'note',
-    x: create.x,
-    y: create.y,
-    w: create.w,
-    h: create.h,
-    text: create.text ?? '',
-    semantic_id: create.semantic_id,
-    role: 'annotation',
-    lineage_source_id: create.lineage_source_id,
-  }], {
-    coordinateSpace: 'page',
-    focusAfter: false,
-    select: false,
-    recordHistory: false,
-    parentId: editor.getCurrentPageId(),
-    fogwood: {
-      semantic_id: create.semantic_id,
-      semantic_id_source: 'stable',
-      role: 'annotation',
-      ...(create.source_semantic_id ? { lineage_source_id: create.source_semantic_id } : {}),
-    },
-  });
-  return ids[0];
-}
-
-function spatialRelationshipShape(editor: Editor, relationship: SemanticRelationship, recipeMeta?: FogwoodMeta) {
-  const items = spatialContextForEditor(editor).items;
-  const source = items.find((item) => item.semantic_id === relationship.source_semantic_id);
-  const target = items.find((item) => item.semantic_id === relationship.target_semantic_id);
-  if (!source || !target) throw new Error(`Relationship ${relationship.id} target no longer exists.`);
-  return addCanvasShapes(editor, [{
-    kind: 'arrow',
-    x: source.x + source.w / 2,
-    y: source.y + source.h / 2,
-    end_x: target.x + target.w / 2,
-    end_y: target.y + target.h / 2,
-    text: relationship.label ?? '',
-  }], {
-    coordinateSpace: 'page',
-    focusAfter: false,
-    select: false,
-    recordHistory: false,
-    parentId: editor.getCurrentPageId(),
-    fogwood: {
-      semantic_id: relationshipSemanticId(relationship.id),
-      semantic_id_source: 'stable',
-      role: 'semantic-relationship',
-      ...(recipeMeta ?? {}),
-      relationship_id: relationship.id,
-      relationship_kind: relationship.kind,
-      source_semantic_id: relationship.source_semantic_id,
-      target_semantic_id: relationship.target_semantic_id,
-      ...(relationship.label ? { relationship_label: relationship.label } : {}),
-    },
-  })[0];
 }
 
 /**
@@ -1928,227 +1764,246 @@ function preflightProposalCanvasOps(editor: Editor, proposal: ProposalV1) {
   return preflightCanvasOpPlans(editor, plans);
 }
 
-export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
-  if (currentRevision(editor) !== proposal.base_revision) return { ok: false as const, status: 'STALE_STATE' as const, message: 'The page changed; inspect again and re-propose before applying.' };
-  if (typeof editor.getIsReadonly === 'function' && editor.getIsReadonly()) return { ok: false as const, status: 'ERROR' as const, message: 'This page is read-only; no proposal changes were applied.' };
-  const validation = validateProposal(proposal, proposalContext(editor));
-  if (!validation.ok) {
-    const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
-    return { ok: false as const, status: stale ? 'STALE_STATE' as const : 'ERROR' as const, message: validation.errors.map((error) => error.message).join(' ') };
+type PreparedActionLowering = Readonly<{
+  action: ProposalAction;
+  canvas?: CanvasOpPlan;
+}>;
+
+type EditorPreparedCanvasPlan = PreparedCanvasPlan & Readonly<{
+  action_lowerings: readonly PreparedActionLowering[];
+  material_lowerings: readonly PreparedMaterialLowering[];
+}>;
+
+function planError(status: 'STALE_STATE' | 'ERROR', message: string) {
+  return { ok: false as const, status, message };
+}
+
+/**
+ * Freeze the complete page-owned plan graph in place. The plan is deliberately
+ * not cloned: prepared materials carry a WeakSet decode proof, so preserving
+ * their object identity is part of the boundary. Typed arrays are not present
+ * in the public plan today, but are left alone because freezing them throws in
+ * some browsers.
+ */
+function freezePlanValue<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== 'object') return value;
+  const objectValue = value as object;
+  if (seen.has(objectValue)) return value;
+  if (typeof ArrayBuffer !== 'undefined' && (ArrayBuffer.isView(value) || value instanceof ArrayBuffer)) return value;
+  seen.add(objectValue);
+  if (Array.isArray(value)) {
+    for (const child of value) freezePlanValue(child, seen);
+  } else {
+    for (const key of Object.keys(value as Record<string, unknown>)) freezePlanValue((value as Record<string, unknown>)[key], seen);
   }
+  return Object.freeze(value);
+}
+
+function materialEvidence(material: PreparedMaterial): PreparedMaterialEvidence {
+  return {
+    semantic_id: material.semantic_id,
+    content_hash: material.content_hash,
+    mime_type: material.mime_type,
+    byte_length: material.byte_length,
+    dimensions: { width: material.dimensions.width, height: material.dimensions.height },
+    source_status: material.source_status,
+    decode_qualified: true,
+    originating_capability: material.originating_capability,
+    qualification_boundary: material.qualification_boundary,
+  };
+}
+
+function materialDigest(material: PreparedMaterial) {
+  return {
+    semantic_id: material.semantic_id,
+    mime_type: material.mime_type,
+    // The canonical base64 is the exact accepted byte sequence. Include it in
+    // the plan digest instead of relying only on a hash so the prepared plan's
+    // identity commits to the bytes that Apply will insert.
+    canonical_base64: material.canonical_base64,
+    content_hash: material.content_hash,
+    byte_length: material.byte_length,
+    dimensions: { width: material.dimensions.width, height: material.dimensions.height },
+    source_status: material.source_status,
+    decode_qualified: material.decode_qualified,
+    label: material.label,
+    alt: material.alt,
+    prompt_summary: material.prompt_summary,
+    originating_capability: material.originating_capability,
+    qualification_boundary: material.qualification_boundary,
+    x: material.x,
+    y: material.y,
+    w: material.w,
+    h: material.h,
+  };
+}
+
+/**
+ * Prepare every page-dependent lowering while the proposal is still outside
+ * the pending review state. The resulting plan retains prepared material
+ * objects by identity and contains no deferred recipe expansion, decoding, or
+ * validation work for Apply.
+ */
+export function prepareProposalPlan(
+  editor: Editor,
+  proposal: ProposalV1,
+  diff: ProposalDiff,
+): EditorPreparedCanvasPlan | { ok: false; status: 'STALE_STATE' | 'ERROR'; message: string } {
+  if (currentRevision(editor) !== proposal.base_revision) return planError('STALE_STATE', 'The page changed; inspect again and re-propose before staging.');
+  const retiredActionType = proposal.actions
+    .map((action) => (action as unknown as { type?: unknown }).type)
+    .find(isRetiredActionType);
+  if (retiredActionType) return planError('ERROR', `The ${retiredActionType} action is retired; no legacy lowering is available.`);
+  if (typeof editor.getIsReadonly === 'function' && editor.getIsReadonly()) return planError('ERROR', 'This page is read-only; the proposal was not staged.');
   const maxShapes = editor.options.maxShapesPerPage;
-  if (Number.isFinite(maxShapes) && validation.diff.counts.after > maxShapes) {
-    return { ok: false as const, status: 'ERROR' as const, message: 'The proposal would exceed this page\'s bounded shape limit; no changes were applied.' };
-  }
-  const scopes = new Set<string>();
-  let scopeAllocationError = false;
-  const actions = expandActions(validation.proposal.actions, (recipeId) => {
-    const allocated = nextRecipeInstanceId(editor, recipeId, scopes);
-    if (!allocated) scopeAllocationError = true;
-    return allocated ?? '';
-  });
-  if (scopeAllocationError) return { ok: false as const, status: 'ERROR' as const, message: 'The bounded recipe-instance scope is full; no changes were applied.' };
+  if (Number.isFinite(maxShapes) && diff.counts.after > maxShapes) return planError('ERROR', 'The proposal would exceed this page\'s bounded shape limit; no changes were staged.');
+
+  const actions = proposal.actions;
+
   const materialActions = actions.filter((action): action is Extract<ProposalAction, { type: 'add_materials' }> => action.type === 'add_materials');
-  const preparedMaterials = materialActions.flatMap((action) => action.materials);
-  if (preparedMaterials.length > 0 && (typeof editor.createAssets !== 'function' || typeof editor.createShapes !== 'function')) {
-    return { ok: false as const, status: 'ERROR' as const, message: 'The page adapter does not expose the built-in tldraw asset and image-shape APIs; no changes were applied.' };
+  const rawMaterials = materialActions.flatMap((action) => action.materials);
+  const preparedMaterials = rawMaterials.filter((material): material is PreparedMaterial => isPreparedMaterial(material));
+  if (preparedMaterials.length !== rawMaterials.length) return planError('ERROR', 'Every material must be prepared and browser decode-qualified before staging.');
+  let materialLowerings: PreparedMaterialLowering[];
+  try {
+    materialLowerings = prepareMaterialLowerings(editor, preparedMaterials);
+  } catch (error) {
+    return planError('ERROR', error instanceof Error ? error.message.slice(0, 180) : 'The material was refused before staging.');
   }
-  for (const material of preparedMaterials) {
-    try {
-      if (!isPreparedMaterial(material) || !material.decode_qualified) throw new Error('Material decode proof was not retained through Apply.');
-      materialDataUrl(material);
-    } catch (error) {
-      return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The material was refused before Apply.' };
-    }
-  }
-  let instrumentUpdates: Array<{ id: TLShapeId; type: 'surface-block'; props: { value: string; data: string } }> = [];
-  for (const action of actions) {
-    if (action.type !== 'set_instrument_inputs') continue;
-    const scenario = applyInstrumentInputChanges(instrumentShapesForEditor(editor), action.changes);
-    if (scenario.status !== 'ok') {
-      const stale = scenario.status === 'stale';
-      return {
-        ok: false as const,
-        status: stale ? 'STALE_STATE' as const : 'ERROR' as const,
-        message: scenario.errors.map((error) => error.message).join(' ') || 'The instrument scenario was rejected; no changes were applied.',
-      };
-    }
-    const currentPageShapes = editor.getCurrentPageShapes();
-    const currentSurfaceBlockIds = new Set<string>(currentPageShapes.filter((shape) => shape.type === 'surface-block').map((shape) => String(shape.id)));
-    const scopeShapeIds = new Set(scenario.scope_shape_ids ?? []);
-    const patchIds = scenario.patches.map((patch) => patch.shape_id);
-    if (new Set(patchIds).size !== patchIds.length || patchIds.some((id) => !currentSurfaceBlockIds.has(id) || !scopeShapeIds.has(id))) {
-      return { ok: false as const, status: 'ERROR' as const, message: 'Instrument scenario patches were outside the current-page scope; no changes were applied.' };
-    }
-    instrumentUpdates = scenario.patches.map((patch) => ({
-      id: patch.shape_id as TLShapeId,
-      type: 'surface-block' as const,
-      props: { value: patch.value, data: patch.data },
-    }));
-  }
-  const compareRecipeBlockCounts = new Map<string, number>();
-  for (const action of actions) {
-    if (action.type !== 'add_blocks' || !('recipeMeta' in action)) continue;
-    const recipeMeta = (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta;
-    if (recipeMeta?.recipe_id !== 'compare-and-decide' || !recipeMeta.recipe_instance_id) continue;
-    compareRecipeBlockCounts.set(recipeMeta.recipe_instance_id, (compareRecipeBlockCounts.get(recipeMeta.recipe_instance_id) ?? 0) + action.blocks.length);
-  }
-  if ([...compareRecipeBlockCounts.values()].some((count) => count !== COMPARE_INSTRUMENT_INSTANCE_IDS.length + 2)) {
-    return { ok: false as const, status: 'ERROR' as const, message: 'The immutable Compare recipe mapping was incomplete; no changes were applied.' };
-  }
-  const spatialContext = spatialContextForEditor(editor);
-  const spatialMovePlans = new Map<ProposalAction, ReturnType<typeof planSpatialMoves>>();
-  const relationshipPlans = new Map<ProposalAction, SemanticRelationship[]>();
-  const canvasOpPlans = new Map<ProposalAction, CanvasOpPlan>();
-  // v2 relationships intentionally arrive in the same proposal as their
-  // native endpoints. Validate those endpoints before mutation by projecting
-  // the bounded composition shapes into the spatial grammar; the real arrows
-  // are still created only after the editor has created the native shapes.
-  const compositionItems = actions.flatMap((action) => {
-    if (action.type !== 'add_shapes') return [];
-    const recipeMeta = 'recipeMeta' in action
-      ? (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta
-      : undefined;
-    if (recipeMeta?.recipe_version !== 2) return [];
-    return action.shapes.map((shape) => {
-      const compositionShape = shape as typeof shape & {
-        semantic_id: string;
-        x: number;
-        y: number;
-        w: number;
-        h: number;
-      };
-      return {
-      id: `composition:${recipeMeta.recipe_instance_id ?? recipeMeta.recipe_id}:${compositionShape.semantic_id}`,
-      semantic_id: compositionShape.semantic_id,
-      semantic_id_source: 'stable',
-      type: shape.kind,
-      kind: shape.kind,
-      x: compositionShape.x,
-      y: compositionShape.y,
-      w: compositionShape.w,
-      h: compositionShape.h,
-      parent_id: spatialContext.page_id,
-      };
-    });
-  });
-  const relationshipContext = compositionItems.length > 0
-    ? { ...spatialContext, items: [...spatialContext.items, ...compositionItems] }
-    : spatialContext;
+
+  const actionLowerings: PreparedActionLowering[] = [];
   try {
     for (const action of actions) {
-      if (action.type === 'canvas_ops') {
-        const result = planCanvasOps(spatialContext.items, action.ops, spatialContext.page_id);
+      if (action.type === 'canvas_ops' || action.type === 'seeded_composition') {
+        const current = proposalContext(editor);
+        const result = planCanvasOps(current.items, action.ops, current.page_id);
         if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
-        canvasOpPlans.set(action, result.plan);
+        actionLowerings.push({ action, canvas: result.plan });
+      } else {
+        actionLowerings.push({ action });
       }
-      if (action.type === 'seeded_composition') {
-        const result = planCanvasOps(spatialContext.items, action.ops, spatialContext.page_id);
-        if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
-        canvasOpPlans.set(action, result.plan);
-      }
-      if (action.type === 'apply_spatial_moves') spatialMovePlans.set(action, planSpatialMoves(spatialContext, action));
-      if (action.type === 'add_relationships') relationshipPlans.set(action, [...planRelationships(relationshipContext, action.relationships).relationships]);
     }
   } catch (error) {
-    return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The spatial proposal was rejected before mutation.' };
+    return planError('ERROR', error instanceof Error ? error.message.slice(0, 180) : 'The spatial proposal was rejected before staging.');
   }
-  const canvasAdapterError = preflightCanvasOpPlans(editor, [...canvasOpPlans.values()]);
+  const canvasAdapterError = preflightCanvasOpPlans(editor, actionLowerings.flatMap((entry) => entry.canvas ? [entry.canvas] : []));
+  if (canvasAdapterError) return planError('ERROR', canvasAdapterError);
+
+  const contextToken = contextTokenForEditor(editor);
+  const pageId = String(editor.getCurrentPageId());
+  const contentRevision = currentRevision(editor);
+  const frozenActions = Object.freeze(actions);
+  const frozenActionLowerings = Object.freeze(actionLowerings);
+  const frozenMaterialLowerings = Object.freeze(materialLowerings);
+  const frozenSeededEvidence = Object.freeze(diff.seeded_compositions);
+  const frozenMaterialEvidence = Object.freeze(preparedMaterials.map(materialEvidence));
+  const digestInput = {
+    schema: FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA,
+    page_id: pageId,
+    base_revision: proposal.base_revision,
+    content_revision: contentRevision,
+    context_token: contextToken,
+    actions: frozenActions,
+    diff,
+    seeded_evidence: frozenSeededEvidence,
+    prepared_materials: preparedMaterials.map(materialDigest),
+  };
+  const plan = freezePlanValue({
+    schema: FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA,
+    page_id: pageId,
+    proposal,
+    diff,
+    base_revision: proposal.base_revision,
+    content_revision: contentRevision,
+    context_token: contextToken,
+    actions: frozenActions,
+    operations: frozenActionLowerings,
+    lowerings: Object.freeze([...frozenActionLowerings, ...frozenMaterialLowerings]),
+    prepared_materials: Object.freeze(preparedMaterials),
+    seeded_evidence: frozenSeededEvidence,
+    material_evidence: frozenMaterialEvidence,
+    preflight: {
+      status: 'passed' as const,
+      page_id: pageId,
+      content_revision: contentRevision,
+      target_count: diff.counts.adds + diff.counts.updates + diff.counts.moves + diff.counts.removes,
+      material_decode: 'complete' as const,
+      plan_lowering: 'complete' as const,
+    },
+    transaction: {
+      authority: 'page-owned' as const,
+      atomic: true as const,
+      editor_run: 'one' as const,
+      history: 'one-stopping-point' as const,
+      undo: 'one-step' as const,
+      apply: 'frozen-lowerings-only' as const,
+      reject: 'no-mutation' as const,
+    },
+    digest: deterministicHash(canonicalSerialize(digestInput)),
+    action_lowerings: frozenActionLowerings,
+    material_lowerings: frozenMaterialLowerings,
+  }) as EditorPreparedCanvasPlan;
+  return plan;
+}
+
+function executePreparedProposal(editor: Editor, plan: EditorPreparedCanvasPlan) {
+  const proposal = plan.proposal;
+  if (currentRevision(editor) !== plan.base_revision) return { ok: false as const, status: 'STALE_STATE' as const, message: 'The page changed; inspect again and re-propose before applying.' };
+  const retiredActionType = proposal.actions
+    .map((action) => (action as unknown as { type?: unknown }).type)
+    .find(isRetiredActionType);
+  if (retiredActionType) return { ok: false as const, status: 'ERROR' as const, message: `The ${retiredActionType} action is retired; no legacy lowering is available.` };
+  if (typeof editor.getIsReadonly === 'function' && editor.getIsReadonly()) return { ok: false as const, status: 'ERROR' as const, message: 'This page is read-only; no proposal changes were applied.' };
+  // Recheck adapter capabilities and target existence immediately before the
+  // transaction. Content revision equality makes context-only changes safe.
+  const canvasAdapterError = preflightCanvasOpPlans(editor, plan.action_lowerings.flatMap((entry) => entry.canvas ? [entry.canvas] : []));
   if (canvasAdapterError) return { ok: false as const, status: 'ERROR' as const, message: canvasAdapterError };
-  const compareBlocksByScope = new Map<string, TLShapeId[]>();
   const createdAssetIds: TLAssetId[] = [];
+  let applyMark: string | undefined;
   try {
-    editor.markHistoryStoppingPoint('Apply agent proposal');
+    applyMark = editor.markHistoryStoppingPoint('Apply agent proposal');
     editor.run(() => {
-      for (const action of actions) {
-        const recipeMeta = 'recipeMeta' in action
-          ? (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta
-          : undefined;
-        const fogwood = {
-          role: recipeMeta ? 'recipe-content' : 'proposal-content',
-          ...(recipeMeta ?? {}),
-        };
+      for (const entry of plan.action_lowerings) {
+        const action = entry.action;
         if (action.type === 'canvas_ops') {
-          const plan = canvasOpPlans.get(action);
-          if (!plan) throw new Error('Canvas Protocol plan was not retained through Apply.');
-          applyCanvasOpPlan(editor, plan);
+          if (!entry.canvas) throw new Error('Canvas Protocol plan was not retained through Apply.');
+          applyCanvasOpPlan(editor, entry.canvas);
         } else if (action.type === 'seeded_composition') {
-          const plan = canvasOpPlans.get(action);
-          if (!plan) throw new Error('Seeded composition plan was not retained through Apply.');
-          applyCanvasOpPlan(editor, plan, { seeded: action });
-        } else if (action.type === 'add_blocks') {
-          const ids = addSurfaceBlocks(editor, action.blocks, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
-          if (recipeMeta?.recipe_id === 'compare-and-decide' && recipeMeta.recipe_instance_id) {
-            compareBlocksByScope.set(recipeMeta.recipe_instance_id, ids);
-          }
-        } else if (action.type === 'add_shapes') {
-          addCanvasShapes(editor, action.shapes, { coordinateSpace: 'page', focusAfter: false, select: false, recordHistory: false, parentId: editor.getCurrentPageId(), fogwood });
+          if (!entry.canvas) throw new Error('Seeded composition plan was not retained through Apply.');
+          applyCanvasOpPlan(editor, entry.canvas, { seeded: action });
         } else if (action.type === 'add_materials') {
-          addMaterialShapes(editor, action.materials as readonly PreparedMaterial[], createdAssetIds);
-        } else if (action.type === 'apply_spatial_moves') {
-          const plan = spatialMovePlans.get(action);
-          if (!plan) throw new Error('Spatial move plan was not retained through Apply.');
-          const moveUpdates = plan.moves.map((move) => ({
-            id: move.shape_id as TLShapeId,
-            type: editor.getShape(move.shape_id as TLShapeId)?.type ?? 'geo',
-            x: move.after.x,
-            y: move.after.y,
-            rotation: move.after.rotation,
-          }));
-          if (moveUpdates.length > 0) editor.updateShapes(moveUpdates as never);
-          for (const create of plan.creates) spatialCreateShape(editor, create);
-        } else if (action.type === 'add_relationships') {
-          // Relationship metadata is canonical, but arrow geometry is derived
-          // from the final positions. Project these after all action-order
-          // spatial moves below, still inside this one history transaction.
-        } else if (action.type === 'update_blocks') {
-          updateSurfaceBlocks(editor, action.updates, { recordHistory: false });
-        } else if (action.type === 'place_items') {
-          placeCanvasItems(editor, action.placements, { recordHistory: false });
-        } else if (action.type === 'remove_items') {
-          const currentItems = proposalContext(editor).items;
-          const ids = descendantClosure(action.ids, currentItems).map((item) => item.id as TLShapeId);
-          editor.deleteShapes(ids);
-        } else if (action.type === 'clear_surface') {
-          editor.deleteShapes(editor.getCurrentPageShapes().map((shape) => shape.id));
-        } else if (action.type === 'set_instrument_inputs') {
-          if (instrumentUpdates.length === 0) throw new Error('Instrument scenario patches were empty.');
-          editor.updateShapes(instrumentUpdates as never);
+          const materialEntry = plan.material_lowerings.filter((candidate) => action.materials.includes(candidate.material));
+          if (materialEntry.length !== action.materials.length) throw new Error('The staged material lowering was incomplete.');
+          applyMaterialLowerings(editor, materialEntry, createdAssetIds);
         }
-      }
-      for (const action of actions) {
-        if (action.type !== 'add_relationships') continue;
-        const relationships = relationshipPlans.get(action);
-        if (!relationships) throw new Error('Relationship plan was not retained through Apply.');
-        const recipeMeta = 'recipeMeta' in action
-          ? (action as ProposalAction & { recipeMeta?: FogwoodMeta }).recipeMeta
-          : undefined;
-        for (const relationship of relationships) spatialRelationshipShape(editor, relationship, recipeMeta);
-      }
-      for (const [recipeInstanceId, blockIds] of compareBlocksByScope) {
-        const shapeIds = compareShapeIdsFromRecipeBlocks(blockIds.map(String));
-        if (Object.keys(shapeIds).length !== COMPARE_INSTRUMENT_INSTANCE_IDS.length) throw new Error('Compare recipe block mapping was incomplete.');
-        const scope = createCompareInstrumentScope(recipeInstanceId, shapeIds);
-        if (scope.status !== 'ok') throw new Error('Compare recipe instrument scope was rejected.');
-        const updates = scope.blocks.map((patch) => ({ id: patch.shape_id as TLShapeId, type: 'surface-block' as const, props: { value: patch.value, data: patch.data } }));
-        if (updates.length !== COMPARE_INSTRUMENT_INSTANCE_IDS.length) throw new Error('Compare recipe instrument patches were incomplete.');
-        editor.updateShapes(updates as never);
       }
     }, { history: 'record' });
   } catch (error) {
-    cleanupUnreferencedAssets(editor, createdAssetIds);
+    rollbackPreparedApply(editor, applyMark, createdAssetIds);
     return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The page rejected the proposal.' };
   }
   if (currentRevision(editor) === proposal.base_revision) {
-    cleanupUnreferencedAssets(editor, createdAssetIds);
+    rollbackPreparedApply(editor, applyMark, createdAssetIds);
     return { ok: false as const, status: 'ERROR' as const, message: 'The page reported no content change; Apply was not recorded.' };
   }
   return { ok: true as const };
 }
 
-export type SurfaceToolController = ReturnType<typeof createProposalController> & {
-  stageRecipe: (recipeId: string) => ProposalControllerResult;
-};
+/** Backwards-compatible direct page adapter. Public WebMCP callers use the
+ * controller below, which always stages a plan before Apply. */
+export function applyProposalToEditor(editor: Editor, proposal: ProposalV1) {
+  if (currentRevision(editor) !== proposal.base_revision) return { ok: false as const, status: 'STALE_STATE' as const, message: 'The page changed; inspect again and re-propose before applying.' };
+  const validation = validateProposal(proposal, proposalContext(editor));
+  if (!validation.ok) {
+    const stale = validation.errors.find((error) => error.code === 'STALE_STATE');
+    return { ok: false as const, status: stale ? 'STALE_STATE' as const : 'ERROR' as const, message: validation.errors.map((error) => error.message).join(' ') };
+  }
+  const plan = prepareProposalPlan(editor, validation.proposal, validation.diff);
+  if ('ok' in plan) return plan;
+  return executePreparedProposal(editor, plan);
+}
+
+export type SurfaceToolController = ReturnType<typeof createFogwoodSurface>;
 
 export type SurfaceMaterialOptions = {
   /** Test and host seam for browser image decode qualification. */
@@ -2176,8 +2031,23 @@ export function registerSurfaceTools(
   onProposalLifecycle?: (event: ProposalLifecycleEvent) => void,
   options: SurfaceMaterialOptions = {},
 ) {
-  const baseController = createProposalController(
-    { getRevision: () => currentRevision(editor), apply: (proposal) => applyProposalToEditor(editor, proposal) },
+  const baseController = createFogwoodSurface(
+    {
+      getRevision: () => currentRevision(editor),
+      getContextToken: () => contextTokenForEditor(editor),
+      read: (request) => {
+        if (request.kind === 'inspect') return inspectSurface(editor, isRecord(request.input) ? request.input as { page_size?: number; cursor?: string; binding_page_size?: number; binding_cursor?: string } : {});
+        if (request.kind === 'capabilities') {
+          const input = isRecord(request.input) ? request.input : {};
+          return input.mode === 'available' ? availableCapabilitiesForEditor(editor) : searchCapabilities(input as CapabilitySearchInput);
+        }
+        return { content_revision: currentRevision(editor), context_token: contextTokenForEditor(editor) };
+      },
+      prepare: (proposal, diff) => prepareProposalPlan(editor, proposal, diff),
+      apply: (plan) => 'action_lowerings' in plan
+        ? executePreparedProposal(editor, plan as EditorPreparedCanvasPlan)
+        : { ok: false, status: 'ERROR', message: 'The reviewed proposal is missing its page-owned lowering.' },
+    },
     onProposalChange,
   );
   const lifecycleController = createProposalLifecycleController(baseController, {
@@ -2185,24 +2055,7 @@ export function registerSurfaceTools(
     on_event: onProposalLifecycle,
     on_event_error: (error) => onActivity?.('Receipt was not recorded', error.message.slice(0, 180)),
   });
-  const controller: SurfaceToolController = {
-    ...lifecycleController,
-    stageRecipe(recipeId) {
-      const recipe = getRecipe(recipeId, 2) ?? getRecipe(recipeId, 1);
-      if (!recipe) return { status: 'ERROR', message: 'Unknown immutable recipe.' };
-      const proposal = {
-        base_revision: currentRevision(editor),
-        summary: `Review ${recipe.title}`.slice(0, 180),
-        rationale: recipe.purpose.slice(0, 500),
-        actions: [{ type: 'insert_recipe', recipe_id: recipe.id, version: recipe.version }],
-      } satisfies ProposalV1;
-      const validation = validateProposal(proposal, proposalContext(editor));
-      if (!validation.ok) return { status: 'ERROR', message: validation.errors.map((error) => error.message).join(' ') };
-      const staged = lifecycleController.stage(validation.proposal, validation.diff);
-      if (staged.status === 'STAGED') onActivity?.('Staged a Fogwood recipe', `${recipe.title} is ready for page review.`);
-      return staged;
-    },
-  };
+  const controller: SurfaceToolController = lifecycleController;
   onController?.(controller);
 
   const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
@@ -2222,9 +2075,9 @@ export function registerSurfaceTools(
         if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 12)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
         if (value.binding_page_size !== undefined && (typeof value.binding_page_size !== 'number' || !Number.isInteger(value.binding_page_size) || value.binding_page_size < 1 || value.binding_page_size > 256)) return textResult({ status: 'INVALID_INPUT', error: 'binding_page_size must be an integer from 1 to 256.' }, true);
         if (value.binding_cursor !== undefined && (typeof value.binding_cursor !== 'string' || !/^\d+$/.test(value.binding_cursor) || value.binding_cursor.length > 12)) return textResult({ status: 'INVALID_INPUT', error: 'binding_cursor must be a bounded numeric string.' }, true);
-        const surface = inspectSurface(editor, value);
-        onActivity?.('Fogwood inspected the page', `${surface.counts.shapes} canvas items read without changing them.`);
-        return textResult(surface);
+        const inspected = baseController.read({ kind: 'inspect', input: value }) as ReturnType<typeof inspectSurface>;
+        onActivity?.('Fogwood inspected the page', `${inspected.counts.shapes} canvas items read without changing them.`);
+        return textResult(inspected);
       },
     },
     {
@@ -2252,7 +2105,7 @@ export function registerSurfaceTools(
           if (value.base_revision !== liveRevision) return textResult({ status: 'STALE_STATE', message: 'The inspected canvas revision is no longer current.', recovery: 'Call fogwood-inspect, then retry fogwood-capabilities with its returned base_revision and context_token.' }, true);
           const liveContextToken = contextTokenForEditor(editor);
           if (value.context_token !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The inspected semantic context is no longer current.', recovery: 'Call fogwood-inspect, then retry fogwood-capabilities with its returned base_revision and context_token.' }, true);
-          const manifests = availableCapabilitiesForEditor(editor);
+          const manifests = baseController.read({ kind: 'capabilities', input: { mode: 'available' } }) as ReturnType<typeof availableCapabilitiesForEditor>;
           return textResult({
             status: 'available',
             base_revision: liveRevision,

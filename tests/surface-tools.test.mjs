@@ -40,6 +40,8 @@ class FakeEditor {
     this.marks = [];
     this.groups = [];
     this.pending = null;
+    this.markSnapshots = new Map();
+    this.nextMarkIndex = 0;
   }
 
   getCurrentPageShapes() {
@@ -50,7 +52,24 @@ class FakeEditor {
     if (this.pending) this.groups.push(this.pending);
     this.pending = null;
     this.marks.push(name);
-    return `mark-${this.marks.length}`;
+    const id = `mark-${this.nextMarkIndex++}`;
+    this.markSnapshots.set(id, {
+      shapes: clone(this.shapes),
+      bindings: clone(this.bindings ?? []),
+      assets: clone(this.assets ?? []),
+    });
+    return id;
+  }
+
+  bailToMark(id) {
+    const snapshot = this.markSnapshots.get(id);
+    if (!snapshot) return;
+    this.shapes = clone(snapshot.shapes);
+    if ('bindings' in this) this.bindings = clone(snapshot.bindings);
+    if ('assets' in this) this.assets = clone(snapshot.assets);
+    this.pending = null;
+    this.markSnapshots.delete(id);
+    this.marks.pop();
   }
 
   run(fn, options) {
@@ -104,6 +123,8 @@ class CanvasProposalEditor extends ProposalEditor {
     super(shapes);
     this.bindings = [];
     this.assets = [];
+    this.markSnapshots = new Map();
+    this.nextMarkIndex = 0;
     this.nextIndex = shapes.length;
     this.nextBindingIndex = 0;
     this.store = { allRecords: () => [...this.shapes, ...this.bindings, ...this.assets] };
@@ -154,6 +175,15 @@ class CanvasProposalEditor extends ProposalEditor {
     return this.store.allRecords().find((record) => record.typeName === 'asset' && record.id === id);
   }
 
+  createAssets(records) {
+    this.assets.push(...clone(records));
+  }
+
+  deleteAssets(ids) {
+    const set = new Set(ids);
+    this.assets = this.assets.filter((asset) => !set.has(asset.id));
+  }
+
   canBindShapes({ fromShape, toShape, binding }) {
     const fromType = typeof fromShape === 'string' ? fromShape : fromShape.type;
     const toType = typeof toShape === 'string' ? toShape : toShape.type;
@@ -185,11 +215,22 @@ class CanvasProposalEditor extends ProposalEditor {
 
   run(fn, options) {
     assert.deepEqual(options, { history: 'record' });
-    const before = { shapes: clone(this.shapes), bindings: clone(this.bindings) };
+    const before = { shapes: clone(this.shapes), bindings: clone(this.bindings), assets: clone(this.assets) };
     fn();
-    const after = { shapes: clone(this.shapes), bindings: clone(this.bindings) };
+    const after = { shapes: clone(this.shapes), bindings: clone(this.bindings), assets: clone(this.assets) };
     if (!this.pending) this.pending = { before, after, canvas: true };
     else this.pending.after = after;
+  }
+
+  bailToMark(id) {
+    const snapshot = this.markSnapshots.get(id);
+    if (!snapshot) return;
+    this.shapes = clone(snapshot.shapes);
+    this.bindings = clone(snapshot.bindings);
+    this.assets = clone(snapshot.assets);
+    this.pending = null;
+    this.markSnapshots.delete(id);
+    this.marks.pop();
   }
 
   undo() {
@@ -198,6 +239,7 @@ class CanvasProposalEditor extends ProposalEditor {
     if (group.canvas) {
       this.shapes = clone(group.before.shapes);
       this.bindings = clone(group.before.bindings);
+      this.assets = clone(group.before.assets);
     } else {
       this.shapes = clone(group.before);
     }
@@ -521,6 +563,177 @@ test('async material decoder race rechecks context before staging', async () => 
   cleanup();
 });
 
+test('public material proposals retain a frozen lowering and Apply does not decode again', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  let decodeCount = 0;
+  const decoder = () => {
+    decodeCount += 1;
+    return { width: 1, height: 1 };
+  };
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; }, undefined, { decodeRaster: decoder });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const response = await propose.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Stage an image material',
+    actions: [{
+      type: 'add_materials',
+      materials: [{
+        semantic_id: 'material:seed-image',
+        mime_type: 'image/png',
+        base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        label: 'A tiny seed image',
+        x: 80,
+        y: 120,
+        w: 120,
+        h: 120,
+      }],
+    }],
+  });
+
+  assert.equal(JSON.parse(response.content[0].text).status, 'STAGED');
+  assert.equal(decodeCount, 1);
+  const pending = controller.getState();
+  assert.equal(pending.plan.schema, 'fogwood.prepared-canvas-plan.v1');
+  assert.equal(pending.plan.page_id, 'page:main');
+  assert.equal(pending.plan.material_evidence.length, 1);
+  assert.equal(pending.plan.material_evidence[0].byte_length, 68);
+  assert.equal(pending.plan.preflight.status, 'passed');
+  assert.deepEqual(pending.plan.transaction, {
+    authority: 'page-owned',
+    atomic: true,
+    editor_run: 'one',
+    history: 'one-stopping-point',
+    undo: 'one-step',
+    apply: 'frozen-lowerings-only',
+    reject: 'no-mutation',
+  });
+  assert.equal(Object.isFrozen(pending.plan), true);
+  assert.equal(Object.isFrozen(pending.plan.actions), true);
+  assert.equal(Object.isFrozen(pending.plan.actions[0]), true);
+  assert.equal(Object.isFrozen(pending.plan.actions[0].materials), true);
+  assert.equal(Object.isFrozen(pending.plan.material_lowerings[0]), true);
+  assert.equal(Object.isFrozen(pending.plan.material_lowerings[0].shape), true);
+  assert.equal(Object.isFrozen(pending.plan.material_evidence[0].dimensions), true);
+  const stagedMaterial = pending.plan.actions.find((action) => action.type === 'add_materials').materials[0];
+  assert.equal(pending.plan.prepared_materials[0], stagedMaterial);
+  const stagedDigest = pending.plan.digest;
+
+  assert.equal(controller.apply().status, 'APPLIED');
+  assert.equal(decodeCount, 1);
+  assert.equal(editor.assets.length, 1);
+  assert.equal(editor.shapes.filter((shape) => shape.type === 'image').length, 1);
+  assert.equal(editor.marks.filter((mark) => mark === 'Apply agent proposal').length, 1);
+  assert.equal(stagedDigest, pending.plan.digest);
+  editor.undo();
+  assert.equal(editor.assets.length, 0);
+  assert.equal(editor.shapes.length, 0);
+  cleanup();
+});
+
+test('prepared-plan digest commits to the exact accepted material bytes', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const svg = (fill) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="${fill}"/></svg>`).toString('base64');
+  const stage = async (base64) => {
+    const inspected = inspectSurface(editor);
+    const response = await propose.execute({
+      base_revision: inspected.content_revision,
+      context_token: inspected.context_token,
+      summary: 'Stage an SVG material',
+      actions: [{ type: 'add_materials', materials: [{ semantic_id: 'material:svg', mime_type: 'image/svg+xml', base64, x: 80, y: 120, w: 120, h: 80 }] }],
+    });
+    assert.equal(JSON.parse(response.content[0].text).status, 'STAGED');
+    return controller.getState().plan;
+  };
+
+  const red = await stage(svg('red'));
+  const redBytes = red.prepared_materials[0].canonical_base64;
+  const redDigest = red.digest;
+  assert.equal(controller.reject().status, 'REJECTED');
+  const blue = await stage(svg('blue'));
+  assert.notEqual(blue.prepared_materials[0].canonical_base64, redBytes);
+  assert.notEqual(blue.digest, redDigest);
+  assert.notEqual(blue.material_evidence[0].content_hash, red.material_evidence[0].content_hash);
+  assert.equal(controller.reject().status, 'REJECTED');
+  cleanup();
+});
+
+test('public Apply rolls back earlier native creates when a later connector postcondition fails', async () => {
+  const editor = new CanvasProposalEditor([
+    { id: 'shape:a', typeName: 'shape', type: 'geo', x: 20, y: 30, rotation: 0, opacity: 1, isLocked: false, index: '0001', parentId: 'page:main', meta: { fogwood: { semantic_id: 'idea:a' } }, props: { geo: 'rectangle', w: 160, h: 100, richText: { type: 'doc', content: [] } } },
+    { id: 'shape:b', typeName: 'shape', type: 'note', x: 360, y: 90, rotation: 0, opacity: 1, isLocked: false, index: '0002', parentId: 'page:main', meta: { fogwood: { semantic_id: 'idea:b' } }, props: { w: 180, h: 120, richText: { type: 'doc', content: [] } } },
+  ]);
+  editor.createBindings = function createOnlyOneBinding(partials) {
+    return CanvasProposalEditor.prototype.createBindings.call(this, partials.slice(0, 1));
+  };
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const before = clone({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets });
+  const response = await propose.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Refuse a partial connector atomically',
+    actions: [{ type: 'canvas_ops', ops: [
+      { op: 'create', semantic_id: 'new:a', kind: 'rectangle', x: 20, y: 260, w: 120, h: 80, text: 'A' },
+      { op: 'create', semantic_id: 'new:b', kind: 'ellipse', x: 280, y: 260, w: 120, h: 80, text: 'B' },
+      { op: 'connect', semantic_id: 'new:edge', from_id: 'semantic:new:a', to_id: 'semantic:new:b', text: 'fails late' },
+    ] }],
+  });
+  assert.equal(JSON.parse(response.content[0].text).status, 'STAGED');
+  const revisionBeforeApply = currentRevision(editor);
+  const groupsBeforeApply = editor.groups.length;
+  const result = controller.apply();
+  assert.equal(result.status, 'ERROR');
+  assert.deepEqual({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets }, before);
+  assert.equal(currentRevision(editor), revisionBeforeApply);
+  assert.equal(editor.groups.length, groupsBeforeApply);
+  assert.equal(editor.pending, null);
+  assert.deepEqual(editor.marks, []);
+  cleanup();
+});
+
+test('public Apply rolls back an earlier material when a later shape write fails', async () => {
+  const editor = new CanvasProposalEditor();
+  let shapeWrites = 0;
+  const createShapes = editor.createShapes.bind(editor);
+  editor.createShapes = (records) => {
+    shapeWrites += 1;
+    if (shapeWrites === 2) throw new Error('late material shape failure');
+    return createShapes(records);
+  };
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; }, undefined, { decodeRaster: () => ({ width: 1, height: 1 }) });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const before = clone({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets });
+  const material = (semantic_id, x) => ({ semantic_id, mime_type: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', x, y: 40, w: 100, h: 100 });
+  const response = await propose.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Refuse a late material write atomically',
+    actions: [{ type: 'add_materials', materials: [material('material:first', 20), material('material:second', 180)] }],
+  });
+  assert.equal(JSON.parse(response.content[0].text).status, 'STAGED');
+  const revisionBeforeApply = currentRevision(editor);
+  const groupsBeforeApply = editor.groups.length;
+  const result = controller.apply();
+  assert.equal(result.status, 'ERROR');
+  assert.match(result.message, /late material shape failure/i);
+  assert.deepEqual({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets }, before);
+  assert.equal(currentRevision(editor), revisionBeforeApply);
+  assert.equal(editor.groups.length, groupsBeforeApply);
+  assert.equal(editor.pending, null);
+  assert.deepEqual(editor.marks, []);
+  cleanup();
+});
+
 test('planned capabilities flow through proposal staging, one Apply transaction, and one Undo', async () => {
   const editor = new CanvasProposalEditor();
   let controller;
@@ -600,6 +813,14 @@ test('seeded composition stages through WebMCP, preserves sources, applies once,
   assert.equal(staged.proposal.actions[0].algorithm_version, 1);
   assert.equal(staged.proposal.actions[0].source_revision, inspected.content_revision);
   assert.equal(staged.proposal.actions[0].lineage.length, 2);
+  const preparedPlan = controller.getState().plan;
+  assert.equal(preparedPlan.schema, 'fogwood.prepared-canvas-plan.v1');
+  assert.equal(preparedPlan.page_id, 'page:main');
+  assert.equal(preparedPlan.seeded_evidence.length, 1);
+  assert.equal(preparedPlan.seeded_evidence[0].source_revision, inspected.content_revision);
+  assert.equal(preparedPlan.seeded_evidence[0].algorithm_version, 1);
+  assert.equal(preparedPlan.preflight.status, 'passed');
+  assert.equal(Object.isFrozen(preparedPlan.action_lowerings[0].canvas), true);
   assert.deepEqual(editor.shapes, before);
 
   assert.equal(controller.apply().status, 'APPLIED');
@@ -690,43 +911,19 @@ test('legacy control updates remain outside the instrument gesture history seam'
   assert.equal(editor.shapes[0].props.value, '4');
 });
 
-test('page-owned scenario Apply patches every affected block in one history transaction and undo restores the fixture', () => {
-  const scope = createCompareInstrumentScope('compare-and-decide:proposal', shapeIds);
-  const editor = new ProposalEditor(scope.blocks.map((block, index) => ({
-    id: block.shape_id,
-    type: 'surface-block',
-    typeName: 'shape',
-    x: index * 10,
-    y: 0,
-    rotation: 0,
-    parentId: 'page:main',
-    isLocked: false,
-    opacity: 1,
-    index: String(index),
-    meta: { fogwood: { recipe_instance_id: 'compare-and-decide:proposal' } },
-    props: { w: 280, h: 150, kind: block.kind, title: block.shape_id, body: '', value: block.value, data: block.data },
-  })));
+test('page-owned Apply rejects retired instrument proposals before history or mutation', () => {
+  const editor = new CanvasProposalEditor();
   const before = clone(editor.shapes);
   const proposal = {
     base_revision: currentRevision(editor),
-    summary: 'Set Compare weights',
-    actions: [{
-      type: 'set_instrument_inputs',
-      changes: [
-        { id: shapeIds['compare:weight:cost'], value: 0.8 },
-        { id: shapeIds['compare:weight:impact'], value: 0.2 },
-      ],
-    }],
+    summary: 'Retired instrument request',
+    actions: [{ type: 'set_instrument_inputs', changes: [{ id: 'shape:input', value: 0.8 }] }],
   };
-  assert.deepEqual(applyProposalToEditor(editor, proposal), { ok: true });
-  assert.equal(editor.marks.filter((mark) => mark === 'Apply agent proposal').length, 1);
-  assert.equal(editor.shapes.find((shape) => shape.id === shapeIds['compare:weight:cost']).props.value, '0.8');
-  assert.equal(editor.shapes.find((shape) => shape.id === shapeIds['compare:weight:impact']).props.value, '0.2');
-  assert.equal(editor.shapes.find((shape) => shape.id === shapeIds['compare:score:alpha']).props.value, '88.00');
-  assert.equal(editor.shapes.find((shape) => shape.id === shapeIds['compare:score:beta']).props.value, '76.00');
-  assert.equal(editor.shapes.find((shape) => shape.id === shapeIds['compare:recommendation']).props.value, 'Alpha');
-  editor.undo();
+  const result = applyProposalToEditor(editor, proposal);
+  assert.equal(result.ok, false);
+  assert.match(result.message, /retired/i);
   assert.deepEqual(editor.shapes, before);
+  assert.deepEqual(editor.marks, []);
 });
 
 test('Canvas Protocol creates, arranges, and groups native shapes in one Apply and one Undo', () => {
@@ -990,38 +1187,18 @@ test('Canvas Protocol refuses a locked target before opening an Apply transactio
   assert.deepEqual(editor.marks, []);
 });
 
-test('page-owned scenario refuses a locked downstream block before any partial Apply', () => {
-  const scope = createCompareInstrumentScope('compare-and-decide:locked-proposal', shapeIds);
-  const editor = new ProposalEditor(scope.blocks.map((block, index) => ({
-    id: block.shape_id,
-    type: 'surface-block',
-    typeName: 'shape',
-    x: index * 10,
-    y: 0,
-    rotation: 0,
-    parentId: 'page:main',
-    isLocked: block.shape_id === shapeIds['compare:score:alpha'],
-    opacity: 1,
-    index: String(index),
-    meta: { fogwood: { recipe_instance_id: 'compare-and-decide:locked-proposal' } },
-    props: { w: 280, h: 150, kind: block.kind, title: block.shape_id, body: '', value: block.value, data: block.data },
-  })));
+test('page-owned Apply rejects retired instrument proposals before lock evaluation', () => {
+  const editor = new CanvasProposalEditor();
   const before = clone(editor.shapes);
   const proposal = {
     base_revision: currentRevision(editor),
-    summary: 'Reject partial scenario',
-    actions: [{
-      type: 'set_instrument_inputs',
-      changes: [
-        { id: shapeIds['compare:weight:cost'], value: 0.8 },
-        { id: shapeIds['compare:weight:impact'], value: 0.2 },
-      ],
-    }],
+    summary: 'Reject legacy scenario',
+    actions: [{ type: 'set_instrument_inputs', changes: [{ id: 'shape:input', value: 0.8 }] }],
   };
 
   const result = applyProposalToEditor(editor, proposal);
   assert.equal(result.ok, false);
-  assert.match(result.message, /every affected instrument block must be unlocked/i);
+  assert.match(result.message, /retired/i);
   assert.deepEqual(editor.shapes, before);
   assert.deepEqual(editor.marks, []);
 });
@@ -1044,21 +1221,8 @@ test('direct slider gesture refuses a locked downstream block before any patch',
   assert.deepEqual(editor.marks, []);
 });
 
-test('proposal activity describes typed scenario work instead of reporting four zero mutation counts', () => {
+test('proposal activity describes the generic native diff counts', () => {
   assert.equal(proposalActivityDetail({
-    instrument_changes: [{
-      recipe_instance_id: 'compare-and-decide:proposal',
-      controls: [{ id: 'shape:weight-cost', label: 'Cost weight', before: 0.4, after: 0.8 }],
-      derived: [
-        { id: 'shape:score-alpha', label: 'Alpha weighted score', before: 74, after: 88 },
-        { id: 'shape:recommendation', label: 'Recommendation', before: 'Beta', after: 'Alpha' },
-      ],
-    }],
-    counts: { adds: 0, updates: 0, moves: 0, removes: 0 },
-  }), '1 control change and 2 predicted outputs await review.');
-
-  assert.equal(proposalActivityDetail({
-    instrument_changes: [],
     counts: { adds: 12, updates: 0, moves: 0, removes: 0 },
   }), '12 additions, 0 updates, 0 moves, 0 removals await review.');
 });

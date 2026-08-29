@@ -13,8 +13,6 @@ import {
   searchBazaar,
   readBazaar,
 } from '../app/fogwood-bazaar.ts';
-import { canonicalSerialize, RECIPE_REGISTRY } from '../app/fogwood-runtime.ts';
-import { COMPARE_DECIDE_FIXTURE, recomputeCompareDecide } from '../app/fogwood-instruments.ts';
 import { packageHash } from '../scripts/compile-bazaar.mjs';
 
 const compiler = path.resolve('scripts/compile-bazaar.mjs');
@@ -79,7 +77,7 @@ test('Bazaar reads only requested sections and rejects stale or unknown pins', (
   assert.equal(unknown.code, 'UNKNOWN_PACKAGE');
 });
 
-test('each pinned package carries the required review material and Compare maps to the exact recipe identity', () => {
+test('each pinned package carries bounded declarative review material and recipe references', () => {
   const summaries = searchBazaar({ limit: 20 });
   assert.equal(summaries.ok, true);
   for (const summary of summaries.results) {
@@ -104,6 +102,15 @@ test('each pinned package carries the required review material and Compare maps 
   assert.equal(compare.sections.recipes[0].content.capability_refs.includes('instrument.compare-decision.v1'), true);
 });
 
+test('active runtime and receipt projection do not import the full Bazaar catalog', () => {
+  const runtimeSource = fs.readFileSync(path.resolve('app/fogwood-runtime.ts'), 'utf8');
+  const recorderSource = fs.readFileSync(path.resolve('app/fogwood-receipt-recorder.ts'), 'utf8');
+  assert.doesNotMatch(runtimeSource, /from\s+['"][^'"]*fogwood-bazaar(?:-catalog\.generated)?/u);
+  assert.doesNotMatch(recorderSource, /from\s+['"][^'"]*fogwood-bazaar(?:-catalog\.generated)?/u);
+  assert.doesNotMatch(runtimeSource, /BAZAAR_CATALOG|FOGWOOD_BAZAAR_TOOL/u);
+  assert.doesNotMatch(recorderSource, /BAZAAR_CATALOG|FOGWOOD_BAZAAR_TOOL/u);
+});
+
 test('Bazaar read rejects a changed content hash visibly', () => {
   const result = readBazaar({
     id: 'fogwood.compare-decision',
@@ -113,35 +120,6 @@ test('Bazaar read rejects a changed content hash visibly', () => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.code, 'TAMPERED_PACKAGE');
-});
-
-test('Compare package projection matches the staged runtime recipe and typed fixture', () => {
-  const runtimeRecipe = RECIPE_REGISTRY.find((recipe) => recipe.id === 'compare-and-decide');
-  assert.ok(runtimeRecipe);
-  const packageRead = readBazaar({ id: 'fogwood.compare-decision', version: 1, include: ['recipes'] });
-  assert.equal(packageRead.ok, true);
-  const packaged = packageRead.sections.recipes[0].content;
-  assert.equal(canonicalSerialize(packaged.operations), canonicalSerialize(runtimeRecipe.operations));
-  assert.equal(packaged.expected_count, runtimeRecipe.expected_count);
-  assert.deepEqual(packaged.bounds, runtimeRecipe.bounds);
-  assert.equal(packaged.semantic, runtimeRecipe.semantic);
-  assert.equal(packaged.purpose, runtimeRecipe.purpose);
-  assert.deepEqual(packaged.instrument, runtimeRecipe.instrument);
-  assert.deepEqual(packaged.instrument_projection.instances, COMPARE_DECIDE_FIXTURE.instances);
-  assert.deepEqual(packaged.instrument_projection.bindings, COMPARE_DECIDE_FIXTURE.bindings);
-
-  const evaluation = recomputeCompareDecide();
-  assert.equal(evaluation.status, 'ok');
-  assert.equal(evaluation.results['compare:score:alpha'].outputs.weighted_score.value, 74);
-  assert.equal(evaluation.results['compare:score:beta'].outputs.weighted_score.value, 78);
-  assert.equal(evaluation.results['compare:recommendation'].outputs.recommended.value, 'Beta');
-  assert.deepEqual(packaged.instrument_projection.expected, {
-    status: 'ok',
-    alpha_score: 74,
-    beta_score: 78,
-    recommendation: 'Beta',
-    chart: [{ label: 'Alpha', value: 74 }, { label: 'Beta', value: 78 }],
-  });
 });
 
 test('fogwood-bazaar tool is a separate read-only exact-input seam', () => {
