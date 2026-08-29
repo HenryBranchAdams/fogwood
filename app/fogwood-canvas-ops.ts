@@ -7,6 +7,9 @@
  * before applying every step in one editor transaction.
  */
 
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { SEMANTIC_RELATIONSHIP_KINDS, SPATIAL_LIMITS, relationshipSemanticId } from './fogwood-spatial.ts';
+
 export const FOGWOOD_CANVAS_PROTOCOL = {
   name: 'fogwood-canvas-protocol',
   version: 2,
@@ -96,6 +99,7 @@ export type CanvasOpItem = {
   parent_id?: string;
   is_locked?: boolean;
   semantic_id?: string;
+  semantic_id_source?: string;
   text?: string;
   props?: Record<string, unknown>;
   meta?: Record<string, unknown>;
@@ -125,6 +129,10 @@ export type CreateCanvasOp = {
   text?: string;
   color?: CanvasOpColor;
   fill?: CanvasOpFill;
+  role?: string;
+  region_id?: string;
+  rotation?: number;
+  opacity?: number;
 };
 
 export type ConnectCanvasOp = {
@@ -134,6 +142,8 @@ export type ConnectCanvasOp = {
   to_id: string;
   text?: string;
   color?: CanvasOpColor;
+  relationship_id?: string;
+  relationship_kind?: (typeof SEMANTIC_RELATIONSHIP_KINDS)[number];
 };
 
 export type VariantCanvasOp = {
@@ -228,6 +238,7 @@ export type CanvasOp =
 
 export type CanvasOpsAction = {
   type: 'canvas_ops';
+  composition_id?: string;
   ops: CanvasOp[];
 };
 
@@ -255,7 +266,23 @@ export type CanvasOpStep =
 export type CanvasOpPlan = {
   normalized_action: CanvasOpsAction;
   steps: CanvasOpStep[];
-  adds: Array<{ kind: string; semantic_id: string; label: string; x: number; y: number; w: number; h: number; role?: string; variant_id?: string; parent_variant_id?: string; lineage_source_id?: string }>;
+  adds: Array<{
+    kind: string;
+    semantic_id: string;
+    label: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    role?: string;
+    composition_id?: string;
+    region_id?: string;
+    rotation?: number;
+    opacity?: number;
+    variant_id?: string;
+    parent_variant_id?: string;
+    lineage_source_id?: string;
+  }>;
   updates: Array<{ ids: string[]; fields: string[]; changes: Array<{ id: string; fields: DiffFields }> }>;
   moves: Array<{ ids: string[]; changes: Array<{ id: string; before: { x: number; y: number; rotation: number }; after: { x: number; y: number; rotation: number } }> }>;
   removes: string[];
@@ -268,6 +295,8 @@ export type CanvasOpPlanningResult =
 const MAX_COORDINATE = 100_000;
 const MAX_DIMENSION = 5_000;
 const MAX_TEXT = 2_000;
+const MAX_CONNECTOR_LABEL = SPATIAL_LIMITS.max_label;
+const MAX_ROLE = 120;
 const MAX_VARIANT_OFFSET = 5_000;
 const MAX_DRAW_DELTA = FOGWOOD_CANVAS_PROTOCOL.max_draw_delta;
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$/u;
@@ -463,6 +492,13 @@ function stableSemanticId(value: unknown, path: string, existing: Set<string>, e
   return value;
 }
 
+function hasDurableSemanticId(item: CanvasOpItem) {
+  const semanticIdSource = item.semantic_id_source ?? item.meta?.semantic_id_source;
+  return typeof item.semantic_id === 'string'
+    && STABLE_ID.test(item.semantic_id)
+    && semanticIdSource !== 'legacy-shape-id';
+}
+
 function pointBounds(points: readonly { x: number; y: number }[]) {
   const minX = Math.min(...points.map((point) => point.x));
   const minY = Math.min(...points.map((point) => point.y));
@@ -579,6 +615,7 @@ export function planCanvasOps(
   currentItems: readonly CanvasOpItem[],
   rawOps: unknown,
   pageId?: string,
+  compositionId?: unknown,
 ): CanvasOpPlanningResult {
   const errors: CanvasOpError[] = [];
   if (typeof pageId !== 'string' || pageId.length < 1 || pageId.length > 220) {
@@ -610,6 +647,14 @@ export function planCanvasOps(
         path: 'ops',
       }],
     };
+  }
+  let normalizedCompositionId: string | undefined;
+  if (compositionId !== undefined) {
+    if (typeof compositionId !== 'string' || !STABLE_ID.test(compositionId)) {
+      addError(errors, 'INVALID_COMPOSITION_ID', 'composition_id must be a bounded lexical stable ID.', 'composition_id');
+    } else {
+      normalizedCompositionId = compositionId;
+    }
   }
   for (let index = 0; index < rawOps.length; index += 1) {
     if (!Object.prototype.hasOwnProperty.call(rawOps, index)) {
@@ -659,7 +704,7 @@ export function planCanvasOps(
     }
 
     if (raw.op === 'create') {
-      if (!hasOnlyKeys(raw, ['op', 'semantic_id', 'kind', 'x', 'y', 'w', 'h', 'end_x', 'end_y', 'text', 'color', 'fill'])) {
+      if (!hasOnlyKeys(raw, ['op', 'semantic_id', 'kind', 'x', 'y', 'w', 'h', 'end_x', 'end_y', 'text', 'color', 'fill', 'role', 'region_id', 'rotation', 'opacity'])) {
         addError(errors, 'UNKNOWN_FIELD', 'create contains an unknown field.', path);
       }
       const semantic_id = stableSemanticId(raw.semantic_id, `${path}.semantic_id`, existingSemanticIds, errors);
@@ -679,6 +724,10 @@ export function planCanvasOps(
       if (raw.text !== undefined && (typeof raw.text !== 'string' || raw.text.length > MAX_TEXT)) addError(errors, 'INVALID_TEXT', `text must be at most ${MAX_TEXT} characters.`, `${path}.text`);
       if (raw.color !== undefined && !CANVAS_OP_COLORS.includes(raw.color as CanvasOpColor)) addError(errors, 'INVALID_COLOR', 'Unknown create color.', `${path}.color`);
       if (raw.fill !== undefined && !CANVAS_OP_FILLS.includes(raw.fill as CanvasOpFill)) addError(errors, 'INVALID_FILL', 'Unknown create fill.', `${path}.fill`);
+      if (raw.role !== undefined && (typeof raw.role !== 'string' || raw.role.length < 1 || raw.role.length > MAX_ROLE)) addError(errors, 'INVALID_ROLE', `role must be a bounded string of 1-${MAX_ROLE} characters.`, `${path}.role`);
+      if (raw.region_id !== undefined && (typeof raw.region_id !== 'string' || !STABLE_ID.test(raw.region_id))) addError(errors, 'INVALID_REGION_ID', 'region_id must be a bounded lexical stable ID.', `${path}.region_id`);
+      if (raw.rotation !== undefined && !inRange(raw.rotation, -Math.PI * 4, Math.PI * 4)) addError(errors, 'INVALID_NUMBER', 'rotation must be a bounded finite number.', `${path}.rotation`);
+      if (raw.opacity !== undefined && !inRange(raw.opacity, 0, 1)) addError(errors, 'INVALID_NUMBER', 'opacity must be from 0 to 1.', `${path}.opacity`);
       const geoKind = ['rectangle', 'ellipse', 'diamond', 'triangle', 'cloud'].includes(kind);
       if (raw.fill !== undefined && !geoKind) addError(errors, 'UNSUPPORTED_FILL_TARGET', 'Only created geometry shapes expose bounded fill.', `${path}.fill`);
       if (semantic_id && CANVAS_CREATE_KINDS.includes(kind) && inRange(raw.x, -MAX_COORDINATE, MAX_COORDINATE) && inRange(raw.y, -MAX_COORDINATE, MAX_COORDINATE)) {
@@ -691,15 +740,18 @@ export function planCanvasOps(
               : { w: 180, h: 120 };
         const w = isArrow && finite(raw.end_x) ? Math.max(1, Math.abs(raw.end_x - raw.x)) : finite(raw.w) ? raw.w : defaultSize.w;
         const h = isArrow && finite(raw.end_y) ? Math.max(1, Math.abs(raw.end_y - raw.y)) : finite(raw.h) ? raw.h : defaultSize.h;
+        const rotation = raw.rotation === undefined ? 0 : raw.rotation as number;
+        const opacity = raw.opacity === undefined ? 1 : raw.opacity as number;
         if (isArrow && finite(raw.end_x) && finite(raw.end_y)) {
           requireFootprint({
             x: Math.min(raw.x, raw.end_x),
             y: Math.min(raw.y, raw.end_y),
             w: Math.abs(raw.end_x - raw.x),
             h: Math.abs(raw.end_y - raw.y),
+            rotation,
           }, path, errors);
         } else {
-          requireFootprint({ x: raw.x, y: raw.y, w, h }, path, errors);
+          requireFootprint({ x: raw.x, y: raw.y, w, h, rotation }, path, errors);
         }
         const op: CreateCanvasOp = {
           op: 'create', semantic_id, kind, x: raw.x, y: raw.y,
@@ -710,16 +762,52 @@ export function planCanvasOps(
           ...(raw.text === undefined ? {} : { text: raw.text as string }),
           ...(raw.color === undefined ? {} : { color: raw.color as CanvasOpColor }),
           ...(raw.fill === undefined ? {} : { fill: raw.fill as CanvasOpFill }),
+          ...(raw.role === undefined ? {} : { role: raw.role as string }),
+          ...(raw.region_id === undefined ? {} : { region_id: raw.region_id as string }),
+          ...(raw.rotation === undefined ? {} : { rotation: raw.rotation as number }),
+          ...(raw.opacity === undefined ? {} : { opacity: raw.opacity as number }),
         };
         const id = pendingId(semantic_id);
         if (projected.has(id)) addError(errors, 'DUPLICATE_TARGET_ID', 'Generated pending target id collides with current page content.', `${path}.semantic_id`);
         else {
           const type = geoKind ? 'geo' : kind;
-          projected.set(id, { id, type, kind, x: raw.x, y: raw.y, w, h, rotation: 0, opacity: 1, parent_id: pageId, semantic_id, text: typeof raw.text === 'string' ? raw.text : '', props: { color: raw.color ?? 'black', fill: raw.fill ?? 'none' } });
+          projected.set(id, {
+            id,
+            type,
+            kind,
+            x: raw.x,
+            y: raw.y,
+            w,
+            h,
+            rotation,
+            opacity,
+            parent_id: pageId,
+            semantic_id,
+            text: typeof raw.text === 'string' ? raw.text : '',
+            props: { color: raw.color ?? 'black', fill: raw.fill ?? 'none' },
+            meta: {
+              ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
+              ...(typeof raw.role === 'string' ? { role: raw.role } : {}),
+              ...(typeof raw.region_id === 'string' ? { region_id: raw.region_id } : {}),
+            },
+          });
           semanticToId.set(semantic_id, id);
           normalized.push(op);
           steps.push({ kind: 'create', op, pending_id: id, bounds: { x: raw.x, y: raw.y, w, h } });
-          adds.push({ kind, semantic_id, label: typeof raw.text === 'string' && raw.text.trim() ? raw.text.slice(0, 120) : kind, x: raw.x, y: raw.y, w, h });
+          adds.push({
+            kind,
+            semantic_id,
+            label: typeof raw.text === 'string' && raw.text.trim() ? raw.text.slice(0, 120) : kind,
+            x: raw.x,
+            y: raw.y,
+            w,
+            h,
+            ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
+            ...(typeof raw.role === 'string' ? { role: raw.role } : {}),
+            ...(typeof raw.region_id === 'string' ? { region_id: raw.region_id } : {}),
+            ...(raw.rotation === undefined ? {} : { rotation: raw.rotation as number }),
+            ...(raw.opacity === undefined ? {} : { opacity: raw.opacity as number }),
+          });
         }
       }
       return;
@@ -777,21 +865,56 @@ export function planCanvasOps(
         const id = pendingId(semantic_id);
         if (projected.has(id)) addError(errors, 'DUPLICATE_TARGET_ID', 'Generated pending target id collides with current page content.', `${path}.semantic_id`);
         else {
-          projected.set(id, { id, type: 'draw', kind: 'draw', ...bounds, rotation: 0, opacity: 1, parent_id: pageId, semantic_id, props: { color: op.color ?? 'black', fill: op.fill ?? 'none' } });
+          projected.set(id, {
+            id,
+            type: 'draw',
+            kind: 'draw',
+            ...bounds,
+            rotation: 0,
+            opacity: 1,
+            parent_id: pageId,
+            semantic_id,
+            props: { color: op.color ?? 'black', fill: op.fill ?? 'none' },
+            meta: normalizedCompositionId ? { composition_id: normalizedCompositionId } : {},
+          });
           semanticToId.set(semantic_id, id);
         }
         normalized.push(op);
         steps.push({ kind: 'draw', op, pending_id: id, bounds });
-        adds.push({ kind: 'draw', semantic_id, label: 'Freehand path', ...bounds });
+        adds.push({
+          kind: 'draw',
+          semantic_id,
+          label: 'Freehand path',
+          ...bounds,
+          ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
+        });
       }
       return;
     }
 
     if (raw.op === 'connect') {
-      if (!hasOnlyKeys(raw, ['op', 'semantic_id', 'from_id', 'to_id', 'text', 'color'])) {
+      if (!hasOnlyKeys(raw, ['op', 'semantic_id', 'from_id', 'to_id', 'text', 'color', 'relationship_id', 'relationship_kind'])) {
         addError(errors, 'UNKNOWN_FIELD', 'connect contains an unknown field.', path);
       }
       const semantic_id = stableSemanticId(raw.semantic_id, `${path}.semantic_id`, existingSemanticIds, errors);
+      const hasRelationshipId = raw.relationship_id !== undefined;
+      const hasRelationshipKind = raw.relationship_kind !== undefined;
+      const typedRelationship = hasRelationshipId || hasRelationshipKind;
+      if (hasRelationshipId !== hasRelationshipKind) {
+        addError(errors, 'RELATIONSHIP_FIELDS_PAIR', 'relationship_id and relationship_kind must be provided together.', path);
+      }
+      if (typedRelationship && hasRelationshipId && hasRelationshipKind) {
+        if (typeof raw.relationship_id !== 'string' || !STABLE_ID.test(raw.relationship_id)) {
+          addError(errors, 'INVALID_RELATIONSHIP_ID', 'relationship_id must be a bounded lexical stable ID.', `${path}.relationship_id`);
+        }
+        if (!SEMANTIC_RELATIONSHIP_KINDS.includes(raw.relationship_kind as (typeof SEMANTIC_RELATIONSHIP_KINDS)[number])) {
+          addError(errors, 'INVALID_RELATIONSHIP_KIND', 'relationship_kind must be one of the supported semantic relationship kinds.', `${path}.relationship_kind`);
+        }
+        if (typeof raw.relationship_id === 'string' && STABLE_ID.test(raw.relationship_id)
+          && semantic_id !== relationshipSemanticId(raw.relationship_id)) {
+          addError(errors, 'RELATIONSHIP_SEMANTIC_ID_MISMATCH', 'A typed connector semantic_id must equal relationshipSemanticId(relationship_id).', `${path}.semantic_id`);
+        }
+      }
       const fromId = resolveTargetId(raw.from_id, `${path}.from_id`, projected, semanticToId, errors);
       const toId = resolveTargetId(raw.to_id, `${path}.to_id`, projected, semanticToId, errors);
       const from = fromId ? projected.get(fromId) : undefined;
@@ -803,8 +926,9 @@ export function planCanvasOps(
         if (item.parent_id !== pageId) addError(errors, 'NESTED_TARGET', 'Bound connector endpoints must be direct children of the current page.', `${path}.${terminal}`);
         if (!CONNECT_TARGET_TYPES.has(item.type)) addError(errors, 'UNSUPPORTED_CONNECT_TARGET', 'Bound connectors support native matter and surface blocks, not arrows, groups, or unknown shapes.', `${path}.${terminal}`);
         if (Math.abs(item.rotation ?? 0) > 1e-9) addError(errors, 'ROTATED_CONNECT_TARGET', 'Canvas Protocol v2 bound connectors require unrotated inspected endpoints.', `${path}.${terminal}`);
+        if (typedRelationship && !hasDurableSemanticId(item)) addError(errors, 'UNSTABLE_RELATIONSHIP_ENDPOINT', 'Typed connectors require endpoints with stable semantic IDs.', `${path}.${terminal}`);
       }
-      if (raw.text !== undefined && (typeof raw.text !== 'string' || raw.text.length > MAX_TEXT)) addError(errors, 'INVALID_TEXT', `text must be at most ${MAX_TEXT} characters.`, `${path}.text`);
+      if (raw.text !== undefined && (typeof raw.text !== 'string' || raw.text.length > MAX_CONNECTOR_LABEL)) addError(errors, 'INVALID_TEXT', `Connector text must be at most ${MAX_CONNECTOR_LABEL} characters so its visible and inspectable labels remain identical.`, `${path}.text`);
       if (raw.color !== undefined && !CANVAS_OP_COLORS.includes(raw.color as CanvasOpColor)) addError(errors, 'INVALID_COLOR', 'Unknown connector color.', `${path}.color`);
       if (semantic_id && from && to && from.id !== to.id) {
         const start = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
@@ -823,6 +947,12 @@ export function planCanvasOps(
           to_id: to.id,
           ...(raw.text === undefined ? {} : { text: raw.text as string }),
           ...(raw.color === undefined ? {} : { color: raw.color as CanvasOpColor }),
+          ...(typedRelationship && typeof raw.relationship_id === 'string' && SEMANTIC_RELATIONSHIP_KINDS.includes(raw.relationship_kind as (typeof SEMANTIC_RELATIONSHIP_KINDS)[number])
+            ? {
+                relationship_id: raw.relationship_id,
+                relationship_kind: raw.relationship_kind as ConnectCanvasOp['relationship_kind'],
+              }
+            : {}),
         };
         const id = pendingId(semantic_id);
         if (projected.has(id)) addError(errors, 'DUPLICATE_TARGET_ID', 'Generated pending connector id collides with current page content.', `${path}.semantic_id`);
@@ -842,9 +972,13 @@ export function planCanvasOps(
             text: typeof raw.text === 'string' ? raw.text : '',
             props: { color: raw.color ?? 'black', fill: 'none' },
             meta: {
-              role: 'bound-connector',
+              ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
+              role: typedRelationship ? 'semantic-relationship' : 'bound-connector',
+              ...(typedRelationship && typeof raw.relationship_id === 'string' ? { relationship_id: raw.relationship_id } : {}),
+              ...(typedRelationship && typeof raw.relationship_kind === 'string' ? { relationship_kind: raw.relationship_kind } : {}),
               ...(from.semantic_id ? { source_semantic_id: from.semantic_id } : {}),
               ...(to.semantic_id ? { target_semantic_id: to.semantic_id } : {}),
+              ...(typedRelationship && typeof raw.text === 'string' ? { relationship_label: raw.text } : {}),
             },
             binding_count: 2,
           });
@@ -865,7 +999,8 @@ export function planCanvasOps(
             semantic_id,
             label: typeof raw.text === 'string' && raw.text.trim() ? raw.text.slice(0, 120) : 'Bound connector',
             ...bounds,
-            role: 'bound-connector',
+            role: typedRelationship ? 'semantic-relationship' : 'bound-connector',
+            ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
           });
         }
       }
@@ -935,6 +1070,7 @@ export function planCanvasOps(
             semantic_id,
             label: `Variant of ${(source.text || source.semantic_id).slice(0, 100)}`,
             ...bounds,
+            ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
             role: 'variant',
             ...lineage,
           });
@@ -990,7 +1126,7 @@ export function planCanvasOps(
         }
       }
       if (raw.text !== undefined) {
-        if (typeof raw.text !== 'string' || raw.text.length > MAX_TEXT) addError(errors, 'INVALID_TEXT', `text must be at most ${MAX_TEXT} characters.`, `${path}.text`);
+        if (typeof raw.text !== 'string' || raw.text.length > MAX_CONNECTOR_LABEL) addError(errors, 'INVALID_TEXT', `Updated text must be at most ${MAX_CONNECTOR_LABEL} characters so its visible and inspected forms remain aligned.`, `${path}.text`);
         else if (item) {
           if (!['geo', 'note', 'text', 'arrow', 'frame'].includes(item.type)) addError(errors, 'UNSUPPORTED_TEXT_TARGET', 'This shape type does not expose bounded editable text.', `${path}.text`);
           op.text = raw.text;
@@ -1151,7 +1287,13 @@ export function planCanvasOps(
         requireFootprint(bounds, path, errors);
         normalized.push(op);
         steps.push({ kind: 'group', op, bounds });
-        adds.push({ kind: 'group', semantic_id, label: 'Logical group', ...bounds });
+        adds.push({
+          kind: 'group',
+          semantic_id,
+          label: 'Logical group',
+          ...bounds,
+          ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
+        });
       }
       return;
     }
@@ -1213,7 +1355,11 @@ export function planCanvasOps(
   return {
     ok: true,
     plan: {
-      normalized_action: { type: 'canvas_ops', ops: normalized },
+      normalized_action: {
+        type: 'canvas_ops',
+        ...(normalizedCompositionId ? { composition_id: normalizedCompositionId } : {}),
+        ops: normalized,
+      },
       steps,
       adds,
       updates,
@@ -1245,6 +1391,7 @@ export const CANVAS_OPS_ACTION_SCHEMA = {
   additionalProperties: false,
   properties: {
     type: { const: 'canvas_ops' },
+    composition_id: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
     ops: {
       type: 'array',
       minItems: 1,
@@ -1267,6 +1414,10 @@ export const CANVAS_OPS_ACTION_SCHEMA = {
               text: { type: 'string', maxLength: MAX_TEXT },
               color: { type: 'string', enum: [...CANVAS_OP_COLORS] },
               fill: { type: 'string', enum: [...CANVAS_OP_FILLS] },
+              role: { type: 'string', minLength: 1, maxLength: MAX_ROLE },
+              region_id: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
+              rotation: { type: 'number', minimum: -Math.PI * 4, maximum: Math.PI * 4 },
+              opacity: { type: 'number', minimum: 0, maximum: 1 },
             },
             required: ['op', 'semantic_id', 'kind', 'x', 'y'],
           },
@@ -1292,8 +1443,10 @@ export const CANVAS_OPS_ACTION_SCHEMA = {
               semantic_id: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
               from_id: { type: 'string', minLength: 1, maxLength: 220, description: 'Current shape id or semantic:<stable-semantic-id> reference.' },
               to_id: { type: 'string', minLength: 1, maxLength: 220, description: 'Current shape id or semantic:<stable-semantic-id> reference.' },
-              text: { type: 'string', maxLength: MAX_TEXT },
+              text: { type: 'string', maxLength: MAX_CONNECTOR_LABEL },
               color: { type: 'string', enum: [...CANVAS_OP_COLORS] },
+              relationship_id: { type: 'string', minLength: 1, maxLength: 180, pattern: '^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$' },
+              relationship_kind: { type: 'string', enum: [...SEMANTIC_RELATIONSHIP_KINDS] },
             },
             required: ['op', 'semantic_id', 'from_id', 'to_id'],
           },
@@ -1319,7 +1472,7 @@ export const CANVAS_OPS_ACTION_SCHEMA = {
               y: { type: 'number', minimum: -MAX_COORDINATE, maximum: MAX_COORDINATE },
               rotation: { type: 'number', minimum: -Math.PI * 4, maximum: Math.PI * 4 },
               opacity: { type: 'number', minimum: 0, maximum: 1 },
-              text: { type: 'string', maxLength: MAX_TEXT },
+              text: { type: 'string', maxLength: MAX_CONNECTOR_LABEL },
               color: { type: 'string', enum: [...CANVAS_OP_COLORS] },
               fill: { type: 'string', enum: [...CANVAS_OP_FILLS] },
             },

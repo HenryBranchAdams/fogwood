@@ -15,6 +15,7 @@ import {
   validateProposal,
 } from '../app/fogwood-runtime.ts';
 import { FOGWOOD_CANVAS_PROTOCOL, planCanvasOps } from '../app/fogwood-canvas-ops.ts';
+import { relationshipSemanticId } from '../app/fogwood-spatial.ts';
 
 test('the public shell has no unreachable product modules or retired control-plane CSS', async () => {
   const appFiles = await readdir(new URL('../app/', import.meta.url));
@@ -176,6 +177,186 @@ test('Canvas Protocol plans one native bound connector from exact endpoint refer
     bounds: { x: 100, y: 80, w: 350, h: 70 },
   });
   assert.deepEqual(result.plan.adds.map((item) => [item.kind, item.semantic_id]), [['connector', 'connector:a-b']]);
+});
+
+test('canvas_ops retains bounded composition and create metadata and normalizes typed relationships', () => {
+  const context = { current_revision: 'rev-metadata', page_id: 'page:main', items: [] };
+  const relationshipId = 'relation:idea-supports-note';
+  const result = validateProposal({
+    base_revision: context.current_revision,
+    summary: 'Compose a small vertical',
+    actions: [{
+      type: 'canvas_ops',
+      composition_id: 'composition:vertical',
+      ops: [
+        {
+          op: 'create',
+          semantic_id: 'idea:one',
+          kind: 'rectangle',
+          x: 140,
+          y: 120,
+          w: 180,
+          h: 110,
+          role: 'concept',
+          region_id: 'region:upper',
+          rotation: 0.2,
+          opacity: 0.75,
+        },
+        {
+          op: 'create',
+          semantic_id: 'note:two',
+          kind: 'note',
+          x: 520,
+          y: 360,
+          w: 180,
+          h: 130,
+          role: 'question',
+          region_id: 'region:lower',
+        },
+        {
+          op: 'draw',
+          semantic_id: 'mark:three',
+          points: [{ x: 760, y: 360 }, { x: 820, y: 400 }],
+        },
+        {
+          op: 'connect',
+          semantic_id: relationshipSemanticId(relationshipId),
+          from_id: 'semantic:note:two',
+          to_id: 'semantic:mark:three',
+          text: 'supports',
+          relationship_id: relationshipId,
+          relationship_kind: 'supports',
+        },
+      ],
+    }],
+  }, context);
+
+  assert.equal(result.ok, true);
+  const action = result.proposal.actions[0];
+  assert.equal(action.composition_id, 'composition:vertical');
+  assert.deepEqual(action.ops[0], {
+    op: 'create',
+    semantic_id: 'idea:one',
+    kind: 'rectangle',
+    x: 140,
+    y: 120,
+    w: 180,
+    h: 110,
+    role: 'concept',
+    region_id: 'region:upper',
+    rotation: 0.2,
+    opacity: 0.75,
+  });
+  assert.deepEqual(action.ops[3], {
+    op: 'connect',
+    semantic_id: relationshipSemanticId(relationshipId),
+    from_id: 'pending:note:two',
+    to_id: 'pending:mark:three',
+    text: 'supports',
+    relationship_id: relationshipId,
+    relationship_kind: 'supports',
+  });
+  assert.deepEqual(result.diff.adds.specs.slice(0, 2).map((spec) => ({
+    semantic_id: spec.semantic_id,
+    role: spec.role,
+    composition_id: spec.composition_id,
+    region_id: spec.region_id,
+    rotation: spec.rotation,
+    opacity: spec.opacity,
+  })), [
+    {
+      semantic_id: 'idea:one', role: 'concept', composition_id: 'composition:vertical',
+      region_id: 'region:upper', rotation: 0.2, opacity: 0.75,
+    },
+    {
+      semantic_id: 'note:two', role: 'question', composition_id: 'composition:vertical',
+      region_id: 'region:lower', rotation: undefined, opacity: undefined,
+    },
+  ]);
+});
+
+test('typed canvas relationships fail closed on malformed pairs, semantic mismatch, and legacy endpoints', () => {
+  const pageId = 'page:main';
+  const base = (id, semantic_id, extra = {}) => ({
+    id,
+    type: 'geo',
+    x: id === 'shape:a' ? 0 : 240,
+    y: 0,
+    w: 100,
+    h: 80,
+    rotation: 0,
+    parent_id: pageId,
+    semantic_id,
+    ...extra,
+  });
+  const relationshipId = 'relation:typed';
+  const typed = {
+    op: 'connect',
+    semantic_id: relationshipSemanticId(relationshipId),
+    from_id: 'shape:a',
+    to_id: 'shape:b',
+    relationship_id: relationshipId,
+    relationship_kind: 'supports',
+  };
+  const cases = [
+    { op: { ...typed, relationship_kind: undefined }, code: 'RELATIONSHIP_FIELDS_PAIR', items: [base('shape:a', 'idea:a'), base('shape:b', 'idea:b')] },
+    { op: { ...typed, semantic_id: 'wrong:relationship' }, code: 'RELATIONSHIP_SEMANTIC_ID_MISMATCH', items: [base('shape:a', 'idea:a'), base('shape:b', 'idea:b')] },
+    { op: typed, code: 'UNSTABLE_RELATIONSHIP_ENDPOINT', items: [base('shape:a', 'idea:a', { meta: { semantic_id_source: 'legacy-shape-id' } }), base('shape:b', 'idea:b')] },
+    { op: { ...typed, text: 'x'.repeat(501) }, code: 'INVALID_TEXT', items: [base('shape:a', 'idea:a'), base('shape:b', 'idea:b')] },
+  ];
+  for (const { op, code, items } of cases) {
+    const result = planCanvasOps(items, [op], pageId);
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.errors.some((error) => error.code === code), true, JSON.stringify(result));
+  }
+
+  const oversizedUpdate = planCanvasOps([
+    base('shape:a', 'idea:a'),
+    base('shape:b', 'idea:b'),
+    {
+      id: 'shape:relationship', type: 'arrow', x: 100, y: 40, w: 240, h: 20,
+      rotation: 0, opacity: 1, parent_id: pageId,
+      semantic_id: relationshipSemanticId(relationshipId), semantic_id_source: 'stable', text: 'supports',
+      meta: {
+        role: 'semantic-relationship', relationship_id: relationshipId, relationship_kind: 'supports',
+        source_semantic_id: 'idea:a', target_semantic_id: 'idea:b', relationship_label: 'supports',
+      },
+    },
+  ], [{ op: 'update', id: 'shape:relationship', text: 'x'.repeat(501) }], pageId);
+  assert.equal(oversizedUpdate.ok, false, JSON.stringify(oversizedUpdate));
+  assert.equal(oversizedUpdate.errors.some((error) => error.code === 'INVALID_TEXT'), true, JSON.stringify(oversizedUpdate));
+});
+
+test('canvas composition and create metadata remain bounded and rotation participates in footprint safety', () => {
+  const context = { current_revision: 'rev-bounds', page_id: 'page:main', items: [] };
+  const invalid = [
+    { composition_id: 'not a stable id' },
+    { ops: [{ op: 'create', semantic_id: 'shape:role', kind: 'rectangle', x: 0, y: 0, role: '' }] },
+    { ops: [{ op: 'create', semantic_id: 'shape:region', kind: 'rectangle', x: 0, y: 0, region_id: 'not a stable id' }] },
+    { ops: [{ op: 'create', semantic_id: 'shape:rotation', kind: 'rectangle', x: 0, y: 0, rotation: Math.PI * 5 }] },
+    { ops: [{ op: 'create', semantic_id: 'shape:opacity', kind: 'rectangle', x: 0, y: 0, opacity: 1.01 }] },
+  ];
+  for (const extra of invalid) {
+    const result = validateProposal({
+      base_revision: context.current_revision,
+      summary: 'Reject malformed metadata',
+      actions: [{ type: 'canvas_ops', ops: [{ op: 'create', semantic_id: 'shape:one', kind: 'rectangle', x: 0, y: 0 }], ...extra }],
+    }, context);
+    assert.equal(result.ok, false, JSON.stringify(result));
+  }
+
+  const rotatedFootprint = planCanvasOps([], [{
+    op: 'create',
+    semantic_id: 'shape:rotated-boundary',
+    kind: 'rectangle',
+    x: 99_950,
+    y: 100,
+    w: 100,
+    h: 100,
+    rotation: Math.PI / 4,
+  }], context.page_id);
+  assert.equal(rotatedFootprint.ok, false);
+  assert.equal(rotatedFootprint.errors.some((error) => error.code === 'FOOTPRINT_LIMIT'), true, JSON.stringify(rotatedFootprint));
 });
 
 test('Canvas Protocol bound connectors resolve earlier semantic creates and reject unsafe endpoints', () => {

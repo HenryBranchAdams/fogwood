@@ -27,7 +27,7 @@ import type { SemanticRelationship } from './fogwood-spatial.ts';
 
 export const FOGWOOD_PROTOCOL = 'fogwood-agent-runtime';
 export const FOGWOOD_PROTOCOL_VERSION = '2';
-export const FOGWOOD_REGISTRY_VERSION = '7';
+export const FOGWOOD_REGISTRY_VERSION = '8';
 export const FOGWOOD_PROPOSAL_VERSION = '1';
 export const FOGWOOD_CONTEXT_VERSION = 'fogwood.context.v1' as const;
 export const FOGWOOD_CONTEXT_SELECTION_LIMIT = 5_000 as const;
@@ -55,6 +55,56 @@ export const FOGWOOD_PARTICIPATION_CONTRACT = {
   seed_never_controls_facts_safety_permissions_semantic_identity_or_human_authority: true,
   no_implicit_live_provider: true,
 } as const;
+
+/**
+ * The medium contract keeps the page's compositional intent machine-readable
+ * without turning artistic guidance into a hidden validator or truth source.
+ */
+export const FOGWOOD_MEDIUM_CONTRACT = Object.freeze({
+  schema: 'fogwood.medium-composition.v1',
+  medium_statement: 'Fogwood turns capabilities into editable matter.',
+  material_only_incomplete: true,
+  standalone_added_material: 'incomplete',
+  material_only_statement: 'A standalone added material is incomplete.',
+  external_material_workflow: 'When external material is needed, use the existing material proposal, wait for page Apply, re-inspect its semantic ID, then compose native matter around it.',
+  external_material_steps: Object.freeze([
+    'use the existing material proposal',
+    'wait for page Apply',
+    're-inspect its semantic ID',
+    'compose native matter around it',
+  ]),
+  composition_guidance: Object.freeze({
+    prefer_majority_native_meaningful_objects: true,
+    prefer_irregular_geometry: true,
+    prefer_open_space: true,
+    prefer_bound_typed_relations: true,
+    prefer_questions_annotations: true,
+    prefer_preserved_variants: true,
+    preferred: Object.freeze([
+      'majority native meaningful objects',
+      'irregular geometry',
+      'open space',
+      'bound typed relations',
+      'questions/annotations',
+      'preserved variants',
+    ]),
+    avoid: Object.freeze([
+      'card grids',
+      'three-column dashboards',
+      'standalone pasted assets unless explicitly requested',
+    ]),
+  }),
+  inspect_after_user_geometry_or_selection_changes: true,
+  artistic_constraints: Object.freeze({
+    counts_and_ranges: 'advisory',
+    advisory: true,
+    safety_gate: false,
+    truth_gate: false,
+  }),
+});
+
+/** Alias for callers that name the contract by its composition concern. */
+export const FOGWOOD_COMPOSITION_CONTRACT = FOGWOOD_MEDIUM_CONTRACT;
 
 export const MAX_ACTIONS = 32;
 export const MAX_BLOCKS_PER_ACTION = 48;
@@ -443,6 +493,8 @@ export type CanvasShapeInput = {
   text?: string;
   color?: CanvasColor;
   fill?: CanvasFill;
+  rotation?: number;
+  opacity?: number;
   /** Optional stable semantic composition metadata. */
   semantic_id?: string;
   role?: string;
@@ -736,9 +788,9 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     kind: 'action',
     version: FOGWOOD_CANVAS_PROTOCOL.version,
     title: 'Compose native canvas operations',
-    summary: 'Mix bounded native-shape creation, drawing, bound connectors, preserved variants, updates, arrangement, structure, z-order changes, and leaf deletion in one reviewed proposal.',
+    summary: 'Mix bounded native-shape creation, drawing, bound connectors, typed semantic relationships, preserved variants, updates, arrangement, structure, z-order changes, and leaf deletion in one reviewed proposal.',
     use_when: 'Codex needs to turn a request into native editable canvas matter or reshape exact existing tldraw objects without replacing the page.',
-    keywords: ['canvas protocol', 'create', 'draw', 'connect', 'binding', 'variant', 'lineage', 'update', 'resize', 'align', 'distribute', 'stack', 'pack', 'group', 'ungroup', 'reorder', 'z-order', 'delete', 'mix', 'compose'],
+    keywords: ['canvas protocol', 'create', 'draw', 'connect', 'binding', 'relationship', 'semantic', 'composition', 'region', 'variant', 'lineage', 'update', 'resize', 'align', 'distribute', 'stack', 'pack', 'group', 'ungroup', 'reorder', 'z-order', 'delete', 'mix', 'compose'],
     effect: 'page-apply',
     input_schema: exactActionSchemas.canvas_ops,
   },
@@ -757,9 +809,9 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     kind: 'primitive',
     version: 2,
     title: 'Connect two native targets',
-    summary: 'Create one editable arrow with native tldraw start and end bindings so it follows either endpoint.',
+    summary: 'Create one editable arrow with native tldraw start and end bindings, optionally carrying a typed semantic relationship.',
     use_when: 'Exactly two current or earlier-created targets should stay visually connected after movement.',
-    keywords: ['connect', 'bound connector', 'arrow binding', 'endpoint', 'follow'],
+    keywords: ['connect', 'bound connector', 'typed relationship', 'arrow binding', 'endpoint', 'follow'],
     effect: 'page-apply',
   },
   {
@@ -1104,6 +1156,8 @@ export type ProposalDiff = {
       role?: string;
       composition_id?: string;
       region_id?: string;
+      rotation?: number;
+      opacity?: number;
       variant_id?: string;
       parent_variant_id?: string;
       lineage_source_id?: string;
@@ -1250,6 +1304,10 @@ export function buildProposalDiff(
       h: addition.h,
       semantic_id: addition.semantic_id,
       ...(addition.role ? { role: addition.role } : {}),
+      ...(addition.composition_id ? { composition_id: addition.composition_id } : {}),
+      ...(addition.region_id ? { region_id: addition.region_id } : {}),
+      ...(addition.rotation === undefined ? {} : { rotation: addition.rotation }),
+      ...(addition.opacity === undefined ? {} : { opacity: addition.opacity }),
       ...(addition.variant_id ? { variant_id: addition.variant_id } : {}),
       ...(addition.parent_variant_id ? { parent_variant_id: addition.parent_variant_id } : {}),
       ...(addition.lineage_source_id ? { lineage_source_id: addition.lineage_source_id } : {}),
@@ -1261,7 +1319,7 @@ export function buildProposalDiff(
 
   for (const action of actions) {
     if (action.type === 'canvas_ops' || action.type === 'seeded_composition') {
-      const result = planCanvasOps(context.items, action.ops, context.page_id);
+      const result = planCanvasOps(context.items, action.ops, context.page_id, action.type === 'canvas_ops' ? action.composition_id : undefined);
       if (result.ok) projectCanvasPlan(result.plan);
       if (action.type === 'seeded_composition') {
         seeded_compositions.push({
@@ -1371,7 +1429,10 @@ export function validateProposal(input: unknown, context: ProposalContext, optio
 
   const normalizedActions: ProposalAction[] = [];
   if (raw.type === 'canvas_ops') {
-    const result = planCanvasOps(context.items, raw.ops, context.page_id);
+    if (!hasOnlyKeys(raw, ['type', 'composition_id', 'ops'])) {
+      addError(errors, 'UNKNOWN_FIELD', 'canvas_ops accepts only an optional composition_id and ops.', 'actions[0]');
+    }
+    const result = planCanvasOps(context.items, raw.ops, context.page_id, raw.composition_id);
     if (!result.ok) {
       return { ok: false, errors: result.errors.map((error) => ({ code: error.code, message: error.message, path: 'actions[0].' + error.path })) };
     }

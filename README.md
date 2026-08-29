@@ -18,7 +18,8 @@ history boundary. If execution fails, tldraw's history mark is rolled back with
 Fogwood registers exactly three stable page tools:
 
 - `fogwood-inspect` reads bounded live canvas facts, selection, semantic IDs,
-  relationships, assets, content revision, and context token.
+  relationships, assets, content revision, context token, and the advisory
+  medium-participation contract.
 - `fogwood-capabilities` discovers the bounded local moves, materials, and
   capability vocabulary relevant to the inspected page. The pinned tldraw
   examples are searchable knowledge and qualification vocabulary, not runtime
@@ -29,13 +30,26 @@ Fogwood registers exactly three stable page tools:
 The public proposal actions are exactly:
 
 - `canvas_ops` for native tldraw creation, drawing, connection, variants,
-  arrangement, grouping, ordering, edits, and deletion;
+  arrangement, grouping, ordering, edits, and deletion. A composition can
+  retain stable composition, region, role, rotation, and opacity metadata;
+  bound arrows can carry one of the allowlisted typed semantic relationships;
 - `seeded_composition` for deterministic, bounded, preserved remixes; and
 - `add_materials` for qualified local raster or sanitized SVG material.
 
 Every staged action is revision-bound, inspected before review, and rechecked
 before Apply. Accepted matter remains movable, annotatable, connectable,
 branchable, and editable on the canvas.
+
+## Medium participation contract
+
+The inspect response in registry version 8 states the intended operating loop
+without turning aesthetic advice into a safety or truth gate. A standalone
+generated asset is incomplete: Codex should stage bounded material, wait for
+page Apply, re-inspect its stable semantic identity, and then compose editable
+native matter around it. Prefer irregular geometry, open space, native shapes,
+bound typed relations, questions, annotations, and preserved variants. Avoid
+card grids, three-column dashboards, and an isolated pasted asset unless the
+person explicitly asks for one.
 
 ## Seeded composition
 

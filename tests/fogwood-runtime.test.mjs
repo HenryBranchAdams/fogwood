@@ -47,7 +47,7 @@ test('bounded context projection hashes ephemeral semantic state separately from
     focused_group_id: null,
     editing_shape_id: null,
     ontology_version: 1,
-    registry_version: '7',
+    registry_version: '8',
   };
   const projection = buildContextProjection(base);
   assert.equal(projection.schema, FOGWOOD_CONTEXT_VERSION);
@@ -74,7 +74,7 @@ test('context selection digest is bounded and reports truncation explicitly', ()
     focused_group_id: null,
     editing_shape_id: null,
     ontology_version: 1,
-    registry_version: '7',
+    registry_version: '8',
   });
   assert.equal(projection.selected_ids.length, 5_000);
   assert.equal(projection.selected_ids_preview.length, 128);

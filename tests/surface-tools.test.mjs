@@ -3,6 +3,7 @@ import test, { after } from 'node:test';
 import { createCompareInstrumentScope } from '../app/fogwood-instrument-adapter.ts';
 import { CAPABILITY_REGISTRY } from '../app/fogwood-runtime.ts';
 import { applyProposalToEditor, createInstrumentControlGesture, currentContextToken, currentRevision, inspectSurface, planCapabilityRequestForEditor, proposalActivityDetail, registerSurfaceTools, updateInstrumentControl } from '../app/surface-tools.ts';
+import { relationshipSemanticId } from '../app/fogwood-spatial.ts';
 
 // tldraw's state scheduler leaves a MessagePort referenced in Node tests.
 after(() => {
@@ -437,8 +438,14 @@ test('inspect exposes a bounded context token separate from content revision', (
   assert.equal(first.canvas_context.schema, 'fogwood.context.v1');
   assert.equal(first.context_token.length, 16);
   assert.equal(first.content_revision, currentRevision(editor));
-  assert.equal(first.protocol.registry_version, '7');
+  assert.equal(first.protocol.registry_version, '8');
   assert.equal(first.capability_ontology.qualified_capability_count, 9);
+  assert.equal(first.medium_contract.schema, 'fogwood.medium-composition.v1');
+  assert.equal(first.medium_contract.material_only_incomplete, true);
+  assert.match(first.medium_contract.medium_statement, /turns capabilities into editable matter/i);
+  assert.match(first.medium_contract.external_material_workflow, /wait for page Apply/i);
+  assert.equal(first.medium_contract.artistic_constraints.safety_gate, false);
+  assert.equal(first.medium_contract.artistic_constraints.truth_gate, false);
   assert.equal('camera' in first.canvas_context, false);
   assert.equal('viewport' in first.canvas_context, false);
   assert.equal('hover' in first.canvas_context, false);
@@ -458,6 +465,68 @@ test('inspect exposes a bounded context token separate from content revision', (
     assert.equal(next.content_revision, first.content_revision);
     assert.notEqual(next.context_token, first.context_token);
   }
+});
+
+test('public empty-editor inspect stages and applies a small native vertical with typed relations atomically', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const inspectTool = editor.registeredTools.find((tool) => tool.name === 'fogwood-inspect');
+  const proposeTool = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const before = clone({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets });
+  const inspected = JSON.parse((await inspectTool.execute({})).content[0].text);
+  const relationshipId = 'relation:question-supports-sketch';
+  const response = await proposeTool.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Compose a small native vertical',
+    actions: [{
+      type: 'canvas_ops',
+      composition_id: 'composition:vertical',
+      ops: [
+        { op: 'create', semantic_id: 'idea:question', kind: 'rectangle', x: 120, y: 100, w: 180, h: 100, role: 'question', region_id: 'region:upper', rotation: 0.15, opacity: 0.8 },
+        { op: 'create', semantic_id: 'idea:note', kind: 'note', x: 520, y: 300, w: 180, h: 120, role: 'reflection', region_id: 'region:lower' },
+        { op: 'draw', semantic_id: 'mark:thread', points: [{ x: 760, y: 120 }, { x: 820, y: 170 }, { x: 790, y: 240 }] },
+        {
+          op: 'connect',
+          semantic_id: `relationship:${relationshipId}`,
+          from_id: 'semantic:idea:note',
+          to_id: 'semantic:mark:thread',
+          text: 'supports',
+          relationship_id: relationshipId,
+          relationship_kind: 'supports',
+        },
+      ],
+    }],
+  });
+  const staged = JSON.parse(response.content[0].text);
+  assert.equal(staged.status, 'STAGED');
+  assert.deepEqual({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets }, before);
+
+  assert.equal(controller.apply().status, 'APPLIED');
+  const applied = inspectSurface(editor);
+  assert.equal(applied.items.length, 4);
+  assert.equal(new Set(applied.items.map((item) => item.meta.composition_id)).size, 1);
+  assert.equal(applied.items.every((item) => item.meta.composition_id === 'composition:vertical'), true);
+  assert.equal(applied.counts.regions, 2);
+  assert.equal(applied.semantic_relationships.length, 1);
+  assert.deepEqual(applied.semantic_relationships[0], {
+    id: relationshipId,
+    kind: 'supports',
+    source_semantic_id: 'idea:note',
+    target_semantic_id: 'mark:thread',
+    label: 'supports',
+    shape_id: applied.semantic_relationships[0].shape_id,
+  });
+  assert.equal(applied.bindings.length, 2);
+  assert.equal(applied.items.find((item) => item.semantic_id === 'idea:question').rotation, 0.15);
+  assert.equal(applied.items.find((item) => item.semantic_id === 'idea:question').opacity, 0.8);
+  assert.equal(editor.marks.filter((mark) => mark === 'Apply agent proposal').length, 1);
+
+  editor.undo();
+  assert.deepEqual({ shapes: editor.shapes, bindings: editor.bindings, assets: editor.assets }, before);
+  assert.deepEqual(inspectSurface(editor).items, []);
+  cleanup();
 });
 
 test('inspect keeps the public context projection bounded while the opaque token covers the full selection', () => {
@@ -984,6 +1053,134 @@ test('Canvas Protocol Apply creates an inspected native bound connector in one U
   editor.undo();
   assert.deepEqual(editor.shapes, before);
   assert.deepEqual(editor.bindings, []);
+});
+
+test('public typed relationship text updates keep native rich text and inspected semantic labels synchronized', async () => {
+  const relationshipId = 'relation:question-image';
+  const relationshipSemantic = relationshipSemanticId(relationshipId);
+  const editor = new CanvasProposalEditor([
+    {
+      id: 'shape:question', typeName: 'shape', type: 'geo', x: 20, y: 30, rotation: 0, opacity: 1,
+      isLocked: false, index: '0001', parentId: 'page:main',
+      meta: { fogwood: { semantic_id: 'question:one', semantic_id_source: 'stable' } },
+      props: { geo: 'rectangle', w: 160, h: 100, richText: { type: 'doc', content: [] } },
+    },
+    {
+      id: 'shape:image', typeName: 'shape', type: 'geo', x: 360, y: 90, rotation: 0, opacity: 1,
+      isLocked: false, index: '0002', parentId: 'page:main',
+      meta: { fogwood: { semantic_id: 'image:one', semantic_id_source: 'stable' } },
+      props: { geo: 'ellipse', w: 180, h: 120, richText: { type: 'doc', content: [] } },
+    },
+    {
+      id: 'shape:relationship', typeName: 'shape', type: 'arrow', x: 180, y: 80, rotation: 0, opacity: 1,
+      isLocked: false, index: '0003', parentId: 'page:main',
+      meta: {
+        fogwood: {
+          semantic_id: relationshipSemantic,
+          semantic_id_source: 'stable',
+          role: 'semantic-relationship',
+          relationship_id: relationshipId,
+          relationship_kind: 'depends_on',
+          source_semantic_id: 'question:one',
+          target_semantic_id: 'image:one',
+          relationship_label: 'complicates',
+          preserved_marker: 'keep-me',
+        },
+      },
+      props: {
+        start: { x: 0, y: 0 },
+        end: { x: 180, y: 60 },
+        richText: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'complicates' }] }] },
+      },
+    },
+  ]);
+  editor.createBindings([{
+    type: 'arrow', fromId: 'shape:relationship', toId: 'shape:question',
+    props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false, snap: 'none' },
+  }, {
+    type: 'arrow', fromId: 'shape:relationship', toId: 'shape:image',
+    props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false, snap: 'none' },
+  }]);
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const inspectTool = editor.registeredTools.find((tool) => tool.name === 'fogwood-inspect');
+  const proposeTool = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = JSON.parse((await inspectTool.execute({})).content[0].text);
+  const response = await proposeTool.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Update the relationship wording',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'update', id: `semantic:${relationshipSemantic}`, text: 'challenges' }] }],
+  });
+  assert.equal(JSON.parse(response.content[0].text).status, 'STAGED');
+  assert.equal(controller.apply().status, 'APPLIED');
+
+  const applied = JSON.parse((await inspectTool.execute({})).content[0].text);
+  const arrow = applied.items.find((item) => item.semantic_id === relationshipSemantic);
+  assert.match(JSON.stringify(arrow.props.richText), /challenges/);
+  assert.deepEqual(applied.semantic_relationships[0], {
+    id: relationshipId,
+    kind: 'depends_on',
+    source_semantic_id: 'question:one',
+    target_semantic_id: 'image:one',
+    label: 'challenges',
+    shape_id: 'shape:relationship',
+  });
+  assert.equal(arrow.meta.relationship_kind, 'depends_on');
+  assert.equal(editor.getShape('shape:relationship').meta.fogwood.preserved_marker, 'keep-me');
+  cleanup();
+});
+
+test('inspect exposes semantic relationships only when exact native bindings match durable endpoint metadata', () => {
+  const relationshipId = 'relation:bound-only';
+  const relationshipSemantic = relationshipSemanticId(relationshipId);
+  const editor = new CanvasProposalEditor([
+    {
+      id: 'shape:source', typeName: 'shape', type: 'geo', x: 20, y: 30, rotation: 0, opacity: 1,
+      isLocked: false, index: '0001', parentId: 'page:main',
+      meta: { fogwood: { semantic_id: 'idea:source', semantic_id_source: 'stable' } },
+      props: { geo: 'rectangle', w: 160, h: 100, richText: { type: 'doc', content: [] } },
+    },
+    {
+      id: 'shape:target', typeName: 'shape', type: 'geo', x: 360, y: 90, rotation: 0, opacity: 1,
+      isLocked: false, index: '0002', parentId: 'page:main',
+      meta: { fogwood: { semantic_id: 'idea:target', semantic_id_source: 'stable' } },
+      props: { geo: 'ellipse', w: 180, h: 120, richText: { type: 'doc', content: [] } },
+    },
+    {
+      id: 'shape:relationship', typeName: 'shape', type: 'arrow', x: 180, y: 80, rotation: 0, opacity: 1,
+      isLocked: false, index: '0003', parentId: 'page:main',
+      meta: {
+        fogwood: {
+          semantic_id: relationshipSemantic,
+          semantic_id_source: 'stable',
+          role: 'semantic-relationship',
+          relationship_id: relationshipId,
+          relationship_kind: 'supports',
+          source_semantic_id: 'idea:source',
+          target_semantic_id: 'idea:target',
+          relationship_label: 'supports',
+        },
+      },
+      props: {
+        start: { x: 0, y: 0 }, end: { x: 180, y: 60 },
+        richText: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'supports' }] }] },
+      },
+    },
+  ]);
+
+  assert.deepEqual(inspectSurface(editor).semantic_relationships, []);
+  editor.createBindings([{
+    type: 'arrow', fromId: 'shape:relationship', toId: 'shape:source',
+    props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false, snap: 'none' },
+  }, {
+    type: 'arrow', fromId: 'shape:relationship', toId: 'shape:target',
+    props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false, snap: 'none' },
+  }]);
+  assert.equal(inspectSurface(editor).semantic_relationships.length, 1);
+
+  editor.bindings.find((binding) => binding.props.terminal === 'end').toId = 'shape:source';
+  assert.deepEqual(inspectSurface(editor).semantic_relationships, []);
 });
 
 test('Canvas Protocol refuses a silently partial connector and restores visible page state', () => {

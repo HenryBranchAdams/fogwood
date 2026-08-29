@@ -17,6 +17,7 @@ import {
   FOGWOOD_REGISTRY_VERSION,
   FOGWOOD_CONTEXT_SELECTION_LIMIT,
   FOGWOOD_CONTEXT_SELECTION_PREVIEW_LIMIT,
+  FOGWOOD_MEDIUM_CONTRACT,
   FOGWOOD_PARTICIPATION_CONTRACT,
   FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA,
   isRetiredActionType,
@@ -353,6 +354,8 @@ function addCanvasShapes(editor: Editor, inputs: unknown[], options: MutationOpt
       id,
       x: position.x,
       y: position.y,
+      rotation: clampNumber(input.rotation, 0, -Math.PI * 4, Math.PI * 4),
+      opacity: clampNumber(input.opacity, 1, 0, 1),
       parentId: options.parentId ? (options.parentId as TLParentId) : editor.getCurrentPageId(),
       meta: shapeMeta(id, inputFogwood),
     };
@@ -536,11 +539,10 @@ function currentPageBindings(editor: Editor, shapeIds: Set<string>) {
     .map((record) => ({ id: record.id, type_name: record.typeName, type: record.type, from_id: record.fromId, to_id: record.toId, props: boundedProps(record.props) }));
 }
 
-function currentSemanticRelationships(shapes: readonly TLShape[]): SemanticRelationship[] {
-  const liveSemanticIds = new Set(shapes.flatMap((shape) => {
-    const semanticId = fogwoodMeta(shape).semantic_id;
-    return typeof semanticId === 'string' && isStableSemanticId(semanticId) ? [semanticId] : [];
-  }));
+type CurrentPageBinding = { fromId: string; toId: string; id: string; type: string; props: unknown };
+
+function currentSemanticRelationships(shapes: readonly TLShape[], bindings: readonly CurrentPageBinding[]): SemanticRelationship[] {
+  const shapesById = new Map(shapes.map((shape) => [String(shape.id), shape]));
   const relationships: SemanticRelationship[] = [];
   for (const shape of shapes) {
     if (shape.type !== 'arrow') continue;
@@ -550,9 +552,22 @@ function currentSemanticRelationships(shapes: readonly TLShape[]): SemanticRelat
     const source = meta.source_semantic_id;
     const target = meta.target_semantic_id;
     if (meta.role !== 'semantic-relationship') continue;
+    if (meta.semantic_id_source === 'legacy-shape-id') continue;
     if (typeof id !== 'string' || typeof source !== 'string' || typeof target !== 'string') continue;
     if (!isStableSemanticId(id) || !isStableSemanticId(source) || !isStableSemanticId(target) || source === target) continue;
-    if (meta.semantic_id !== relationshipSemanticId(id) || !liveSemanticIds.has(source) || !liveSemanticIds.has(target)) continue;
+    if (meta.semantic_id !== relationshipSemanticId(id)) continue;
+    const arrowBindings = bindings.filter((binding) => binding.type === 'arrow' && binding.fromId === shape.id);
+    if (arrowBindings.length !== 2) continue;
+    const start = arrowBindings.find((binding) => isRecord(binding.props) && binding.props.terminal === 'start');
+    const end = arrowBindings.find((binding) => isRecord(binding.props) && binding.props.terminal === 'end');
+    if (!start || !end || start.toId === end.toId) continue;
+    const sourceShape = shapesById.get(start.toId);
+    const targetShape = shapesById.get(end.toId);
+    if (!sourceShape || !targetShape) continue;
+    const sourceMeta = fogwoodMeta(sourceShape);
+    const targetMeta = fogwoodMeta(targetShape);
+    if (sourceMeta.semantic_id_source === 'legacy-shape-id' || targetMeta.semantic_id_source === 'legacy-shape-id') continue;
+    if (sourceMeta.semantic_id !== source || targetMeta.semantic_id !== target) continue;
     if (!['supports', 'contradicts', 'depends_on', 'causes', 'blocks', 'echoes', 'mutates_into'].includes(kind ?? '')) continue;
     relationships.push({
       id,
@@ -687,12 +702,12 @@ function referencedAssets(editor: Editor, shapes = editor.getCurrentPageShapes()
 function pageContent(editor: Editor) {
   const shapes = editor.getCurrentPageShapesSorted();
   const shapeIds = new Set<string>(shapes.map((shape) => shape.id));
-  const bindings = editor.store
+  const bindings: CurrentPageBinding[] = editor.store
     .allRecords()
     .filter((record) => record.typeName === 'binding')
     .map((record) => record as unknown as { fromId: string; toId: string; id: string; type: string; props: unknown })
     .filter((record) => shapeIds.has(record.fromId) && shapeIds.has(record.toId));
-  return { shapes, bindings, assets: referencedAssets(editor, shapes), semantic_relationships: currentSemanticRelationships(shapes) };
+  return { shapes, bindings, assets: referencedAssets(editor, shapes), semantic_relationships: currentSemanticRelationships(shapes, bindings) };
 }
 
 function bindingCountsByShape(bindings: readonly { fromId: string; toId: string }[]) {
@@ -1099,6 +1114,7 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
     },
     persistence: FOGWOOD_PERSISTENCE,
     participation_contract: FOGWOOD_PARTICIPATION_CONTRACT,
+    medium_contract: FOGWOOD_MEDIUM_CONTRACT,
     workflow: ['inspect live canvas', 'route and compose any pinned capability', 'use live host capabilities when explicitly required', 'bring bounded results back through Fogwood', 'stage proposal', 'page Apply/Reject', 'inspect human edits again'],
     workflow_contract: 'inspect -> full-surface route/plan -> local or observed host capability -> bounded proposal -> page Apply/Reject -> inspect again',
     authority: { agent: 'read current state, search local capabilities, and stage typed proposals', page: 'owns validation and Apply/Reject; only page Apply mutates content' },
@@ -1483,6 +1499,7 @@ export function applyCanvasOpPlan(
   options: { seeded?: SeededCompositionAction } = {},
 ) {
   const createdIds = new Map<string, TLShapeId>();
+  const compositionId = plan.normalized_action.composition_id;
   const resolveId = (id: string) => createdIds.get(id) ?? (id as TLShapeId);
 
   for (const step of plan.steps) {
@@ -1499,13 +1516,18 @@ export function applyCanvasOpPlan(
         ...(step.op.text === undefined ? {} : { text: step.op.text }),
         ...(step.op.color === undefined ? {} : { color: step.op.color }),
         ...(step.op.fill === undefined ? {} : { fill: step.op.fill }),
+        ...(step.op.role === undefined ? {} : { role: step.op.role }),
+        ...(step.op.region_id === undefined ? {} : { region_id: step.op.region_id }),
+        ...(step.op.rotation === undefined ? {} : { rotation: step.op.rotation }),
+        ...(step.op.opacity === undefined ? {} : { opacity: step.op.opacity }),
+        ...(compositionId === undefined ? {} : { composition_id: compositionId }),
       }], {
         coordinateSpace: 'page',
         focusAfter: false,
         select: false,
         recordHistory: false,
         parentId: editor.getCurrentPageId(),
-        fogwood: { role: 'agent-created' },
+        fogwood: { role: 'agent-created', ...(compositionId === undefined ? {} : { composition_id: compositionId }) },
       });
       if (!id) throw new Error(`Canvas Protocol could not create ${step.op.semantic_id}.`);
       createdIds.set(step.pending_id, id);
@@ -1529,6 +1551,7 @@ export function applyCanvasOpPlan(
           semantic_id: step.op.semantic_id,
           semantic_id_source: 'stable',
           role: 'agent-drawing',
+          ...(compositionId === undefined ? {} : { composition_id: compositionId }),
         }),
         props: {
           segments: [{ type: 'free', path: b64Vecs.encodePoints2D(localPoints), dim: 2 }],
@@ -1574,9 +1597,13 @@ export function applyCanvasOpPlan(
         recordHistory: false,
         parentId: editor.getCurrentPageId(),
         fogwood: {
-          role: 'bound-connector',
+          role: step.op.relationship_id && step.op.relationship_kind ? 'semantic-relationship' : 'bound-connector',
+          ...(compositionId === undefined ? {} : { composition_id: compositionId }),
           ...(step.from.semantic_id ? { source_semantic_id: step.from.semantic_id } : {}),
           ...(step.to.semantic_id ? { target_semantic_id: step.to.semantic_id } : {}),
+          ...(step.op.relationship_id === undefined ? {} : { relationship_id: step.op.relationship_id }),
+          ...(step.op.relationship_kind === undefined ? {} : { relationship_kind: step.op.relationship_kind }),
+          ...(step.op.relationship_id === undefined || step.op.text === undefined ? {} : { relationship_label: step.op.text }),
         },
       });
       if (!arrowId) throw new Error(`Canvas Protocol could not create bound connector ${step.op.semantic_id}.`);
@@ -1612,8 +1639,10 @@ export function applyCanvasOpPlan(
         y: step.bounds.y,
         lineageSourceId: step.lineage.lineage_source_id,
         parentVariantId: step.lineage.parent_variant_id,
+        ...(compositionId === undefined ? {} : { provenance: { composition_id: compositionId } }),
         ...(options.seeded && seededLineage ? {
           provenance: {
+            ...(compositionId === undefined ? {} : { composition_id: compositionId }),
             seeded_grammar: options.seeded.grammar,
             seeded_algorithm_version: options.seeded.algorithm_version,
             seeded_prng: options.seeded.prng,
@@ -1634,9 +1663,18 @@ export function applyCanvasOpPlan(
       const shape = editor.getShape(resolveId(step.op.id));
       if (!shape) throw new Error(`Canvas Protocol update target ${step.op.id} no longer exists.`);
       const props: Record<string, unknown> = {};
+      let meta: Record<string, unknown> | undefined;
       if (step.op.text !== undefined) {
         if (shape.type === 'frame') props.name = step.op.text;
         else props.richText = toRichText(step.op.text);
+        const existingMeta = isRecord(shape.meta) ? shape.meta : {};
+        const existingFogwood = isRecord(existingMeta.fogwood) ? existingMeta.fogwood : undefined;
+        if (shape.type === 'arrow' && existingFogwood?.role === 'semantic-relationship') {
+          meta = {
+            ...existingMeta,
+            fogwood: { ...existingFogwood, relationship_label: step.op.text },
+          };
+        }
       }
       if (step.op.color !== undefined) {
         props.color = step.op.color;
@@ -1651,6 +1689,7 @@ export function applyCanvasOpPlan(
         ...(step.op.rotation === undefined ? {} : { rotation: step.op.rotation }),
         ...(step.op.opacity === undefined ? {} : { opacity: step.op.opacity }),
         ...(Object.keys(props).length === 0 ? {} : { props }),
+        ...(meta === undefined ? {} : { meta }),
       }] as never);
       continue;
     }
@@ -1697,6 +1736,7 @@ export function applyCanvasOpPlan(
           semantic_id: step.op.semantic_id,
           semantic_id_source: 'stable',
           role: 'agent-group',
+          ...(compositionId === undefined ? {} : { composition_id: compositionId }),
         }),
         props: {},
       }] as never);
@@ -1757,7 +1797,7 @@ function preflightProposalCanvasOps(editor: Editor, proposal: ProposalV1) {
   const plans: CanvasOpPlan[] = [];
   for (const action of proposal.actions) {
     if (action.type !== 'canvas_ops' && action.type !== 'seeded_composition') continue;
-    const result = planCanvasOps(context.items, action.ops, context.page_id);
+    const result = planCanvasOps(context.items, action.ops, context.page_id, action.type === 'canvas_ops' ? action.composition_id : undefined);
     if (!result.ok) return result.errors.map((error) => error.message).join(' ').slice(0, 300);
     plans.push(result.plan);
   }
@@ -1876,7 +1916,7 @@ export function prepareProposalPlan(
     for (const action of actions) {
       if (action.type === 'canvas_ops' || action.type === 'seeded_composition') {
         const current = proposalContext(editor);
-        const result = planCanvasOps(current.items, action.ops, current.page_id);
+        const result = planCanvasOps(current.items, action.ops, current.page_id, action.type === 'canvas_ops' ? action.composition_id : undefined);
         if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
         actionLowerings.push({ action, canvas: result.plan });
       } else {

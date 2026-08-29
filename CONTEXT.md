@@ -36,6 +36,14 @@ The only public proposal actions are `canvas_ops`, `seeded_composition`, and
 `add_materials`. The WebMCP call cannot apply its own proposal. Apply and Reject
 are page-owned decisions.
 
+Registry version 8 adds bounded composition metadata and typed relationship
+fields to the existing `canvas_ops` action. The inspect response also carries
+`fogwood.medium-composition.v1`: an advisory reminder that an external asset is
+source matter, not a finished Fogwood result. It asks Codex to wait for Apply,
+re-inspect the accepted material, and compose native editable matter around it.
+Those artistic constraints never decide facts, safety, permissions, targets,
+or authority.
+
 ## Canonical terms
 
 **Intent** — a bounded description of an outcome a person wants from the
@@ -64,7 +72,9 @@ otherwise.
 
 **Relationship** — a typed, inspectable edge or lineage record such as
 `supports`, `contradicts`, `depends_on`, `causes`, `blocks`, `echoes`, or
-`mutates_into`.
+`mutates_into`. A typed edge uses stable endpoint semantic IDs, a stable
+relationship ID, native tldraw arrow bindings, and synchronized visible and
+inspectable labels.
 
 **PreparedCanvasPlan** — the complete, deep-frozen lowering created during
 stage. It contains the proposal, exact revision/context evidence, prepared

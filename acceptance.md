@@ -1,6 +1,8 @@
 # Fogwood acceptance manifest
 
-Status: PASS — local, deployed Sites, and in-app Browser autophagy boundary.
+Status: PASS — local registry-8 candidate, current in-app Browser proof, and
+independent anti-dashboard acceptance. Deployed Sites version 12 remains the
+prior autophagy baseline and does not contain this candidate.
 
 This is the one authoritative acceptance manifest. The current phase simplifies
 Fogwood into an empty, device-local tldraw surface where Codex turns intent and
@@ -48,11 +50,12 @@ Dead dashboard-era product code removed in this phase:
 - `tests/fogwood-snapshot.test.mjs`
 - their retired gallery, starter, chat, and snapshot CSS selector families
 
-The current candidate has passed the local, deployed Sites, Browser, and
-independent-verifier gates recorded below. One live Codex image-generation
-artifact has passed the constrained material bridge. Other external providers
-and direct conversation inventory remain separate, explicitly unqualified
-boundaries.
+The prior deployed baseline passed the Sites and hosted checks retained below.
+The current registry-8 candidate passed the rendered local Browser proof,
+frozen full-check matrix, and independent anti-dashboard verifier recorded
+below. One live Codex image-generation artifact passed the constrained material
+bridge. Other external providers and direct conversation inventory remain
+separate, explicitly unqualified boundaries.
 
 ## Acceptance matrix — current phase
 
@@ -68,14 +71,15 @@ boundaries.
 | Compatibility | `open-surface-local`, surface-block/direct gestures, receipt-v1 parser, and legacy receipt constructors/events still read. | PASS |
 | Bazaar | Local declarative hashed knowledge; no executable recipe import in the active runtime. | PASS |
 | 213-example vocabulary | 213/213 local addressing/knowledge records; no claim of 213 runtime tools or upstream execution. | PASS |
-| Browser rendering | Fresh blank canvas, spatial composition, proposal review, Apply/Reject, one-step Undo, reload persistence, no dashboard furniture. | PASS |
-| Page registration | Current origin and exact registered page tools. | PASS — `http://[::1]:4193/`, three tools |
+| Native medium contract | Registry 8 exposes advisory material-to-native guidance; `canvas_ops` preserves composition/region/role/rotation/opacity metadata and typed relationship identity. | PASS — focused tests and rendered WebMCP proof |
+| Browser rendering | Fresh blank canvas, spatial composition, proposal review, Apply/Reject, one-step Undo, reload persistence, no dashboard furniture. | PASS — current local origin |
+| Page registration | Current origin and exact registered page tools. | PASS — `http://localhost:4207/`, three tools |
 | Browser / host exposure | Current host inventory of page tools. | PASS — in-app Browser WebMCP inventory |
 | Conversation inventory | Direct top-level conversation tool inventory, separate from Browser. | NOT EXPOSED DIRECTLY — Browser-mediated tools only |
 | Harmless WebMCP call | Successful inspect/capabilities/propose call with no unauthorized mutation. | PASS |
-| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | PASS — Sites version 12 from `56fa61b6c40c8ff996c471636d5670f5c6ad5990` |
+| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | BASELINE ONLY — Sites version 12 is from `56fa61b6c40c8ff996c471636d5670f5c6ad5990`; the registry-8 candidate has no Sites version or deployment |
 | Live Codex artifact bridge | Real externally generated material stages with exact provenance, applies once, undoes once, and persists after reload. | PASS — Codex PNG `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4` |
-| Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS — no confirmed P1/P2 |
+| Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS — no remaining P1/P2; supplied desktop and mobile evidence pass the anti-dashboard bar |
 
 ## Evidence ledger — current phase
 
@@ -84,12 +88,22 @@ do not promote an unrun check to PASS.
 
 | Check | Result / evidence |
 | --- | --- |
-| `npm test` | PASS — 215/215; pretest compiler check PASS |
+| `npm test` | PASS — 221/221; pretest compiler check PASS |
 | `npx tsc --noEmit` | PASS |
 | `npm run lint` | PASS — no warnings |
 | `npm run build` | PASS — only the known >500 kB chunk and vinext route-classification warnings |
 | `node scripts/compile-bazaar.mjs --check` | PASS — 7 packages, `sha256:3dcaddef57608136e331a49975f9b176f5c4261180163eadbe6ef471646a596a` |
 | `git diff --check` | PASS |
+| Registry-8 focused tests | PASS — 68/68 runtime, Canvas Protocol, and public surface tests; exact typed-binding and 500-character visible/inspectable-label invariants included |
+| Proud-medium blank origin | PASS — fresh `http://localhost:4207/` began with zero shapes, blocks, bindings, assets, regions, and relationships |
+| Proud-medium material review | PASS — real Codex PNG staged with exact provenance before Apply; `/private/tmp/fogwood-proud-material-staged.png` |
+| Proud-medium native composition | PASS — 20 native shapes, 0 blocks, 1 local asset, 16 bindings, 8 typed relationships, and 4 regions; `/private/tmp/fogwood-proud-final-accepted.png` |
+| Proud-medium human response loop | PASS — a real drag moved `question:living-wall-ownership` from `(350, 790)` to approximately `(136.566, 773.476)`; the fresh inspect selected that semantic ID and the next seeded proposal used the changed revision and geometry |
+| Proud-medium preserved branch | PASS — `rain-after-concrete`, remix v1, `xorshift32-v1`, wildness 0.72; source retained, seeded variant and visible lineage added |
+| Proud-medium Reject / Undo / Redo | PASS — Reject retained exact revision `fogwood-agent-runtime/2-ec7d16682f03bd86`; one Undo removed only the seeded variant (19 to 18 shapes) and Redo restored it |
+| Proud-medium reload persistence | PASS — final post-fix reload retained exact revision `fogwood-agent-runtime/2-a6d8298ce2f3907a`, 20 native shapes, 0 blocks, 1 local asset, 16 bindings, 8 typed relationships, 4 regions, seeded lineage, and matching visible/semantic label `questions` |
+| Proud-medium responsive render | PASS — full composition and native mobile tldraw chrome at a 390x844 emulated viewport; `/private/tmp/fogwood-proud-mobile-clean.png`; device metrics override cleared afterward |
+| Proud-medium browser health | PASS — no warning or error logs on the current local origin |
 | Browser blank-canvas render | PASS — `/private/tmp/fogwood-autophagy-blank.png` |
 | Browser stage / Apply / Reject | PASS — native review `/private/tmp/fogwood-autophagy-staged.png`; applied `/private/tmp/fogwood-autophagy-applied.png`; Reject retained the exact empty revision |
 | Browser material bridge | PASS — sanitized SVG review `/private/tmp/fogwood-autophagy-material-staged.png`; applied `/private/tmp/fogwood-autophagy-material-applied.png`; active/remote SVG returned `SVG_ACTIVE_CONTENT` before review |
@@ -104,7 +118,7 @@ do not promote an unrun check to PASS.
 | Hosted real Codex material | PASS — generated PNG, 2,017,411 bytes, 1214x1295, exact hash `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4`; staged preview `/private/tmp/fogwood-hosted-real-material-staged.png`; selected editable result `/private/tmp/fogwood-hosted-real-material-selected.png` |
 | Hosted Apply / Undo / persistence | PASS — Apply changed revision and produced one image plus one referenced local asset; one Undo returned the exact prior revision and removed both; re-Apply survived reload with the same revision and material identity |
 | Hosted context concurrency | PASS — selecting the generated material changed only `context_token`; a proposal using the prior token returned `STALE_CONTEXT`, left the content revision unchanged, and created no review state |
-| Independent verifier | PASS — all mandated checks rerun; schema/runtime repair rechecked; no confirmed P1/P2; supplied screenshots are native-tldraw and anti-dashboard |
+| Independent verifier | PASS — rejected two label/binding contract gaps, rechecked their red-first repairs, then found no remaining P1/P2; supplied desktop and mobile evidence are native-tldraw and anti-dashboard |
 
 ## Current risks and explicit boundaries
 
@@ -412,7 +426,7 @@ separate SHA-256 digest.
 | Evidence layer | State |
 | --- | --- |
 | Page registration | Qualified locally: exactly 3 tools registered at the current fresh origin `http://localhost:4197/` |
-| Browser / host exposure | Qualified in the Codex in-app Browser for `http://localhost:4197/`; all three registry-v6 tools were surfaced through the Browser WebMCP bridge |
+| Browser / host exposure | Qualified in the Codex in-app Browser for `http://localhost:4197/`; all three historical registry-v6 tools were surfaced through the Browser WebMCP bridge |
 | Conversation tool inventory | Not qualified as direct top-level conversation tools; the calls were mediated by the Browser plugin |
 | Harmless successful WebMCP call | Qualified for registry v6: current `fogwood-inspect` and `fogwood-capabilities({mode:"route"})` calls returned valid live results without changing the page; earlier plan/propose/Apply/Reject evidence remains separately recorded |
 | Image generation or other external capability ingestion | Out of scope for this reduced phase |
