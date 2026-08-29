@@ -16,7 +16,7 @@ import {
   type SurfaceToolController,
   type ToolConnection,
   registerSurfaceTools,
-} from './surface-tools';
+} from './webmcp/surface-tools';
 
 const shapeUtils = [SurfaceBlockUtil];
 

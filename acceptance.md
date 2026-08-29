@@ -32,6 +32,18 @@ the captured history mark is restored with `bailToMark`; only newly created,
 unreferenced assets may be cleaned up. Reject leaves the page unchanged. A
 successful Apply is one undo step.
 
+The authority-sensitive page adapter now exposes named module seams:
+`app/webmcp/surface-tools.ts` owns the exact three-tool transport assembly;
+`app/tldraw-adapter/inspect-projection.ts` owns read-only live projection;
+`app/tldraw-adapter/transaction.ts` owns prepared-plan execution and rollback;
+`app/review/proposal-activity.ts` owns review copy; and
+`app/compat/surface-tools.ts` owns persisted block and direct-instrument
+compatibility. `app/surface-tools.ts` is a 53-line compatibility façade with no
+Editor, DOM, registration, policy, or transaction implementation. The existing
+qualified editor kernel lives privately in `app/internal/surface-runtime.ts` so
+this behavior-preserving split does not duplicate schemas, pending authority,
+material decode, or transaction logic.
+
 The Bazaar remains a local, declarative, bounded, content-hashed knowledge
 collection for materials, moves, adapters, aesthetics, algorithms,
 provocations, recipes, and qualification fixtures. Packages are not executable
@@ -66,6 +78,7 @@ boundaries.
 | Public WebMCP boundary | Exactly `fogwood-inspect`, `fogwood-capabilities`, `fogwood-propose`; no page-owned apply tool. | PASS |
 | Public proposal union | Exactly `canvas_ops`, `seeded_composition`, `add_materials`; advertised ungroup/material ID, MIME, canonical-base64, byte, and batch limits match runtime refusal limits. | PASS |
 | Prepared-plan staging | All lowerings/material decoders prepared once; plan frozen before review; exact digest retained. | PASS |
+| Authority seam split | Public WebMCP, read projection, transaction, review, and compatibility callers use narrow named modules; the old import remains a thin façade. | PASS — boundary tests and unchanged public behavior |
 | Human authority | Page-owned Apply/Reject only; stale revision/precondition refusal; no automatic mutation. | PASS |
 | Atomic transaction | One history boundary and `editor.run`; `bailToMark` rollback on partial failure; one-step Undo. | PASS |
 | Material safety | Bounded raster and sanitized SVG; exact-byte SHA-256; no network, scripts, active SVG, or malformed assets. | PASS |
@@ -96,6 +109,8 @@ do not promote an unrun check to PASS.
 | `node scripts/compile-bazaar.mjs --check` | PASS — 7 packages, `sha256:3dcaddef57608136e331a49975f9b176f5c4261180163eadbe6ef471646a596a` |
 | `git diff --check` | PASS |
 | Registry-8 focused tests | PASS — 68/68 runtime, Canvas Protocol, and public surface tests; exact typed-binding and 500-character visible/inspectable-label invariants included |
+| Authority seam boundary tests | PASS — `surface-tools.ts` remains under 80 lines, page and compatibility callers use named seams directly, and the public behavior suite remains green |
+| Bundle seam analysis | PASS — production build contains the full-surface Example corpus only in the active surface chunk because current `fogwood-capabilities` route mode requires it; no Bazaar package/catalog marker or retired gallery copy is present in built JavaScript |
 | Proud-medium blank origin | PASS — fresh `http://localhost:4207/` began with zero shapes, blocks, bindings, assets, regions, and relationships |
 | Proud-medium material review | PASS — real Codex PNG staged with exact provenance before Apply; `/private/tmp/fogwood-proud-material-staged.png` |
 | Proud-medium native composition | PASS — 20 native shapes, 0 blocks, 1 local asset, 16 bindings, 8 typed relationships, and 4 regions; `/private/tmp/fogwood-proud-final-accepted.png` |

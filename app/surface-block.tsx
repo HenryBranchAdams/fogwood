@@ -11,7 +11,7 @@ import { BLOCK_KINDS, BLOCK_TONES } from './fogwood-runtime';
 import {
   createInstrumentControlGesture,
   updateInstrumentControl,
-} from './surface-tools';
+} from './compat/surface-tools';
 
 declare module 'tldraw' {
   interface TLGlobalShapePropsMap {

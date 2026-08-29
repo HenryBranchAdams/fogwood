@@ -73,11 +73,16 @@ test('the acceptance manifest names the autophagy kernel and its three-tool publ
 
 test('the public shell is a blank tldraw surface without product-gallery chrome', async () => {
   const source = await readFile(new URL('../app/surface-app.tsx', import.meta.url), 'utf8');
-  const toolsSource = await readFile(new URL('../app/surface-tools.ts', import.meta.url), 'utf8');
+  const toolsFacade = await readFile(new URL('../app/surface-tools.ts', import.meta.url), 'utf8');
+  const toolsSource = await readFile(new URL('../app/internal/surface-runtime.ts', import.meta.url), 'utf8');
+  const webmcpSeam = await readFile(new URL('../app/webmcp/surface-tools.ts', import.meta.url), 'utf8');
 
   assert.match(source, /<Tldraw\b/);
   assert.match(source, /surface-mark/);
   assert.doesNotMatch(source, /BazaarPanel|empty-invitation|agent-sidebar|ChatGPT surface chat|Export SVG/);
+  assert.match(toolsFacade, /Compatibility façade/);
+  assert.doesNotMatch(toolsFacade, /name: 'fogwood-/);
+  assert.match(webmcpSeam, /public WebMCP assembly seam/);
   assert.deepEqual(
     [...toolsSource.matchAll(/name: '(fogwood-[a-z-]+)'/g)].map((match) => match[1]),
     ['fogwood-inspect', 'fogwood-capabilities', 'fogwood-propose'],
