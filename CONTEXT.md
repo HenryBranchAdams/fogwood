@@ -55,6 +55,14 @@ current canvas. It is not a hidden command or permission.
 shape geometry, stable semantic IDs, relationships, selection, content
 revision, and context token.
 
+For geometry-sensitive work, `fogwood.transform.v1` is the authoritative
+projection. It states local bounds, parent-to-page, local-to-parent and
+local-to-page affine matrices, exact page corners, page AABB, page rotation,
+parent identity, lock ancestry, optional focused group, and a deterministic
+geometry fingerprint. Legacy top-level `x` / `y` remain parent-local and
+`w` / `h` remain a page-space AABB for compatibility; they must not be used to
+reconstruct rotated or nested geometry.
+
 **Capability** — a reusable ability with explicit preconditions, effects,
 preservation promises, and authority class. Availability is advisory; stage
 and Apply recheck exact preconditions.
@@ -123,6 +131,11 @@ persisted, is not receipt evidence, and never grants authority.
   permissions, semantic IDs, targets, or authority.
 - User geometry, locked objects, semantic relationships, and prior variants are
   preserved unless an explicit reviewed operation targets them.
+- Nested movement, same-parent arrangement, preserved variants, and rotated
+  resize retain exact inspected affine geometry in the frozen plan. Apply
+  rechecks shape type, parent, lock ancestry, and transform fingerprint; it
+  never infers geometry from an axis-aligned preview. Cross-parent reparenting
+  and nested rotation changes remain explicit non-goals in this version.
 - Revision memoization permits at most one canonical computation per relevant
   generation. The benchmark fixture uses the supported 5,000-shape inspect
   ceiling; its acceptance threshold is computation count and byte-for-byte

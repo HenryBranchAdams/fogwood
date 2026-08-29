@@ -119,6 +119,20 @@ test('Canvas Protocol preserves spatial meaning in a compact staged diff and res
   assert.equal(next.diff.updates[0].changes[0].fields.x.after, 760);
 });
 
+test('Canvas Protocol separates text reflow from exact geometry review', () => {
+  const mixed = planCanvasOps(baseItems, [{
+    op: 'update', id: 'semantic:idea:source', x: 240, text: 'A longer label may change native text layout',
+  }], pageId);
+  assert.equal(mixed.ok, false);
+  assert.equal(mixed.errors.some((error) => error.code === 'SPLIT_CONTENT_GEOMETRY_UPDATE'), true);
+
+  const contentOnly = planCanvasOps(baseItems, [{
+    op: 'update', id: 'semantic:idea:source', text: 'Content remains separately reviewable', color: 'violet', opacity: 0.7,
+  }], pageId);
+  assert.equal(contentOnly.ok, true, JSON.stringify(contentOnly));
+  assert.equal(contentOnly.plan.steps[0].kind, 'update');
+});
+
 test('Canvas Protocol is bounded and refuses unsafe or ambiguous structure before any page mutation', () => {
   const tooManyOps = Array.from({ length: FOGWOOD_CANVAS_PROTOCOL.max_ops + 1 }, () => ({
     op: 'create', semantic_id: 'too-many', kind: 'rectangle', x: 0, y: 0,

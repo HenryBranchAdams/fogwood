@@ -48,6 +48,15 @@ Every staged action is revision-bound, inspected before review, and rechecked
 before Apply. Accepted matter remains movable, annotatable, connectable,
 branchable, and editable on the canvas.
 
+Geometry-sensitive inspection includes a deterministic
+`fogwood.transform.v1` projection with exact local, parent, and page transforms,
+page corners, bounds, rotation, lock ancestry, focus, and fingerprint. The
+frozen plan uses that projection for nested movement, same-parent rotated
+arrangement, preserved variants, and rotated resize. Apply refuses changed
+type, parent, lock, or geometry before opening the transaction. Cross-parent
+reparenting and changing a nested shape's rotation are intentionally outside
+this first exact-transform slice.
+
 The opaque content revision is memoized per current-page document generation.
 Repeated inspect, capability, and stage reads reuse the exact canonical bytes;
 relevant shape, binding, referenced-asset, page, Undo, Redo, and restore events

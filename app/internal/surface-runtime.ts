@@ -1,4 +1,4 @@
-import { AssetRecordType, PageRecordType, b64Vecs, createShapeId, toRichText } from 'tldraw';
+import { AssetRecordType, Box, PageRecordType, b64Vecs, createShapeId, toRichText } from 'tldraw';
 import type { Editor, TLAsset, TLAssetId, TLPageId, TLParentId, TLShape, TLShapeId } from 'tldraw';
 import {
   BLOCK_KINDS,
@@ -50,9 +50,11 @@ import { buildPreparedCanvasPreview } from '../review/prepared-plan-preview.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { createEditorChangeCapture, createFogwoodChangeLedger, FOGWOOD_CHANGE_STORAGE_KEY } from '../runtime/change-ledger.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
-import { FOGWOOD_SEMANTIC_LOWERERS, searchSemanticLowerers } from '../capabilities/semantic-lowerers.ts';
+import { availableSemanticLowerers, FOGWOOD_SEMANTIC_LOWERERS, searchSemanticLowerers } from '../capabilities/semantic-lowerers.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { createContentRevisionCache } from '../tldraw-adapter/revision-cache.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { createTransformProjection } from '../tldraw-adapter/transform-projection.ts';
 import type { JsonObject } from '@tldraw/utils';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { sha256Hex } from '../fogwood-identities.ts';
@@ -1031,8 +1033,28 @@ export function createInstrumentControlGesture(editor: Editor): InstrumentContro
   };
 }
 
+function transformProjectionForShape(editor: Editor, shape: TLShape): InspectableItem['transform'] {
+  try {
+    const localBounds = editor.getShapeGeometry(shape).bounds;
+    const localToPage = editor.getShapePageTransform(shape);
+    const parentToPage = editor.getShapeParentTransform(shape);
+    const focusedGroupId = editor.getCurrentPageState().focusedGroupId;
+    return createTransformProjection({
+      parent_id: String(shape.parentId),
+      parent_to_page: { a: parentToPage.a, b: parentToPage.b, c: parentToPage.c, d: parentToPage.d, e: parentToPage.e, f: parentToPage.f },
+      local_to_page: { a: localToPage.a, b: localToPage.b, c: localToPage.c, d: localToPage.d, e: localToPage.e, f: localToPage.f },
+      local_bounds: { x: localBounds.x, y: localBounds.y, w: localBounds.w, h: localBounds.h },
+      locked_ancestor: editor.isShapeOrAncestorLocked(shape) && !shape.isLocked,
+      ...(focusedGroupId ? { focused_group_id: String(focusedGroupId) } : {}),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function inspectItem(editor: Editor, shape: TLShape, bindingCount = 0): InspectableItem {
   const bounds = editor.getShapePageBounds(shape);
+  const transform = transformProjectionForShape(editor, shape);
   const meta = fogwoodMeta(shape);
   const base = {
     id: shape.id,
@@ -1050,6 +1072,7 @@ function inspectItem(editor: Editor, shape: TLShape, bindingCount = 0): Inspecta
     semantic_id: meta.semantic_id,
     binding_count: bindingCount,
     meta,
+    ...(transform ? { transform } : {}),
   } satisfies InspectableItem;
   if (shape.type === 'surface-block') {
     const block = shape as Extract<TLShape, { type: 'surface-block' }>;
@@ -1509,6 +1532,7 @@ function createVariantShape(
     y: number;
     lineageSourceId: string;
     parentVariantId?: string;
+    parentId: TLParentId;
     patches?: { text?: string; color?: string; fill?: string };
     provenance?: FogwoodMeta;
   },
@@ -1546,7 +1570,7 @@ function createVariantShape(
   delete clone.index;
   clone.x = input.x;
   clone.y = input.y;
-  clone.parentId = editor.getCurrentPageId();
+  clone.parentId = input.parentId;
   clone.isLocked = false;
   clone.meta = {
     ...(isRecord(source.meta) ? source.meta : {}),
@@ -1705,8 +1729,9 @@ export function applyCanvasOpPlan(
       const id = createVariantShape(editor, {
         sourceId: String(resolveId(step.op.id)),
         semanticId: step.op.semantic_id,
-        x: step.bounds.x,
-        y: step.bounds.y,
+        x: step.local_position.x,
+        y: step.local_position.y,
+        parentId: step.source.parent_id as TLParentId,
         lineageSourceId: step.lineage.lineage_source_id,
         parentVariantId: step.lineage.parent_variant_id,
         ...(compositionId === undefined ? {} : { provenance: { composition_id: compositionId } }),
@@ -1754,8 +1779,7 @@ export function applyCanvasOpPlan(
       editor.updateShapes([{
         id: shape.id,
         type: shape.type,
-        ...(step.op.x === undefined ? {} : { x: step.op.x }),
-        ...(step.op.y === undefined ? {} : { y: step.op.y }),
+        ...(step.local_position === undefined ? {} : { x: step.local_position.x, y: step.local_position.y }),
         ...(step.op.rotation === undefined ? {} : { rotation: step.op.rotation }),
         ...(step.op.opacity === undefined ? {} : { opacity: step.op.opacity }),
         ...(Object.keys(props).length === 0 ? {} : { props }),
@@ -1765,7 +1789,17 @@ export function applyCanvasOpPlan(
     }
 
     if (step.kind === 'resize') {
-      editor.resizeToBounds([resolveId(step.op.id)], step.after);
+      const shape = editor.getShape(resolveId(step.op.id));
+      if (!shape) throw new Error(`Canvas Protocol resize target ${step.op.id} no longer exists.`);
+      editor.resizeShape(shape, step.scale, {
+        initialBounds: new Box(step.target.local_bounds.x, step.target.local_bounds.y, step.target.local_bounds.w, step.target.local_bounds.h),
+        initialShape: shape,
+        initialPageTransform: step.target.local_to_page,
+        scaleOrigin: step.target.page.corners[0],
+        scaleAxisRotation: step.target.page.rotation,
+        isAspectRatioLocked: false,
+        mode: 'scale_shape',
+      });
       continue;
     }
 
@@ -1776,8 +1810,8 @@ export function applyCanvasOpPlan(
         return {
           id: shape.id,
           type: shape.type,
-          x: placement.x,
-          y: placement.y,
+          x: placement.local_x,
+          y: placement.local_y,
           rotation: placement.rotation,
         };
       });
@@ -1838,6 +1872,12 @@ export function applyCanvasOpPlan(
 }
 
 function preflightCanvasOpPlans(editor: Editor, plans: readonly CanvasOpPlan[]) {
+  const retainedTransformMatches = (id: string, type: string, parentId: string, fingerprint: string) => {
+    if (id.startsWith('pending:')) return true;
+    const shape = editor.getShape(id as TLShapeId);
+    if (!shape || shape.type !== type || String(shape.parentId) !== parentId || editor.isShapeOrAncestorLocked(shape)) return false;
+    return transformProjectionForShape(editor, shape)?.fingerprint === fingerprint;
+  };
   for (const plan of plans) {
     for (const step of plan.steps) {
       if (step.kind === 'connect') {
@@ -1855,7 +1895,14 @@ function preflightCanvasOpPlans(editor: Editor, plans: readonly CanvasOpPlan[]) 
       if (step.kind === 'variant') {
         const source = editor.getShape(step.op.id as TLShapeId);
         if (!source || source.type !== step.source.type) return 'The reviewed variant source no longer matches the inspected native shape.';
+        if (!retainedTransformMatches(step.source.id, step.source.type, step.source.parent_id, step.source.transform_fingerprint)) return 'The reviewed variant source type, lock, parent, or transform changed after staging.';
         if (source.type === 'image' && !hasReusableLocalImageAsset(editor, source)) return 'The reviewed image variant source does not have a current device-local asset.';
+      }
+      if (step.kind === 'update' || step.kind === 'resize') {
+        if (!retainedTransformMatches(step.target.id, step.target.type, step.target.parent_id, step.target.transform_fingerprint)) return 'A reviewed target type, lock, parent, or transform changed after staging.';
+      }
+      if (step.kind === 'arrange') {
+        if (step.placements.some((placement) => !retainedTransformMatches(placement.id, placement.type, placement.parent_id, placement.transform_fingerprint))) return 'A reviewed arrangement target type, lock, parent, or transform changed after staging.';
       }
     }
   }
@@ -1993,10 +2040,12 @@ export function prepareProposalPlan(
         actionLowerings.push({ action, canvas: result.plan });
       } else if (action.type === 'page_ops') {
         if (editor.getPages().length >= editor.options.maxPages) throw new Error('The page limit has been reached; remove a page before staging another.');
+        if (editor.getPages().some((page) => page.name === action.operation.name)) throw new Error('A page with that exact name already exists; choose a distinct reviewed name.');
         const id = PageRecordType.createId(`fogwood-${sha256Hex(canonicalSerialize({ semantic_id: action.operation.semantic_id })).slice(0, 24)}`);
         if (editor.getPage(id)) throw new Error('The deterministic page target already exists; inspect again before retrying.');
         actionLowerings.push({ action, page: { op: 'create_and_switch', id, semantic_id: action.operation.semantic_id, name: action.operation.name } });
       } else if (action.type === 'camera_ops') {
+        if (editor.getCameraOptions().isLocked) throw new Error('The camera is locked; unlock it before staging viewport focus.');
         actionLowerings.push({ action, camera: { ...action.operation, inset: action.operation.inset ?? 64 } });
       } else {
         actionLowerings.push({ action });
@@ -2111,6 +2160,8 @@ function executePreparedProposal(editor: Editor, plan: EditorPreparedCanvasPlan)
   for (const entry of plan.action_lowerings) {
     if (entry.page && editor.getPage(entry.page.id)) return { ok: false as const, status: 'ERROR' as const, message: 'The reviewed page target is no longer available.' };
     if (entry.page && editor.getPages().length >= editor.options.maxPages) return { ok: false as const, status: 'ERROR' as const, message: 'The page limit was reached after review; inspect again before retrying.' };
+    if (entry.page && editor.getPages().some((page) => page.name === entry.page?.name)) return { ok: false as const, status: 'ERROR' as const, message: 'The reviewed page name is no longer available; inspect again before retrying.' };
+    if (entry.camera && editor.getCameraOptions().isLocked) return { ok: false as const, status: 'ERROR' as const, message: 'The camera is locked; no viewport change was applied.' };
   }
   const cameraOnly = plan.action_lowerings.length > 0 && plan.action_lowerings.every((entry) => Boolean(entry.camera));
   if (cameraOnly) {
@@ -2333,7 +2384,12 @@ export function registerSurfaceTools(
             ontology_version: FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
             registry_version: FOGWOOD_REGISTRY_VERSION,
             manifests,
-            semantic_lowerers: FOGWOOD_SEMANTIC_LOWERERS,
+            semantic_lowerers: availableSemanticLowerers({
+              readonly: typeof editor.getIsReadonly === 'function' && editor.getIsReadonly(),
+              page_count: editor.getPages().length,
+              max_pages: editor.options.maxPages,
+              camera_locked: editor.getCameraOptions().isLocked,
+            }),
             counts: {
               available: manifests.filter((entry) => entry.availability === 'available').length,
               blocked: manifests.filter((entry) => entry.availability === 'blocked').length,
@@ -2386,7 +2442,12 @@ export function registerSurfaceTools(
         if (value.page_size !== undefined && (typeof value.page_size !== 'number' || !Number.isInteger(value.page_size) || value.page_size < 1 || value.page_size > 20)) return textResult({ status: 'INVALID_INPUT', error: 'page_size must be an integer from 1 to 20.' }, true);
         if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 16)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
         const result = searchCapabilities(value as CapabilitySearchInput);
-        const semanticLowerers = searchSemanticLowerers(typeof value.query === 'string' ? value.query : '');
+        const semanticLowerers = searchSemanticLowerers(typeof value.query === 'string' ? value.query : '').map((manifest) => ({
+          ...manifest,
+          availability: 'requires-live-inspect' as const,
+          availability_reasons: ['Use available mode with the current revision and context token.'],
+          qualification_status: manifest.qualification,
+        }));
         onActivity?.('Fogwood searched capabilities', `${result.results.length} local capability results returned.`);
         return textResult({ ...result, semantic_lowerers: semanticLowerers });
       },

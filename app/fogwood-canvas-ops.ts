@@ -9,6 +9,9 @@
 
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { SEMANTIC_RELATIONSHIP_KINDS, SPATIAL_LIMITS, relationshipSemanticId } from './fogwood-spatial.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { createTransformProjection, pagePointToParentLocal, translateProjectedGeometry, TRANSFORM_EPSILON } from './tldraw-adapter/transform-projection.ts';
+import type { FogwoodTransformProjection } from './tldraw-adapter/transform-projection.ts';
 
 export const FOGWOOD_CANVAS_PROTOCOL = {
   name: 'fogwood-canvas-protocol',
@@ -104,6 +107,7 @@ export type CanvasOpItem = {
   props?: Record<string, unknown>;
   meta?: Record<string, unknown>;
   binding_count?: number;
+  transform?: import('./tldraw-adapter/transform-projection.ts').FogwoodTransformProjection;
 };
 
 export type DrawCanvasOp = {
@@ -254,10 +258,10 @@ export type CanvasOpStep =
   | { kind: 'create'; op: CreateCanvasOp; pending_id: string; bounds: { x: number; y: number; w: number; h: number } }
   | { kind: 'draw'; op: DrawCanvasOp; pending_id: string; bounds: { x: number; y: number; w: number; h: number } }
   | { kind: 'connect'; op: ConnectCanvasOp; pending_id: string; from: { id: string; type: string; semantic_id?: string }; to: { id: string; type: string; semantic_id?: string }; bounds: { x: number; y: number; w: number; h: number } }
-  | { kind: 'variant'; op: VariantCanvasOp; pending_id: string; source: { id: string; type: string; semantic_id: string }; bounds: { x: number; y: number; w: number; h: number }; lineage: { variant_id: string; lineage_source_id: string; parent_variant_id?: string } }
-  | { kind: 'update'; op: UpdateCanvasOp; fields: DiffFields }
-  | { kind: 'resize'; op: ResizeCanvasOp; before: { x: number; y: number; w: number; h: number }; after: { x: number; y: number; w: number; h: number } }
-  | { kind: 'arrange'; op: AlignCanvasOp | DistributeCanvasOp | StackCanvasOp | PackCanvasOp; placements: Array<{ id: string; x: number; y: number; rotation: number }> }
+  | { kind: 'variant'; op: VariantCanvasOp; pending_id: string; source: { id: string; type: string; semantic_id: string; transform_fingerprint: string; parent_id: string }; local_position: { x: number; y: number }; bounds: { x: number; y: number; w: number; h: number }; lineage: { variant_id: string; lineage_source_id: string; parent_variant_id?: string } }
+  | { kind: 'update'; op: UpdateCanvasOp; fields: DiffFields; target: PreparedTransformTarget; local_position?: { x: number; y: number }; after_page_geometry: PageGeometry }
+  | { kind: 'resize'; op: ResizeCanvasOp; target: PreparedTransformTarget; scale: { x: number; y: number }; before: PageGeometry; after: PageGeometry }
+  | { kind: 'arrange'; op: AlignCanvasOp | DistributeCanvasOp | StackCanvasOp | PackCanvasOp; placements: Array<{ id: string; type: string; parent_id: string; transform_fingerprint: string; local_x: number; local_y: number; rotation: number; before: PageGeometry; after: PageGeometry }> }
   | { kind: 'group'; op: GroupCanvasOp; bounds: { x: number; y: number; w: number; h: number } }
   | { kind: 'ungroup'; op: UngroupCanvasOp }
   | { kind: 'reorder'; op: ReorderCanvasOp }
@@ -302,6 +306,25 @@ const MAX_DRAW_DELTA = FOGWOOD_CANVAS_PROTOCOL.max_draw_delta;
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$/u;
 const CONNECT_TARGET_TYPES = new Set(['geo', 'note', 'text', 'frame', 'image', 'draw', 'surface-block']);
 const VARIANT_TARGET_TYPES = new Set(['geo', 'note', 'text', 'frame', 'image', 'draw']);
+const TRANSFORM_TARGET_TYPES = new Set(['geo', 'text', 'frame', 'image', 'draw', 'arrow']);
+
+export type PageGeometry = Readonly<{
+  origin: Readonly<{ x: number; y: number }>;
+  bounds: Readonly<{ x: number; y: number; w: number; h: number }>;
+  corners: readonly Readonly<{ x: number; y: number }>[];
+  rotation: number;
+}>;
+
+export type PreparedTransformTarget = Readonly<{
+  id: string;
+  type: string;
+  parent_id: string;
+  transform_fingerprint: string;
+  local_to_page: import('./tldraw-adapter/transform-projection.ts').TransformMatrix;
+  local_bounds: Readonly<{ x: number; y: number; w: number; h: number }>;
+  local_position: Readonly<{ x: number; y: number }>;
+  page: PageGeometry;
+}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -331,6 +354,57 @@ function cloneItem(item: CanvasOpItem): CanvasOpItem {
     rotation: finite(item.rotation) ? item.rotation : 0,
     opacity: finite(item.opacity) ? item.opacity : 1,
   };
+}
+
+function projectionForItem(item: CanvasOpItem, pageId: string): FogwoodTransformProjection | undefined {
+  if (item.transform?.schema === 'fogwood.transform.v1') return item.transform;
+  if (item.parent_id !== pageId) return undefined;
+  const rotation = item.rotation ?? 0;
+  // Legacy callers only expose axis-aligned page bounds. Never synthesize an
+  // exact transform for rotated geometry from those lossy fields.
+  if (Math.abs(rotation) > TRANSFORM_EPSILON) return undefined;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  try {
+    return createTransformProjection({
+      parent_id: pageId,
+      parent_to_page: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+      local_to_page: { a: cos, b: sin, c: -sin, d: cos, e: item.x, f: item.y },
+      local_bounds: { x: 0, y: 0, w: item.w, h: item.h },
+      locked_ancestor: false,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function pageGeometry(projection: FogwoodTransformProjection): PageGeometry {
+  return {
+    origin: { ...projection.page_origin },
+    bounds: { ...projection.page_bounds },
+    corners: projection.page_corners.map((point) => ({ ...point })),
+    rotation: projection.page_rotation,
+  };
+}
+
+function preparedTransformTarget(item: CanvasOpItem, projection: FogwoodTransformProjection): PreparedTransformTarget {
+  return {
+    id: item.id,
+    type: item.type,
+    parent_id: projection.parent_id,
+    transform_fingerprint: projection.fingerprint,
+    local_to_page: { ...projection.local_to_page },
+    local_bounds: { ...projection.local_bounds },
+    local_position: { x: item.x, y: item.y },
+    page: pageGeometry(projection),
+  };
+}
+
+function requireTransform(item: CanvasOpItem | undefined, pageId: string, path: string, errors: CanvasOpError[]) {
+  if (!item) return undefined;
+  const projection = projectionForItem(item, pageId);
+  if (!projection) addError(errors, 'TRANSFORM_REQUIRED', 'This target does not expose a bounded invertible Fogwood transform projection.', path);
+  return projection;
 }
 
 function ancestors(item: CanvasOpItem, byId: Map<string, CanvasOpItem>) {
@@ -436,6 +510,7 @@ function normalizeIds(
   childrenByParent: ReadonlyMap<string, readonly CanvasOpItem[]>,
   pageId: string,
   errors: CanvasOpError[],
+  allowNested = false,
 ) {
   if (!Array.isArray(raw) || raw.length < min || raw.length > max) {
     addError(errors, 'INVALID_TARGET_COUNT', `ids must contain ${min}-${max} current-page shape IDs.`, path);
@@ -460,7 +535,7 @@ function normalizeIds(
     if (hasLockedDescendant(item, childrenByParent)) {
       addError(errors, 'LOCKED_DESCENDANT', 'Container operations cannot indirectly change a locked descendant.', `${path}[${index}]`);
     }
-    if (item.parent_id !== pageId) {
+    if (!allowNested && item.parent_id !== pageId) {
       addError(errors, 'NESTED_TARGET', 'Canvas Protocol v1 layout and structural operations accept direct page children only.', `${path}[${index}]`);
     }
     return [item];
@@ -1023,15 +1098,24 @@ export function planCanvasOps(
       if (source) {
         if (source.id.startsWith('pending:')) addError(errors, 'PENDING_VARIANT_SOURCE', 'Canvas Protocol v2 variants preserve existing page matter, not matter created earlier in the same action.', `${path}.id`);
         if (effectivelyLocked(source, projected)) addError(errors, 'LOCKED_TARGET', 'Locked shapes and shapes under locked ancestors cannot be used as variant sources.', `${path}.id`);
-        if (source.parent_id !== pageId) addError(errors, 'NESTED_TARGET', 'Variant sources must be direct children of the current page.', `${path}.id`);
         if (!VARIANT_TARGET_TYPES.has(source.type)) addError(errors, 'UNSUPPORTED_VARIANT_TARGET', 'Variants support bounded native shapes and local images, not blocks, arrows, groups, or unknown shapes.', `${path}.id`);
-        if (Math.abs(source.rotation ?? 0) > 1e-9) addError(errors, 'ROTATED_VARIANT_TARGET', 'Canvas Protocol v2 variants require an unrotated source because inspected bounds are axis-aligned.', `${path}.id`);
         if (!source.semantic_id || !STABLE_ID.test(source.semantic_id) || source.meta?.semantic_id_source !== 'stable') {
           addError(errors, 'UNSTABLE_VARIANT_SOURCE', 'A preserved variant requires one source with a stable semantic id.', `${path}.id`);
         }
       }
       if (semantic_id && source && source.semantic_id && finite(offsetX) && finite(offsetY)) {
-        const bounds = { x: source.x + offsetX, y: source.y + offsetY, w: source.w, h: source.h };
+        const projection = requireTransform(source, pageId, `${path}.id`, errors);
+        if (!projection) return;
+        const translated = translateProjectedGeometry(projection, offsetX, offsetY);
+        const localPosition = pagePointToParentLocal(projection, translated.page_origin);
+        const translatedProjection = createTransformProjection({
+          parent_id: projection.parent_id,
+          parent_to_page: projection.parent_to_page,
+          local_to_page: { ...projection.local_to_page, e: translated.page_origin.x, f: translated.page_origin.y },
+          local_bounds: projection.local_bounds,
+          locked_ancestor: false,
+        });
+        const bounds = translated.page_bounds;
         requireFootprint(bounds, path, errors);
         const op: VariantCanvasOp = { op: 'variant', id: source.id, semantic_id, offset_x: offsetX, offset_y: offsetY };
         const id = pendingId(semantic_id);
@@ -1046,9 +1130,10 @@ export function planCanvasOps(
           projected.set(id, {
             ...cloneItem(source),
             id,
-            x: bounds.x,
-            y: bounds.y,
-            parent_id: pageId,
+            x: localPosition.x,
+            y: localPosition.y,
+            parent_id: source.parent_id,
+            transform: translatedProjection,
             semantic_id,
             is_locked: false,
             index: undefined,
@@ -1061,7 +1146,8 @@ export function planCanvasOps(
             kind: 'variant',
             op,
             pending_id: id,
-            source: { id: source.id, type: source.type, semantic_id: source.semantic_id },
+            source: { id: source.id, type: source.type, semantic_id: source.semantic_id, transform_fingerprint: projection.fingerprint, parent_id: projection.parent_id },
+            local_position: { x: localPosition.x, y: localPosition.y },
             bounds,
             lineage,
           });
@@ -1083,33 +1169,38 @@ export function planCanvasOps(
       if (!hasOnlyKeys(raw, ['op', 'id', 'x', 'y', 'rotation', 'opacity', 'text', 'color', 'fill'])) {
         addError(errors, 'UNKNOWN_FIELD', 'update contains an unknown field.', path);
       }
+      if (raw.text !== undefined && (raw.x !== undefined || raw.y !== undefined || raw.rotation !== undefined)) {
+        addError(
+          errors,
+          'SPLIT_CONTENT_GEOMETRY_UPDATE',
+          'Text reflow and exact geometry changes require separate reviewed updates so the transform preview stays truthful.',
+          path,
+        );
+      }
       const resolvedId = resolveTargetId(raw.id, `${path}.id`, projected, semanticToId, errors);
       const item = resolvedId ? projected.get(resolvedId) : undefined;
       if (item && effectivelyLocked(item, projected)) addError(errors, 'LOCKED_TARGET', 'Locked shapes and shapes under locked ancestors cannot be changed.', `${path}.id`);
       if (item && hasLockedDescendant(item, childrenByParent)) addError(errors, 'LOCKED_DESCENDANT', 'A container with locked descendants cannot be changed.', `${path}.id`);
-      if (item && item.parent_id !== pageId) addError(errors, 'NESTED_TARGET', 'Canvas Protocol v1 update accepts direct page children only.', `${path}.id`);
+      const projection = requireTransform(item, pageId, `${path}.id`, errors);
+      const target = item && projection ? preparedTransformTarget(item, projection) : undefined;
       const fields: DiffFields = {};
       const op: UpdateCanvasOp = { op: 'update', id: resolvedId };
+      const nextPageOrigin = projection ? { ...projection.page_origin } : undefined;
       for (const key of ['x', 'y'] as const) {
         if (raw[key] === undefined) continue;
         if (!inRange(raw[key], -MAX_COORDINATE, MAX_COORDINATE)) addError(errors, 'INVALID_NUMBER', `${key} must be a bounded finite number.`, `${path}.${key}`);
         else if (item) {
           op[key] = raw[key];
-          fields[key] = { before: item[key], after: raw[key] };
-          item[key] = raw[key];
+          fields[key] = { before: projection?.page_origin[key] ?? item[key], after: raw[key] };
+          if (nextPageOrigin) nextPageOrigin[key] = raw[key];
         }
       }
       if (raw.rotation !== undefined) {
         if (!inRange(raw.rotation, -Math.PI * 4, Math.PI * 4)) addError(errors, 'INVALID_NUMBER', 'rotation must be a bounded finite number.', `${path}.rotation`);
         else if (item) {
           const beforeRotation = item.rotation ?? 0;
-          if (Math.abs(beforeRotation) > 1e-9 && raw.rotation !== beforeRotation) {
-            addError(
-              errors,
-              'ROTATED_UPDATE_TARGET',
-              'Canvas Protocol v1 cannot safely change the rotation of an already rotated shape from axis-aligned inspected bounds.',
-              `${path}.rotation`,
-            );
+          if (item.parent_id !== pageId && raw.rotation !== beforeRotation) {
+            addError(errors, 'NESTED_ROTATION_TARGET', 'Exact rotation changes currently require a direct-page shape; nested style and movement remain supported.', `${path}.rotation`);
           } else {
             op.rotation = raw.rotation;
             fields.rotation = { before: beforeRotation, after: raw.rotation };
@@ -1157,9 +1248,29 @@ export function planCanvasOps(
         addError(errors, 'NO_OP', 'update does not change the target.', path);
       }
       if (item && Object.keys(fields).length > 0) {
-        requireFootprint(item, path, errors);
+        let afterProjection = projection;
+        let localPosition: { x: number; y: number } | undefined;
+        if (projection && nextPageOrigin) {
+          localPosition = pagePointToParentLocal(projection, nextPageOrigin);
+          const rotation = op.rotation ?? item.rotation ?? 0;
+          const cos = Math.cos(rotation);
+          const sin = Math.sin(rotation);
+          afterProjection = createTransformProjection({
+            parent_id: projection.parent_id,
+            parent_to_page: projection.parent_to_page,
+            local_to_page: item.parent_id === pageId
+              ? { a: cos, b: sin, c: -sin, d: cos, e: nextPageOrigin.x, f: nextPageOrigin.y }
+              : { ...projection.local_to_page, e: nextPageOrigin.x, f: nextPageOrigin.y },
+            local_bounds: projection.local_bounds,
+            locked_ancestor: projection.locked_ancestor,
+          });
+          item.x = localPosition.x;
+          item.y = localPosition.y;
+          item.transform = afterProjection;
+        }
+        requireFootprint(afterProjection?.page_bounds ?? item, path, errors);
         normalized.push(op);
-        steps.push({ kind: 'update', op, fields });
+        if (target && afterProjection) steps.push({ kind: 'update', op, fields, target, ...(localPosition ? { local_position: localPosition } : {}), after_page_geometry: pageGeometry(afterProjection) });
         updates.push({ ids: [item.id], fields: Object.keys(fields), changes: [{ id: item.id, fields }] });
       }
       return;
@@ -1171,28 +1282,47 @@ export function planCanvasOps(
       const item = resolvedId ? projected.get(resolvedId) : undefined;
       if (item && effectivelyLocked(item, projected)) addError(errors, 'LOCKED_TARGET', 'Locked shapes and shapes under locked ancestors cannot be resized.', `${path}.id`);
       if (item && hasLockedDescendant(item, childrenByParent)) addError(errors, 'LOCKED_DESCENDANT', 'A container with locked descendants cannot be resized.', `${path}.id`);
-      if (item && item.parent_id !== pageId) addError(errors, 'NESTED_TARGET', 'Canvas Protocol v1 resize accepts direct page children only.', `${path}.id`);
       if (item && (item.type === 'note' || item.type === 'group')) {
         addError(errors, 'UNSUPPORTED_RESIZE_TARGET', 'Canvas Protocol v1 does not resize note or group shapes.', `${path}.id`);
       }
-      if (item) requireUnrotated([item], `${path}.id`, errors);
+      if (item && !TRANSFORM_TARGET_TYPES.has(item.type)) {
+        addError(errors, 'UNSUPPORTED_RESIZE_TARGET', 'This native shape type does not have an exact bounded Fogwood resize lowering.', `${path}.id`);
+      }
+      const projection = requireTransform(item, pageId, `${path}.id`, errors);
+      const sourceHasArea = Boolean(
+        projection
+        && projection.local_bounds.w > TRANSFORM_EPSILON
+        && projection.local_bounds.h > TRANSFORM_EPSILON,
+      );
+      if (projection && !sourceHasArea) {
+        addError(errors, 'UNSUPPORTED_SOURCE_DIMENSION', 'Resize requires source geometry with non-zero local width and height.', `${path}.id`);
+      }
       if (!inRange(raw.w, 16, MAX_DIMENSION) || !inRange(raw.h, 16, MAX_DIMENSION)) {
         addError(errors, 'INVALID_DIMENSION', `resize w and h must be from 16 to ${MAX_DIMENSION}.`, path);
       }
-      if (item && finite(raw.w) && finite(raw.h)) {
-        if (item.w === raw.w && item.h === raw.h) addError(errors, 'NO_OP', 'resize does not change the target.', path);
+      if (item && projection && sourceHasArea && finite(raw.w) && finite(raw.h)) {
+        if (projection.local_bounds.w === raw.w && projection.local_bounds.h === raw.h) addError(errors, 'NO_OP', 'resize does not change the target.', path);
         const op: ResizeCanvasOp = { op: 'resize', id: item.id, w: raw.w, h: raw.h };
-        const before = { x: item.x, y: item.y, w: item.w, h: item.h };
-        const after = { x: item.x, y: item.y, w: raw.w, h: raw.h };
-        requireFootprint(after, path, errors);
-        item.w = raw.w;
-        item.h = raw.h;
+        const target = preparedTransformTarget(item, projection);
+        const afterProjection = createTransformProjection({
+          parent_id: projection.parent_id,
+          parent_to_page: projection.parent_to_page,
+          local_to_page: projection.local_to_page,
+          local_bounds: { ...projection.local_bounds, w: raw.w, h: raw.h },
+          locked_ancestor: projection.locked_ancestor,
+        });
+        const before = pageGeometry(projection);
+        const after = pageGeometry(afterProjection);
+        requireFootprint(after.bounds, path, errors);
+        item.w = after.bounds.w;
+        item.h = after.bounds.h;
+        item.transform = afterProjection;
         normalized.push(op);
-        steps.push({ kind: 'resize', op, before, after });
+        steps.push({ kind: 'resize', op, target, scale: { x: raw.w / projection.local_bounds.w, y: raw.h / projection.local_bounds.h }, before, after });
         updates.push({
           ids: [item.id],
           fields: ['w', 'h'],
-          changes: [{ id: item.id, fields: { w: { before: before.w, after: raw.w }, h: { before: before.h, after: raw.h } } }],
+          changes: [{ id: item.id, fields: { w: { before: projection.local_bounds.w, after: raw.w }, h: { before: projection.local_bounds.h, after: raw.h }, page_geometry: { before, after } } }],
         });
       }
       return;
@@ -1208,9 +1338,12 @@ export function planCanvasOps(
             : ['op', 'ids', 'axis'];
       if (!hasOnlyKeys(raw, keys)) addError(errors, 'UNKNOWN_FIELD', `${raw.op} contains an unknown field.`, path);
       const min = raw.op === 'distribute' ? 3 : 2;
-      const items = normalizeIds(raw.ids, `${path}.ids`, min, FOGWOOD_CANVAS_PROTOCOL.max_targets_per_op, projected, semanticToId, childrenByParent, pageId, errors);
+      const items = normalizeIds(raw.ids, `${path}.ids`, min, FOGWOOD_CANVAS_PROTOCOL.max_targets_per_op, projected, semanticToId, childrenByParent, pageId, errors, true);
       requireSameParent(items, `${path}.ids`, errors);
-      requireUnrotated(items, `${path}.ids`, errors);
+      const projections = new Map(items.flatMap((item, index) => {
+        const projection = requireTransform(item, pageId, `${path}.ids[${index}]`, errors);
+        return projection ? [[item.id, projection] as const] : [];
+      }));
       let op: AlignCanvasOp | DistributeCanvasOp | StackCanvasOp | PackCanvasOp | undefined;
       if (raw.op === 'align') {
         if (!ALIGN_AXES.includes(raw.axis as AlignAxis)) addError(errors, 'INVALID_AXIS', 'Unknown align axis.', `${path}.axis`);
@@ -1232,10 +1365,34 @@ export function planCanvasOps(
         if (raw.gap === undefined || finite(raw.gap)) op = { op: 'pack', ids: items.map((item) => item.id), ...(raw.gap === undefined ? {} : { gap: raw.gap }) };
       }
       if (op && items.length >= min) {
-        const placements = layoutPlacements(op, items);
+        const layoutItems = items.map((item) => {
+          const bounds = projections.get(item.id)?.page_bounds;
+          return bounds ? { ...item, x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h } : item;
+        });
+        const pagePlacements = layoutPlacements(op, layoutItems);
+        const placements = pagePlacements.flatMap((placement) => {
+          const item = projected.get(placement.id)!;
+          const projection = projections.get(placement.id);
+          if (!projection) return [];
+          const dx = placement.x - projection.page_bounds.x;
+          const dy = placement.y - projection.page_bounds.y;
+          const translated = translateProjectedGeometry(projection, dx, dy);
+          const local = pagePointToParentLocal(projection, translated.page_origin);
+          return [{
+            id: item.id,
+            type: item.type,
+            parent_id: projection.parent_id,
+            transform_fingerprint: projection.fingerprint,
+            local_x: local.x,
+            local_y: local.y,
+            rotation: item.rotation ?? 0,
+            before: pageGeometry(projection),
+            after: { origin: translated.page_origin, bounds: translated.page_bounds, corners: translated.page_corners, rotation: projection.page_rotation },
+          }];
+        });
         const exceedsCoordinateLimit = placements.some((placement) =>
-          !inRange(placement.x, -MAX_COORDINATE, MAX_COORDINATE)
-          || !inRange(placement.y, -MAX_COORDINATE, MAX_COORDINATE));
+          !inRange(placement.after.bounds.x, -MAX_COORDINATE, MAX_COORDINATE)
+          || !inRange(placement.after.bounds.y, -MAX_COORDINATE, MAX_COORDINATE));
         if (exceedsCoordinateLimit) {
           addError(
             errors,
@@ -1244,10 +1401,7 @@ export function planCanvasOps(
             path,
           );
         }
-        const exceedsFootprintLimit = placements.some((placement) => {
-          const item = projected.get(placement.id)!;
-          return !footprintWithinBounds({ ...placement, w: item.w, h: item.h });
-        });
+        const exceedsFootprintLimit = placements.some((placement) => !footprintWithinBounds(placement.after.bounds));
         if (exceedsFootprintLimit) {
           addError(errors, 'FOOTPRINT_LIMIT', `Computed ${raw.op} shape footprints must stay within ±${MAX_COORDINATE} page coordinates.`, path);
         }
@@ -1256,12 +1410,19 @@ export function planCanvasOps(
         }
         const changes = placements.flatMap((placement) => {
           const item = projected.get(placement.id)!;
-          const before = { x: item.x, y: item.y, rotation: item.rotation ?? 0 };
-          const after = { x: placement.x, y: placement.y, rotation: placement.rotation };
+          const before = { x: placement.before.origin.x, y: placement.before.origin.y, rotation: placement.before.rotation };
+          const after = { x: placement.after.origin.x, y: placement.after.origin.y, rotation: placement.after.rotation };
           if (before.x === after.x && before.y === after.y && before.rotation === after.rotation) return [];
-          item.x = after.x;
-          item.y = after.y;
-          item.rotation = after.rotation;
+          item.x = placement.local_x;
+          item.y = placement.local_y;
+          const projection = projections.get(item.id)!;
+          item.transform = createTransformProjection({
+            parent_id: projection.parent_id,
+            parent_to_page: projection.parent_to_page,
+            local_to_page: { ...projection.local_to_page, e: placement.after.origin.x, f: placement.after.origin.y },
+            local_bounds: projection.local_bounds,
+            locked_ancestor: projection.locked_ancestor,
+          });
           return [{ id: item.id, before, after }];
         });
         if (changes.length === 0) addError(errors, 'NO_OP', `${raw.op} does not move any target.`, path);

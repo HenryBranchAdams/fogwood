@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   FOGWOOD_FULL_SURFACE_VERSION,
   FOGWOOD_FULL_SURFACE_ROUTE_IDENTITY,
+  FULL_SURFACE_COVERAGE,
   FULL_SURFACE_ADAPTERS,
   FULL_SURFACE_ROUTES,
   compileFullSurfaceRequest,
@@ -20,6 +21,18 @@ const FACTS = Object.freeze({
   locked_selection_count: 0,
   locked_page_item_count: 0,
   readonly: false,
+});
+
+test('the per-example evidence matrix keeps search, routing, local, host, stage, and success claims separate', () => {
+  assert.equal(FULL_SURFACE_COVERAGE.length, 213);
+  assert.equal(new Set(FULL_SURFACE_COVERAGE.map((row) => row.example_id)).size, 213);
+  assert.equal(FULL_SURFACE_COVERAGE.every((row) => row.searchable && row.routable && row.primitives.length > 0), true);
+  assert.equal(FULL_SURFACE_COVERAGE.filter((row) => row.locally_equivalent).length, 5);
+  assert.equal(FULL_SURFACE_COVERAGE.filter((row) => row.staged).length, 5);
+  assert.equal(FULL_SURFACE_COVERAGE.filter((row) => row.successful).length, 5);
+  assert.equal(FULL_SURFACE_COVERAGE.filter((row) => row.host_ready).length, 183);
+  assert.equal(Object.isFrozen(FULL_SURFACE_COVERAGE), true);
+  assert.equal(Object.isFrozen(FULL_SURFACE_COVERAGE[0]), true);
 });
 
 test('the full-surface compiler owns one exact callable route for every pinned example', () => {
@@ -44,7 +57,7 @@ test('the full-surface compiler owns one exact callable route for every pinned e
         FULL_SURFACE_ROUTES.filter((route) => route.fidelity === fidelity).length,
       ]),
     ),
-    { exact: 3, 'bounded-native-equivalent': 180, 'host-mediated': 30 },
+    { exact: 5, 'bounded-native-equivalent': 178, 'host-mediated': 30 },
   );
   assert.equal(
     FULL_SURFACE_ROUTES.every((route) =>
@@ -57,6 +70,21 @@ test('the full-surface compiler owns one exact callable route for every pinned e
     route_matrix_fingerprint: 'ffacafa3',
   });
   assert.equal(Object.isFrozen(FOGWOOD_FULL_SURFACE_ROUTE_IDENTITY), true);
+});
+
+test('installed page and camera lowerers are exact proposal routes rather than generic canvas projections', () => {
+  const page = getFullSurfaceRoute('tldraw-example.configuration.disable-pages');
+  const camera = getFullSurfaceRoute('tldraw-example.configuration.camera-options');
+  assert.deepEqual([page.fidelity, page.next_step, page.lowering.capability_ids], [
+    'exact',
+    { kind: 'propose', tool: 'fogwood-propose', action_type: 'page_ops' },
+    ['page.lifecycle@1'],
+  ]);
+  assert.deepEqual([camera.fidelity, camera.next_step, camera.lowering.capability_ids], [
+    'exact',
+    { kind: 'propose', tool: 'fogwood-propose', action_type: 'camera_ops' },
+    ['camera.focus-bounds@1'],
+  ]);
 });
 
 test('every source path can dynamically select its own exact route', () => {

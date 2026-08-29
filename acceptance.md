@@ -1,8 +1,7 @@
 # Fogwood acceptance manifest
 
-Status: IN PROGRESS — canonicalization and issues #1–#7 are locally qualified;
-exact nested/rotated transforms (#8), independent
-integrated verification, and a final exact-commit deployment remain. Sites
+Status: READY FOR RELEASE — canonicalization and issues #1–#8 are locally and
+independently qualified; a final exact-commit deployment and hosted recheck remain. Sites
 version 13 is the last deployed baseline and does not include this issue phase.
 
 This is the one authoritative acceptance manifest. The current phase simplifies
@@ -63,13 +62,14 @@ Dead dashboard-era product code removed in this phase:
 - `tests/fogwood-snapshot.test.mjs`
 - their retired gallery, starter, chat, and snapshot CSS selector families
 
-The current registry-8 runtime is authoritative on GitHub `main` and in Sites
-version 13. It passed the frozen local check matrix, rendered local and hosted
-Browser proof, a harmless hosted WebMCP inspect call, and the independent
-anti-dashboard verifier recorded below. One live Codex image-generation
-artifact passed the constrained material bridge. Other external providers and
-direct conversation inventory remain separate, explicitly unqualified
-boundaries.
+The last released registry-8 baseline is authoritative on GitHub `main` and in
+Sites version 13. The issue #1–#8 candidate described above is still local and
+must not inherit that hosted qualification: it requires an exact commit,
+independent recheck, deployment, and fresh hosted verification. Version 13's
+live Codex image-generation artifact remains evidence for the constrained
+material bridge only; it is not evidence that this newer transform candidate
+is deployed. Other external providers and direct conversation inventory remain
+separate, explicitly unqualified boundaries.
 
 ## Acceptance matrix — current phase
 
@@ -80,6 +80,7 @@ boundaries.
 | Public proposal union | Five closed semantic families: native, seeded, materials, page lifecycle, and camera focus; schemas share the versioned lowerer manifests. | PASS — local #6 |
 | Semantic lowerer extension | `fogwood.semantic-lowerer.v1`, ADR 0006, and the 213-route coverage matrix distinguish addressing from local/host/stage/success evidence. | PASS — page and camera fixtures plus Browser proof |
 | Revision memoization | Canonical content revision computes at most once per relevant current-page generation; document changes invalidate while camera/selection state does not; cache remains advisory and non-authoritative. | PASS — issue #7 fixtures, 5,000-shape benchmark, rendered Apply/Undo proof |
+| Exact tldraw transforms | Inspect retains local/parent/page affine geometry, exact corners, bounds, rotation, lock/focus context, and fingerprint; frozen moves, rotated resize, variants, and same-parent arrangement consume it without AABB reconstruction. | PASS — issue #8 pure/adversarial/public tests and rendered human-rotation → agent-response proof |
 | Prepared-plan staging | All lowerings/material decoders prepared once; plan frozen before review; exact digest retained. | PASS |
 | Authority seam split | Public WebMCP, read projection, transaction, review, and compatibility callers use narrow named modules; the old import remains a thin façade. | PASS — boundary tests and unchanged public behavior |
 | Human authority | Page-owned Apply/Reject only; stale revision/precondition refusal; no automatic mutation. | PASS |
@@ -90,13 +91,13 @@ boundaries.
 | 213-example vocabulary | 213/213 local addressing/knowledge records; no claim of 213 runtime tools or upstream execution. | PASS |
 | Native medium contract | Registry 8 exposes advisory material-to-native guidance; `canvas_ops` preserves composition/region/role/rotation/opacity metadata and typed relationship identity. | PASS — focused tests and rendered WebMCP proof |
 | Browser rendering | Fresh blank canvas, spatial composition, proposal review, Apply/Reject, one-step Undo, reload persistence, no dashboard furniture. | PASS — current local origin |
-| Page registration | Current origin and exact registered page tools. | PASS — `http://localhost:4207/`, three tools |
+| Page registration | Current origin and exact registered page tools. | PASS — `http://localhost:4211/`, three tools |
 | Browser / host exposure | Current host inventory of page tools. | PASS — in-app Browser WebMCP inventory |
 | Conversation inventory | Direct top-level conversation tool inventory, separate from Browser. | NOT EXPOSED DIRECTLY — Browser-mediated tools only |
 | Harmless WebMCP call | Successful inspect/capabilities/propose call with no unauthorized mutation. | PASS |
-| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | PASS — GitHub/Sites source `main` and Sites version 13 use runtime commit `df3373a0ed036a4e3421729ec3f7e0579d571d09`; deployment succeeded at the canonical URL |
+| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | PENDING — Sites version 13 is the prior `df3373a0ed036a4e3421729ec3f7e0579d571d09` baseline, not this candidate |
 | Live Codex artifact bridge | Real externally generated material stages with exact provenance, applies once, undoes once, and persists after reload. | PASS — Codex PNG `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4` |
-| Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS — no remaining P1/P2; supplied desktop and mobile evidence pass the anti-dashboard bar |
+| Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS FOR LOCAL CANDIDATE — replacement verifier confirmed 254/254 tests, all release checks, exact-transform fail-closed repairs, and no remaining P1/P2; hosted/deployed evidence remains separate |
 
 ## Evidence ledger — current phase
 
@@ -109,7 +110,9 @@ do not promote an unrun check to PASS.
 | Issue #6 Browser/WebMCP | PASS — `http://localhost:4211/`; exactly three tools; inspect reports two semantic lowerers; page proposal staged/rejected without revision change, then applied and one-step undone to the exact revision; camera proposal reviewed/applied with unchanged content revision and no history; no browser warnings/errors; `/private/tmp/fogwood-issue6-semantic-lowerers.png` |
 | Issue #7 local cache matrix | PASS — exact canonical equality; one computation per generation across repeated inspect/capabilities/stage; same-turn shape, binding, referenced asset, page switch, Undo/Redo, persistence restore, and history-reset invalidation; camera/viewport/selection/hover/editing non-invalidation; listener cleanup; 5,000-shape fixture and 100 repeated reads. Threshold is computation count, not wall time. |
 | Issue #7 Browser/WebMCP | PASS — `http://localhost:4211/`; repeated inspect and capabilities held generation/computations at `0/1`; from a settled baseline camera Apply held `1/2` and the exact content revision; native Apply changed the revision and invalidated; one Undo restored the exact prior revision; no browser warnings/errors; `/private/tmp/fogwood-issue7-revision-cache.jpg` |
-| `npm test` | PASS — 238/238; pretest compiler check PASS |
+| Issue #8 exact-transform local matrix | PASS — pure affine round-trip, deterministic fingerprint/focus separation, finite/singular bounds, nested move/style/content separation, direct rotation, rotated resize, nested preserved variant, same-parent rotated arrangement, legacy fail-closed, lock/parent/type/fingerprint preflight, exact preview corners, Apply/Reject/Undo, and stale-state fixtures |
+| Issue #8 Browser/WebMCP | PASS — `http://localhost:4211/`; tldraw's native UI rotated a reviewed group to 15° and then 30°; inspect exposed exact parent/local/page matrices; the agent staged a nested page-origin move; Apply reached the exact expected origin; one Undo restored the exact prior origin and content revision; Redo plus reload retained the exact accepted revision; a later nested rotated resize produced exact local bounds `220×110` while preserving page origin and 30° rotation; a parent rotation after Stage produced a disabled stale review with no agent mutation; three tools only and no warnings/errors. Preview `/private/tmp/fogwood-issue8-transform-preview.jpg`; applied desktop `/private/tmp/fogwood-issue8-transform-desktop.jpg`; 390x844 responsive capture `/private/tmp/fogwood-issue8-transform-mobile.jpg` with body client/scroll width 390. |
+| `npm test` | PASS — 254/254; pretest compiler check PASS |
 | `npx tsc --noEmit` | PASS |
 | `npm run lint` | PASS — no warnings |
 | `npm run build` | PASS — only the known >500 kB chunk and vinext route-classification warnings |
@@ -137,15 +140,15 @@ do not promote an unrun check to PASS.
 | WebMCP host exposure | PASS — in-app Browser returned the same three page tools and their current schemas |
 | Harmless successful WebMCP call | PASS — `fogwood-inspect`, `fogwood-capabilities` available/plan, and stage-only `fogwood-propose`; page Apply remained a separate human action |
 | Direct conversation inventory | NOT EXPOSED DIRECTLY — this session reached Fogwood only through the in-app Browser WebMCP bridge |
-| Current hosted page registration | PASS — exactly `fogwood-inspect`, `fogwood-capabilities`, and `fogwood-propose` at `https://fogwood.madebyhenry.chatgpt.site/` after Sites version 13 deployment |
-| Current hosted harmless call | PASS — Browser-mediated `fogwood-inspect` returned registry 8, the current content revision/context token, bounded live page state, and no page mutation |
-| Current hosted responsive render | PASS — desktop `/private/tmp/fogwood-v13-desktop.png` and 390x844 `/private/tmp/fogwood-v13-mobile.png`; viewport override reset afterward |
-| Current deployment provenance | PASS — GitHub `main` and Sites source `main` both verified at `df3373a0ed036a4e3421729ec3f7e0579d571d09`; Sites version 13 (`appgprj_6a8eed68a0f88191b7467ac94efcc8dc~appgver_51f68df5865081918a35f77f39488848`); uploaded artifact `sha256:5329f82dcdf40803377b8991cc52dae951feaccccc16f994de0850f370324968`; deployment `appgdep_6a92f5427ad48191bb3f3558ffed4ddc`; terminal status `succeeded`; URL `https://fogwood.madebyhenry.chatgpt.site` |
+| Baseline hosted page registration | PASS FOR VERSION 13 ONLY — exactly `fogwood-inspect`, `fogwood-capabilities`, and `fogwood-propose` at `https://fogwood.madebyhenry.chatgpt.site/` |
+| Baseline hosted harmless call | PASS FOR VERSION 13 ONLY — Browser-mediated `fogwood-inspect` returned registry 8, the baseline content revision/context token, bounded live page state, and no page mutation |
+| Baseline hosted responsive render | PASS FOR VERSION 13 ONLY — desktop `/private/tmp/fogwood-v13-desktop.png` and 390x844 `/private/tmp/fogwood-v13-mobile.png`; viewport override reset afterward |
+| Baseline deployment provenance | PASS FOR VERSION 13 ONLY — GitHub `main` and Sites source `main` were verified at `df3373a0ed036a4e3421729ec3f7e0579d571d09`; Sites version 13 (`appgprj_6a8eed68a0f88191b7467ac94efcc8dc~appgver_51f68df5865081918a35f77f39488848`); uploaded artifact `sha256:5329f82dcdf40803377b8991cc52dae951feaccccc16f994de0850f370324968`; deployment `appgdep_6a92f5427ad48191bb3f3558ffed4ddc`; terminal status `succeeded`; URL `https://fogwood.madebyhenry.chatgpt.site` |
 | Deployment provenance | PASS — source commit `56fa61b6c40c8ff996c471636d5670f5c6ad5990`; Sites version 12 (`appgprj_6a8eed68a0f88191b7467ac94efcc8dc~appgver_8d9949ce2e7c819188e0b3401d09223f`); archive `sha256:fac58d84b6f932250908451aee1293a0deb275b56b0ad60adfb959dda35771f3`; deployment `appgdep_6a922498d64081919bd171ce90000793`; terminal status `succeeded`; URL `https://fogwood.madebyhenry.chatgpt.site` |
 | Hosted real Codex material | PASS — generated PNG, 2,017,411 bytes, 1214x1295, exact hash `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4`; staged preview `/private/tmp/fogwood-hosted-real-material-staged.png`; selected editable result `/private/tmp/fogwood-hosted-real-material-selected.png` |
 | Hosted Apply / Undo / persistence | PASS — Apply changed revision and produced one image plus one referenced local asset; one Undo returned the exact prior revision and removed both; re-Apply survived reload with the same revision and material identity |
 | Hosted context concurrency | PASS — selecting the generated material changed only `context_token`; a proposal using the prior token returned `STALE_CONTEXT`, left the content revision unchanged, and created no review state |
-| Independent verifier | PASS — rejected two label/binding contract gaps, rechecked their red-first repairs, then found no remaining P1/P2; supplied desktop and mobile evidence are native-tldraw and anti-dashboard |
+| Prior independent verifier | PASS FOR THE VERSION 13 BASELINE — rejected two label/binding contract gaps, rechecked their red-first repairs, then found no remaining P1/P2; supplied desktop and mobile evidence are native-tldraw and anti-dashboard |
 
 ## Current risks and explicit boundaries
 

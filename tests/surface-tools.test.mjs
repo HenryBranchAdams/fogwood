@@ -28,6 +28,21 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function matrixMultiply(left, right) {
+  return {
+    a: left.a * right.a + left.c * right.b,
+    b: left.b * right.a + left.d * right.b,
+    c: left.a * right.c + left.c * right.d,
+    d: left.b * right.c + left.d * right.d,
+    e: left.a * right.e + left.c * right.f + left.e,
+    f: left.b * right.e + left.d * right.f + left.f,
+  };
+}
+
+function matrixPoint(matrix, point) {
+  return { x: matrix.a * point.x + matrix.c * point.y + matrix.e, y: matrix.b * point.x + matrix.d * point.y + matrix.f };
+}
+
 function shapesFromScope(scope) {
   return scope.blocks.map((block) => ({
     id: block.shape_id,
@@ -130,6 +145,7 @@ class CanvasProposalEditor extends ProposalEditor {
     this.pages = [{ id: 'page:main', typeName: 'page', name: 'Page 1', meta: {} }];
     this.currentPageId = 'page:main';
     this.cameraFocuses = [];
+    this.cameraLocked = false;
     this.markSnapshots = new Map();
     this.nextMarkIndex = 0;
     this.nextIndex = shapes.length;
@@ -164,6 +180,46 @@ class CanvasProposalEditor extends ProposalEditor {
   createPage(page) { this.pages.push({ typeName: 'page', meta: {}, ...clone(page) }); return this; }
   setCurrentPage(page) { this.currentPageId = typeof page === 'string' ? page : page.id; return this; }
   zoomToBounds(bounds, options) { this.cameraFocuses.push({ bounds: clone(bounds), options: clone(options) }); return this; }
+  getCameraOptions() { return { isLocked: this.cameraLocked }; }
+  getShapeGeometry(shape) {
+    const current = typeof shape === 'string' ? this.getShape(shape) : shape;
+    return { bounds: { x: 0, y: 0, w: current?.props?.w ?? 100, h: current?.props?.h ?? 100 } };
+  }
+  getShapeLocalTransform(shape) {
+    const current = typeof shape === 'string' ? this.getShape(shape) : shape;
+    const rotation = current?.rotation ?? 0;
+    return { a: Math.cos(rotation), b: Math.sin(rotation), c: -Math.sin(rotation), d: Math.cos(rotation), e: current?.x ?? 0, f: current?.y ?? 0 };
+  }
+  getShapePageTransform(shape) {
+    const current = typeof shape === 'string' ? this.getShape(shape) : shape;
+    if (!current) return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+    const local = this.getShapeLocalTransform(current);
+    const parent = this.getShape(current.parentId);
+    return parent ? matrixMultiply(this.getShapePageTransform(parent), local) : local;
+  }
+  getShapeParentTransform(shape) {
+    const current = typeof shape === 'string' ? this.getShape(shape) : shape;
+    const parent = current ? this.getShape(current.parentId) : undefined;
+    return parent ? this.getShapePageTransform(parent) : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  }
+  getShapePageBounds(shape) {
+    const current = typeof shape === 'string' ? this.getShape(shape) : shape;
+    const bounds = this.getShapeGeometry(current).bounds;
+    const matrix = this.getShapePageTransform(current);
+    const points = [{ x: 0, y: 0 }, { x: bounds.w, y: 0 }, { x: bounds.w, y: bounds.h }, { x: 0, y: bounds.h }].map((point) => matrixPoint(matrix, point));
+    const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  }
+  isShapeOrAncestorLocked(shape) {
+    let current = typeof shape === 'string' ? this.getShape(shape) : shape;
+    const seen = new Set();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.isLocked) return true;
+      current = this.getShape(current.parentId);
+    }
+    return false;
+  }
 
   getSelectedShapeIds() { return [...this.context.selectedShapeIds]; }
   getCurrentPageState() {
@@ -296,6 +352,12 @@ class CanvasProposalEditor extends ProposalEditor {
       shape.y = bounds.y;
       shape.props = { ...shape.props, w: bounds.w, h: bounds.h };
     }
+  }
+
+  resizeShape(id, scale) {
+    const shape = typeof id === 'string' ? this.getShape(id) : id;
+    if (!shape) return;
+    shape.props = { ...shape.props, w: (shape.props.w ?? 100) * scale.x, h: (shape.props.h ?? 100) * scale.y };
   }
 
   groupShapes(ids, { groupId }) {
@@ -488,6 +550,9 @@ test('versioned semantic lowerers are immutable, schema-valid, and searchable th
   assert.equal(FOGWOOD_SEMANTIC_LOWERERS[0].input_schema, PAGE_OPS_ACTION_SCHEMA);
   assert.equal(FOGWOOD_SEMANTIC_LOWERERS[1].input_schema, CAMERA_OPS_ACTION_SCHEMA);
   assert.equal(validateSemanticLowererManifest({ ...FOGWOOD_SEMANTIC_LOWERERS[0], version: 2 }), false);
+  assert.equal(validateSemanticLowererManifest({ ...FOGWOOD_SEMANTIC_LOWERERS[0], effects: [] }), false);
+  assert.equal(validateSemanticLowererManifest({ ...FOGWOOD_SEMANTIC_LOWERERS[0], input_schema: {} }), false);
+  assert.equal(FOGWOOD_SEMANTIC_LOWERERS.every((entry) => entry.effects.length > 0 && entry.fixture_ids.length > 0), true);
   assert.deepEqual(searchSemanticLowerers('new page').map((entry) => entry.id), ['page.lifecycle@1']);
 
   const editor = new CanvasProposalEditor();
@@ -496,6 +561,26 @@ test('versioned semantic lowerers are immutable, schema-valid, and searchable th
   const capabilities = editor.registeredTools.find((tool) => tool.name === 'fogwood-capabilities');
   const response = JSON.parse((await capabilities.execute({ mode: 'search', query: 'viewport focus' })).content[0].text);
   assert.deepEqual(response.semantic_lowerers.map((entry) => entry.id), ['camera.focus-bounds@1']);
+  cleanup();
+});
+
+test('page lifecycle refuses a duplicate reviewed name before staging', async () => {
+  const editor = new CanvasProposalEditor();
+  editor.pages.push({ id: 'page:existing', typeName: 'page', name: 'Sketches', meta: {} });
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const response = JSON.parse((await propose.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Create a duplicate page name',
+    actions: [{ type: 'page_ops', operation: { op: 'create_and_switch', semantic_id: 'page:duplicate', name: 'Sketches' } }],
+  })).content[0].text);
+  assert.equal(response.status, 'ERROR');
+  assert.match(response.message, /name already exists/i);
+  assert.equal(controller.getState(), null);
+  assert.equal(editor.pages.length, 2);
   cleanup();
 });
 
@@ -580,6 +665,34 @@ test('camera focus is reviewed as an exact region and applies without document h
   assert.deepEqual(editor.cameraFocuses, [{ bounds: { x: 120, y: 80, w: 640, h: 420 }, options: { immediate: true, inset: 48 } }]);
   assert.equal(currentRevision(editor), inspected.content_revision);
   assert.equal(editor.marks.length, 0);
+  cleanup();
+});
+
+test('camera focus refuses a locked camera before staging and after review', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const request = {
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Focus the locked camera',
+    actions: [{ type: 'camera_ops', operation: { op: 'focus_bounds', x: 0, y: 0, w: 400, h: 300 } }],
+  };
+  editor.cameraLocked = true;
+  const blocked = JSON.parse((await propose.execute(request)).content[0].text);
+  assert.equal(blocked.status, 'ERROR');
+  assert.match(blocked.message, /camera is locked/i);
+  assert.equal(controller.getState(), null);
+
+  editor.cameraLocked = false;
+  assert.equal(JSON.parse((await propose.execute(request)).content[0].text).status, 'STAGED');
+  editor.cameraLocked = true;
+  const result = controller.apply();
+  assert.equal(result.status, 'ERROR');
+  assert.match(result.message, /camera is locked/i);
+  assert.equal(editor.cameraFocuses.length, 0);
   cleanup();
 });
 
@@ -799,6 +912,21 @@ test('fogwood-capabilities available mode returns only current-context commands 
     'matter.native.draw',
   ]);
   assert.equal(payload.manifests.every((entry) => entry.schema === 'fogwood.capability.v1' && [1, 2].includes(entry.version)), true);
+  assert.deepEqual(payload.semantic_lowerers.map((entry) => [entry.id, entry.availability]), [
+    ['page.lifecycle@1', 'available'],
+    ['camera.focus-bounds@1', 'available'],
+  ]);
+  editor.cameraLocked = true;
+  editor.options.maxPages = 1;
+  const blocked = JSON.parse((await tool.execute({
+    mode: 'available',
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+  })).content[0].text);
+  assert.deepEqual(blocked.semantic_lowerers.map((entry) => [entry.id, entry.availability, entry.availability_reasons[0]]), [
+    ['page.lifecycle@1', 'blocked', 'page limit reached'],
+    ['camera.focus-bounds@1', 'blocked', 'camera is locked'],
+  ]);
   cleanup();
 });
 
@@ -1646,6 +1774,142 @@ test('Canvas Protocol Apply preserves a source and creates one inspectable varia
   assert.equal(inspected.meta.variant_id, 'idea:variant');
   editor.undo();
   assert.deepEqual(editor.shapes, before);
+});
+
+test('page-owned transform lowering moves and styles nested rotated matter with exact preview and one Undo', async () => {
+  const parent = {
+    id: 'shape:group', typeName: 'shape', type: 'group', parentId: 'page:main', x: 260, y: -80, rotation: 0.45, opacity: 1, isLocked: false, index: 'a1', meta: { fogwood: { semantic_id: 'group:world', semantic_id_source: 'stable' } }, props: { w: 420, h: 300 },
+  };
+  const child = {
+    id: 'shape:child', typeName: 'shape', type: 'geo', parentId: 'shape:group', x: 40, y: 65, rotation: 0.3, opacity: 0.9, isLocked: false, index: 'a2', meta: { fogwood: { semantic_id: 'idea:nested', semantic_id_source: 'stable' } }, props: { geo: 'rectangle', w: 140, h: 90, color: 'black', fill: 'none', richText: { type: 'doc', content: [] } },
+  };
+  const editor = new CanvasProposalEditor([parent, child]);
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const before = inspectSurface(editor);
+  const inspectedChild = before.items.find((item) => item.id === child.id);
+  assert.equal(inspectedChild.transform.schema, 'fogwood.transform.v1');
+  assert.equal(inspectedChild.transform.parent_id, parent.id);
+  const desired = { x: inspectedChild.transform.page_origin.x + 75, y: inspectedChild.transform.page_origin.y - 30 };
+  const staged = JSON.parse((await propose.execute({
+    base_revision: before.content_revision,
+    context_token: before.context_token,
+    summary: 'Continue the nested rotated idea',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'update', id: 'semantic:idea:nested', x: desired.x, y: desired.y, color: 'violet', opacity: 0.65 }] }],
+  })).content[0].text);
+  assert.equal(staged.status, 'STAGED');
+  const preview = controller.getState().plan.preview.moves[0];
+  assert.equal(preview.id, child.id);
+  assert.equal(preview.after.x - preview.before.x, 75);
+  assert.equal(preview.after.y - preview.before.y, -30);
+  assert.equal(preview.before_corners.length, 4);
+  assert.equal(preview.after_corners.length, 4);
+  for (let index = 0; index < 4; index += 1) {
+    assert.ok(Math.abs(preview.after_corners[index].x - preview.before_corners[index].x - 75) < 1e-7);
+    assert.ok(Math.abs(preview.after_corners[index].y - preview.before_corners[index].y + 30) < 1e-7);
+  }
+  assert.equal(controller.apply().status, 'APPLIED');
+  const after = inspectSurface(editor).items.find((item) => item.id === child.id);
+  assert.ok(Math.abs(after.transform.page_origin.x - desired.x) < 1e-7);
+  assert.ok(Math.abs(after.transform.page_origin.y - desired.y) < 1e-7);
+  assert.equal(after.rotation, 0.3);
+  assert.equal(after.opacity, 0.65);
+  assert.equal(after.props.color, 'violet');
+  editor.undo();
+  assert.deepEqual(editor.getShape(child.id), child);
+  assert.deepEqual(editor.getShape(parent.id), parent);
+  cleanup();
+});
+
+test('nested rotated content reflow remains separately reviewable from exact geometry', () => {
+  const parent = { id: 'shape:group', typeName: 'shape', type: 'group', parentId: 'page:main', x: 260, y: -80, rotation: 0.45, opacity: 1, isLocked: false, index: 'a1', meta: {}, props: { w: 420, h: 300 } };
+  const child = { id: 'shape:child', typeName: 'shape', type: 'geo', parentId: parent.id, x: 40, y: 65, rotation: 0.3, opacity: 0.9, isLocked: false, index: 'a2', meta: { fogwood: { semantic_id: 'idea:nested-content', semantic_id_source: 'stable' } }, props: { geo: 'rectangle', w: 140, h: 90, color: 'black', fill: 'none', richText: { type: 'doc', content: [] } } };
+  const editor = new CanvasProposalEditor([parent, child]);
+  const before = inspectSurface(editor);
+  const result = applyProposalToEditor(editor, {
+    base_revision: before.content_revision,
+    summary: 'Review nested content without overclaiming geometry',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'update', id: 'semantic:idea:nested-content', text: 'Separately reviewed', color: 'orange', opacity: 0.7 }] }],
+  });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(editor.getShape(child.id).opacity, 0.7);
+  assert.equal(editor.getShape(child.id).props.color, 'orange');
+});
+
+test('already-rotated direct matter rotates and resizes around its reviewed local top-left', () => {
+  const source = {
+    id: 'shape:rotated', typeName: 'shape', type: 'geo', parentId: 'page:main', x: -120, y: 180, rotation: 0.4, opacity: 1, isLocked: false, index: 'a1', meta: { fogwood: { semantic_id: 'idea:rotated', semantic_id_source: 'stable' } }, props: { geo: 'rectangle', w: 160, h: 90, richText: { type: 'doc', content: [] } },
+  };
+  const editor = new CanvasProposalEditor([source]);
+  const first = inspectSurface(editor);
+  const rotate = applyProposalToEditor(editor, {
+    base_revision: first.content_revision, summary: 'Rotate the existing shape exactly',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'update', id: 'semantic:idea:rotated', rotation: 1.1 }] }],
+  });
+  assert.deepEqual(rotate, { ok: true });
+  assert.equal(editor.getShape(source.id).rotation, 1.1);
+  const beforeResize = inspectSurface(editor);
+  const beforeOrigin = beforeResize.items[0].transform.page_origin;
+  const resize = applyProposalToEditor(editor, {
+    base_revision: beforeResize.content_revision, summary: 'Resize the rotated shape exactly',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'resize', id: 'semantic:idea:rotated', w: 240, h: 135 }] }],
+  });
+  assert.deepEqual(resize, { ok: true });
+  const after = inspectSurface(editor).items[0];
+  assert.equal(editor.getShape(source.id).props.w, 240);
+  assert.equal(editor.getShape(source.id).props.h, 135);
+  assert.ok(Math.abs(after.transform.page_origin.x - beforeOrigin.x) < 1e-7);
+  assert.ok(Math.abs(after.transform.page_origin.y - beforeOrigin.y) < 1e-7);
+});
+
+test('nested rotated variants preserve parent, rotation, lineage, and exact page offset', () => {
+  const parent = { id: 'shape:frame', typeName: 'shape', type: 'frame', parentId: 'page:main', x: 300, y: 140, rotation: -0.35, opacity: 1, isLocked: false, index: 'a1', meta: { fogwood: { semantic_id: 'frame:branch', semantic_id_source: 'stable' } }, props: { w: 500, h: 360, name: 'Branch' } };
+  const child = { id: 'shape:source', typeName: 'shape', type: 'geo', parentId: parent.id, x: 55, y: 70, rotation: 0.6, opacity: 0.8, isLocked: false, index: 'a2', meta: { extension: { retained: true }, fogwood: { semantic_id: 'idea:source-nested', semantic_id_source: 'stable' } }, props: { geo: 'ellipse', w: 120, h: 80, richText: { type: 'doc', content: [] } } };
+  const editor = new CanvasProposalEditor([parent, child]);
+  const before = inspectSurface(editor);
+  const sourceProjection = before.items.find((item) => item.id === child.id).transform;
+  const result = applyProposalToEditor(editor, {
+    base_revision: before.content_revision, summary: 'Preserve a nested branch',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'variant', id: 'semantic:idea:source-nested', semantic_id: 'idea:variant-nested', offset_x: 90, offset_y: 45 }] }],
+  });
+  assert.deepEqual(result, { ok: true });
+  const variant = inspectSurface(editor).items.find((item) => item.semantic_id === 'idea:variant-nested');
+  assert.equal(variant.parent_id, parent.id);
+  assert.equal(variant.rotation, child.rotation);
+  assert.ok(Math.abs(variant.transform.page_origin.x - sourceProjection.page_origin.x - 90) < 1e-7);
+  assert.ok(Math.abs(variant.transform.page_origin.y - sourceProjection.page_origin.y - 45) < 1e-7);
+  assert.equal(variant.meta.lineage_source_id, 'idea:source-nested');
+});
+
+test('same-parent rotated arrangement is exact and staged parent changes refuse atomically', async () => {
+  const parent = { id: 'shape:group', typeName: 'shape', type: 'group', parentId: 'page:main', x: 180, y: 120, rotation: 0.5, opacity: 1, isLocked: false, index: 'a1', meta: { fogwood: { semantic_id: 'group:arrange', semantic_id_source: 'stable' } }, props: { w: 600, h: 400 } };
+  const children = [
+    { id: 'shape:a', typeName: 'shape', type: 'geo', parentId: parent.id, x: 20, y: 20, rotation: 0.2, opacity: 1, isLocked: false, index: 'a2', meta: { fogwood: { semantic_id: 'idea:a-nested', semantic_id_source: 'stable' } }, props: { geo: 'rectangle', w: 120, h: 80 } },
+    { id: 'shape:b', typeName: 'shape', type: 'geo', parentId: parent.id, x: 260, y: 150, rotation: -0.4, opacity: 1, isLocked: false, index: 'a3', meta: { fogwood: { semantic_id: 'idea:b-nested', semantic_id_source: 'stable' } }, props: { geo: 'rectangle', w: 140, h: 90 } },
+  ];
+  const editor = new CanvasProposalEditor([parent, ...children]);
+  const first = inspectSurface(editor);
+  assert.deepEqual(applyProposalToEditor(editor, {
+    base_revision: first.content_revision, summary: 'Align rotated siblings in page space',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'align', ids: ['semantic:idea:a-nested', 'semantic:idea:b-nested'], axis: 'top' }] }],
+  }), { ok: true });
+  const aligned = inspectSurface(editor).items.filter((item) => item.id === 'shape:a' || item.id === 'shape:b');
+  assert.ok(Math.abs(aligned[0].transform.page_bounds.y - aligned[1].transform.page_bounds.y) < 1e-7);
+
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const stagedFrom = inspectSurface(editor);
+  assert.equal(JSON.parse((await propose.execute({
+    base_revision: stagedFrom.content_revision, context_token: stagedFrom.context_token, summary: 'Move nested idea after review',
+    actions: [{ type: 'canvas_ops', ops: [{ op: 'update', id: 'semantic:idea:a-nested', x: 500 }] }],
+  })).content[0].text).status, 'STAGED');
+  editor.getShape(parent.id).x += 1;
+  const refused = controller.apply();
+  assert.equal(refused.status, 'STALE_STATE');
+  assert.equal(editor.getShape('shape:a').x, aligned.find((item) => item.id === 'shape:a').x);
+  cleanup();
 });
 
 test('Canvas Protocol refuses an image variant without its local asset before history', () => {

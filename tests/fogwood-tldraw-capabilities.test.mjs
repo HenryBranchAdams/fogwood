@@ -419,7 +419,8 @@ test('Canvas Protocol plans a preserved variant and can mutate it later in the s
     kind: 'variant',
     op: result.plan.normalized_action.ops[0],
     pending_id: 'pending:idea:variant',
-    source: { id: 'shape:source', type: 'geo', semantic_id: 'idea:source' },
+    source: { id: 'shape:source', type: 'geo', semantic_id: 'idea:source', transform_fingerprint: 'fnv1a32:72226092', parent_id: pageId },
+    local_position: { x: 128, y: 184 },
     bounds: { x: 128, y: 184, w: 180, h: 100 },
     lineage: { variant_id: 'idea:variant', lineage_source_id: 'idea:source' },
   });
@@ -436,8 +437,8 @@ test('Canvas Protocol variants reject sources that cannot be safely cloned', () 
     { item: { ...base, type: 'arrow' }, code: 'UNSUPPORTED_VARIANT_TARGET' },
     { item: { ...base, type: 'group' }, code: 'UNSUPPORTED_VARIANT_TARGET' },
     { item: { ...base, is_locked: true }, code: 'LOCKED_TARGET' },
-    { item: { ...base, parent_id: 'shape:frame' }, code: 'NESTED_TARGET' },
-    { item: { ...base, rotation: Math.PI / 4 }, code: 'ROTATED_VARIANT_TARGET' },
+    { item: { ...base, parent_id: 'shape:frame' }, code: 'TRANSFORM_REQUIRED' },
+    { item: { ...base, rotation: Math.PI / 4 }, code: 'TRANSFORM_REQUIRED' },
     { item: base, code: 'FOOTPRINT_LIMIT' },
   ];
   cases.forEach(({ item, code }, index) => {
@@ -645,7 +646,7 @@ test('Canvas Protocol refuses grouping rotated targets whose derived bounds are 
   assert.equal(result.errors.some((error) => error.code === 'ROTATED_LAYOUT_TARGET'), true);
 });
 
-test('Canvas Protocol refuses rotation changes when inspected bounds cannot recover local geometry', () => {
+test('Canvas Protocol refuses legacy rotated geometry when exact transforms are absent', () => {
   const pageId = 'page:main';
   const inspectedAabb = {
     id: 'shape:rotated-edge',
@@ -665,7 +666,7 @@ test('Canvas Protocol refuses rotation changes when inspected bounds cannot reco
     pageId,
   );
   assert.equal(result.ok, false);
-  assert.equal(result.errors.some((error) => error.code === 'ROTATED_UPDATE_TARGET'), true);
+  assert.equal(result.errors.some((error) => error.code === 'TRANSFORM_REQUIRED'), true);
 });
 
 test('capability search exposes example references and the bounded composable canvas action', () => {

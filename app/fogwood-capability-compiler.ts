@@ -192,6 +192,8 @@ const EXACT_LOCAL_PATHS = new Set([
   'editor-api/align-and-distribute-shapes',
   'editor-api/create-arrow',
   'editor-api/z-order',
+  'configuration/disable-pages',
+  'configuration/camera-options',
 ]);
 
 const ROUTE_HINTS: ReadonlyArray<Readonly<{ phrase: string; example_id: string }>> = deepFreeze([
@@ -252,6 +254,22 @@ function routeSemantics(family: FullSurfaceFamily, slug: string, path: string) {
   const localFidelity = EXACT_LOCAL_PATHS.has(path)
     ? 'exact' as const
     : 'bounded-native-equivalent' as const;
+  if (path === 'configuration/disable-pages') {
+    return {
+      execution_lane: 'page-proposal' as const,
+      fidelity: 'exact' as const,
+      next_step: { kind: 'propose' as const, tool: 'fogwood-propose' as const, action_type: 'page_ops' as const },
+      boundary: 'Create and switch to one deterministic named page only after page-owned Apply.',
+    };
+  }
+  if (path === 'configuration/camera-options') {
+    return {
+      execution_lane: 'page-proposal' as const,
+      fidelity: 'exact' as const,
+      next_step: { kind: 'propose' as const, tool: 'fogwood-propose' as const, action_type: 'camera_ops' as const },
+      boundary: 'Focus one exact reviewed page-space region without changing document content.',
+    };
+  }
   if (family === 'native_canvas') {
     return {
       execution_lane: 'page-proposal' as const,
@@ -325,7 +343,7 @@ export type FullSurfaceRoute = Readonly<{
   execution_lane: FullSurfaceExecutionLane;
   fidelity: FullSurfaceFidelity;
   lowering: Readonly<{
-    seam: 'canvas_ops' | 'materials' | 'inspect' | 'persistence' | 'host';
+    seam: 'canvas_ops' | 'page_ops' | 'camera_ops' | 'materials' | 'inspect' | 'persistence' | 'host';
     authority: 'page-apply' | 'read-only' | 'host-observed' | 'artifact-bridge';
     capability_ids: readonly string[];
     operations: readonly string[];
@@ -333,7 +351,7 @@ export type FullSurfaceRoute = Readonly<{
     qualification: 'exact-local-fixture' | 'family-route-fixture' | 'host-contract-fixture';
   }>;
   next_step:
-    | Readonly<{ kind: 'propose'; tool: 'fogwood-propose'; action_type: 'canvas_ops' | 'add_materials' }>
+    | Readonly<{ kind: 'propose'; tool: 'fogwood-propose'; action_type: 'canvas_ops' | 'add_materials' | 'page_ops' | 'camera_ops' }>
     | Readonly<{ kind: 'inspect'; tool: 'fogwood-inspect'; projection: string }>
     | Readonly<{ kind: 'host'; capability_id: string }>;
   boundary: string;
@@ -362,6 +380,22 @@ const EXACT_LOCAL_LOWERINGS = Object.freeze({
     authority: 'page-apply' as const,
     capability_ids: ['layer.reorder'],
     operations: ['reorder'],
+    qualified: true as const,
+    qualification: 'exact-local-fixture' as const,
+  },
+  'configuration/disable-pages': {
+    seam: 'page_ops' as const,
+    authority: 'page-apply' as const,
+    capability_ids: ['page.lifecycle@1'],
+    operations: ['create_and_switch'],
+    qualified: true as const,
+    qualification: 'exact-local-fixture' as const,
+  },
+  'configuration/camera-options': {
+    seam: 'camera_ops' as const,
+    authority: 'page-apply' as const,
+    capability_ids: ['camera.focus-bounds@1'],
+    operations: ['focus_bounds'],
     qualified: true as const,
     qualification: 'exact-local-fixture' as const,
   },
@@ -490,6 +524,21 @@ export const FULL_SURFACE_ROUTES: readonly FullSurfaceRoute[] = deepFreeze(
     };
   }),
 );
+
+export const FULL_SURFACE_COVERAGE = deepFreeze(FULL_SURFACE_ROUTES.map((route) => ({
+  schema: 'fogwood.example-coverage.v1' as const,
+  example_id: route.example_id,
+  adapter_family: route.family,
+  primitives: route.lowering.operations,
+  searchable: true as const,
+  routable: true as const,
+  locally_equivalent: route.fidelity === 'exact',
+  host_ready: route.execution_lane !== 'host-capability' && route.fidelity !== 'host-mediated',
+  staged: route.lowering.qualification === 'exact-local-fixture',
+  successful: route.lowering.qualification === 'exact-local-fixture',
+  qualification: route.lowering.qualification,
+  boundary: route.boundary,
+})));
 
 const ROUTE_BY_EXAMPLE_ID = new Map(FULL_SURFACE_ROUTES.map((route) => [route.example_id, route]));
 

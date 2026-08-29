@@ -18,9 +18,11 @@ proposal lifecycle, or successfully applied.
 | **Total** | **213** | **213/213** | **213/213** | **5 exact local fixtures, 178 bounded/mediated routes, 30 host-mediated routes** | **not a blanket claim** | **family-specific only** | **family-specific only** |
 
 The route compiler remains authoritative for the ordered 213-entry identity,
-the eight family counts, and the fidelity totals. Its current baseline is 3
-exact route fixtures, 180 bounded-native-equivalent routes, and 30
-host-mediated routes. The two exact semantic lowerers deepen two control-plane
-routes without relabeling the upstream examples or claiming their source code
-ran. Live host readiness is always observed just in time and never inferred
-from this file.
+the eight family counts, and the fidelity totals. Its current baseline is 5
+exact local routes, 178 bounded or mediated routes, and 30 host-mediated
+routes. The page-lifecycle and camera-focus semantic lowerers deepen two
+control-plane routes without relabeling the upstream examples or claiming
+their source code ran. Every row also exposes separate searchable, routable,
+locally-equivalent, host-ready, staged, and successful evidence fields. Live
+host readiness is always observed just in time and never inferred from this
+file.

@@ -250,6 +250,7 @@ export type InspectableItem = {
   meta?: FogwoodMeta;
   props?: JsonRecord;
   text?: string;
+  transform?: import('./tldraw-adapter/transform-projection.ts').FogwoodTransformProjection;
 };
 
 export type ProposalContext = {
@@ -1172,6 +1173,8 @@ export type PreparedCanvasPreview = Readonly<{
     id: string;
     before: PreparedCanvasPreviewBounds;
     after: PreparedCanvasPreviewBounds;
+    before_corners?: readonly Readonly<{ x: number; y: number }>[];
+    after_corners?: readonly Readonly<{ x: number; y: number }>[];
   }>[];
   removals: readonly Readonly<{
     id: string;

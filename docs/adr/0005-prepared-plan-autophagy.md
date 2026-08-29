@@ -28,11 +28,18 @@ stable page tools:
 - `fogwood-capabilities`
 - `fogwood-propose`
 
-Keep exactly three public proposal actions:
+Keep five closed public proposal actions behind the same prepared-plan
+authority:
 
 - `canvas_ops`
 - `seeded_composition`
 - `add_materials`
+- `page_ops`
+- `camera_ops`
+
+The page and camera families are versioned semantic lowerers. They do not add
+new WebMCP tools or bypass review: both still prepare one frozen plan, and the
+person still owns Apply or Reject.
 
 At stage, the page adapter validates the request against the inspected revision,
 prepares all material decoders and native lowerings once, computes the exact
