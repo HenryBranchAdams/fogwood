@@ -1,8 +1,8 @@
 # Fogwood acceptance manifest
 
-Status: PASS — local registry-8 candidate, current in-app Browser proof, and
-independent anti-dashboard acceptance. Deployed Sites version 12 remains the
-prior autophagy baseline and does not contain this candidate.
+Status: PASS — canonical GitHub `main`, local registry-8 checks, current hosted
+in-app Browser/WebMCP proof, and independent anti-dashboard acceptance. Sites
+version 13 deploys the exact runtime commit `df3373a0ed036a4e3421729ec3f7e0579d571d09`.
 
 This is the one authoritative acceptance manifest. The current phase simplifies
 Fogwood into an empty, device-local tldraw surface where Codex turns intent and
@@ -50,12 +50,13 @@ Dead dashboard-era product code removed in this phase:
 - `tests/fogwood-snapshot.test.mjs`
 - their retired gallery, starter, chat, and snapshot CSS selector families
 
-The prior deployed baseline passed the Sites and hosted checks retained below.
-The current registry-8 candidate passed the rendered local Browser proof,
-frozen full-check matrix, and independent anti-dashboard verifier recorded
-below. One live Codex image-generation artifact passed the constrained material
-bridge. Other external providers and direct conversation inventory remain
-separate, explicitly unqualified boundaries.
+The current registry-8 runtime is authoritative on GitHub `main` and in Sites
+version 13. It passed the frozen local check matrix, rendered local and hosted
+Browser proof, a harmless hosted WebMCP inspect call, and the independent
+anti-dashboard verifier recorded below. One live Codex image-generation
+artifact passed the constrained material bridge. Other external providers and
+direct conversation inventory remain separate, explicitly unqualified
+boundaries.
 
 ## Acceptance matrix — current phase
 
@@ -77,7 +78,7 @@ separate, explicitly unqualified boundaries.
 | Browser / host exposure | Current host inventory of page tools. | PASS — in-app Browser WebMCP inventory |
 | Conversation inventory | Direct top-level conversation tool inventory, separate from Browser. | NOT EXPOSED DIRECTLY — Browser-mediated tools only |
 | Harmless WebMCP call | Successful inspect/capabilities/propose call with no unauthorized mutation. | PASS |
-| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | BASELINE ONLY — Sites version 12 is from `56fa61b6c40c8ff996c471636d5670f5c6ad5990`; the registry-8 candidate has no Sites version or deployment |
+| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | PASS — GitHub/Sites source `main` and Sites version 13 use runtime commit `df3373a0ed036a4e3421729ec3f7e0579d571d09`; deployment succeeded at the canonical URL |
 | Live Codex artifact bridge | Real externally generated material stages with exact provenance, applies once, undoes once, and persists after reload. | PASS — Codex PNG `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4` |
 | Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS — no remaining P1/P2; supplied desktop and mobile evidence pass the anti-dashboard bar |
 
@@ -114,6 +115,10 @@ do not promote an unrun check to PASS.
 | WebMCP host exposure | PASS — in-app Browser returned the same three page tools and their current schemas |
 | Harmless successful WebMCP call | PASS — `fogwood-inspect`, `fogwood-capabilities` available/plan, and stage-only `fogwood-propose`; page Apply remained a separate human action |
 | Direct conversation inventory | NOT EXPOSED DIRECTLY — this session reached Fogwood only through the in-app Browser WebMCP bridge |
+| Current hosted page registration | PASS — exactly `fogwood-inspect`, `fogwood-capabilities`, and `fogwood-propose` at `https://fogwood.madebyhenry.chatgpt.site/` after Sites version 13 deployment |
+| Current hosted harmless call | PASS — Browser-mediated `fogwood-inspect` returned registry 8, the current content revision/context token, bounded live page state, and no page mutation |
+| Current hosted responsive render | PASS — desktop `/private/tmp/fogwood-v13-desktop.png` and 390x844 `/private/tmp/fogwood-v13-mobile.png`; viewport override reset afterward |
+| Current deployment provenance | PASS — GitHub `main` and Sites source `main` both verified at `df3373a0ed036a4e3421729ec3f7e0579d571d09`; Sites version 13 (`appgprj_6a8eed68a0f88191b7467ac94efcc8dc~appgver_51f68df5865081918a35f77f39488848`); uploaded artifact `sha256:5329f82dcdf40803377b8991cc52dae951feaccccc16f994de0850f370324968`; deployment `appgdep_6a92f5427ad48191bb3f3558ffed4ddc`; terminal status `succeeded`; URL `https://fogwood.madebyhenry.chatgpt.site` |
 | Deployment provenance | PASS — source commit `56fa61b6c40c8ff996c471636d5670f5c6ad5990`; Sites version 12 (`appgprj_6a8eed68a0f88191b7467ac94efcc8dc~appgver_8d9949ce2e7c819188e0b3401d09223f`); archive `sha256:fac58d84b6f932250908451aee1293a0deb275b56b0ad60adfb959dda35771f3`; deployment `appgdep_6a922498d64081919bd171ce90000793`; terminal status `succeeded`; URL `https://fogwood.madebyhenry.chatgpt.site` |
 | Hosted real Codex material | PASS — generated PNG, 2,017,411 bytes, 1214x1295, exact hash `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4`; staged preview `/private/tmp/fogwood-hosted-real-material-staged.png`; selected editable result `/private/tmp/fogwood-hosted-real-material-selected.png` |
 | Hosted Apply / Undo / persistence | PASS — Apply changed revision and produced one image plus one referenced local asset; one Undo returned the exact prior revision and removed both; re-Apply survived reload with the same revision and material identity |
@@ -134,10 +139,11 @@ do not promote an unrun check to PASS.
   snapshot records; compatibility means reading them safely, not reviving old
   dashboard UI or executable runtime paths.
 - The production Browser profile already contained legacy device-local canvas
-  matter under `open-surface-local`, which the release correctly preserved.
+  matter under `open-surface-local`, which version 13 correctly preserved.
   Fresh-profile blank-first-run behavior remains qualified on the isolated
-  local origin; the hosted screenshots qualify migration compatibility and the
-  live material bridge rather than a pristine first visit.
+  local origin; the current hosted screenshots and inspect call qualify exact
+  deployment, migration compatibility, rendering, and WebMCP exposure rather
+  than a pristine first visit.
 
 ## Historical qualification archive
 
