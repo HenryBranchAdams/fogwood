@@ -1,8 +1,9 @@
 # Fogwood acceptance manifest
 
-Status: PASS — canonical GitHub `main`, local registry-8 checks, current hosted
-in-app Browser/WebMCP proof, and independent anti-dashboard acceptance. Sites
-version 13 deploys the exact runtime commit `df3373a0ed036a4e3421729ec3f7e0579d571d09`.
+Status: IN PROGRESS — canonicalization and issues #1–#6 are locally qualified;
+revision memoization (#7), exact nested/rotated transforms (#8), independent
+integrated verification, and a final exact-commit deployment remain. Sites
+version 13 is the last deployed baseline and does not include this issue phase.
 
 This is the one authoritative acceptance manifest. The current phase simplifies
 Fogwood into an empty, device-local tldraw surface where Codex turns intent and
@@ -10,10 +11,10 @@ observed capabilities into bounded editable matter. It is not a dashboard,
 template gallery, raw SDK facade, or automatic mutation system. The person must
 review every staged change and choose page-owned Apply or Reject.
 
-The active public boundary is exactly three stable WebMCP tools:
+The active public boundary remains exactly three stable WebMCP tools:
 `fogwood-inspect`, `fogwood-capabilities`, and `fogwood-propose`. The public
-proposal action union is exactly `canvas_ops`, `seeded_composition`, or
-`add_materials`. The 213 pinned tldraw routes remain searchable addressing and
+proposal action union is the five closed families `canvas_ops`,
+`seeded_composition`, `add_materials`, `page_ops`, and `camera_ops`. The 213 pinned tldraw routes remain searchable addressing and
 qualification vocabulary; they are not 213 runtime tools and do not prove that
 upstream examples execute locally.
 
@@ -76,7 +77,8 @@ boundaries.
 | --- | --- | --- |
 | Doctrine and architecture | README, CONTEXT, ADR 0005, and this manifest describe the empty spatial medium, `FogwoodSurface`, and `PreparedCanvasPlan`. | PASS |
 | Public WebMCP boundary | Exactly `fogwood-inspect`, `fogwood-capabilities`, `fogwood-propose`; no page-owned apply tool. | PASS |
-| Public proposal union | Exactly `canvas_ops`, `seeded_composition`, `add_materials`; advertised ungroup/material ID, MIME, canonical-base64, byte, and batch limits match runtime refusal limits. | PASS |
+| Public proposal union | Five closed semantic families: native, seeded, materials, page lifecycle, and camera focus; schemas share the versioned lowerer manifests. | PASS — local #6 |
+| Semantic lowerer extension | `fogwood.semantic-lowerer.v1`, ADR 0006, and the 213-route coverage matrix distinguish addressing from local/host/stage/success evidence. | PASS — page and camera fixtures plus Browser proof |
 | Prepared-plan staging | All lowerings/material decoders prepared once; plan frozen before review; exact digest retained. | PASS |
 | Authority seam split | Public WebMCP, read projection, transaction, review, and compatibility callers use narrow named modules; the old import remains a thin façade. | PASS — boundary tests and unchanged public behavior |
 | Human authority | Page-owned Apply/Reject only; stale revision/precondition refusal; no automatic mutation. | PASS |
@@ -102,6 +104,8 @@ do not promote an unrun check to PASS.
 
 | Check | Result / evidence |
 | --- | --- |
+| Issue #6 local matrix | PASS — 234/234 tests; typecheck, lint, build, compiler check, and diff check all exit 0; build retains only known chunk-size and route-classification warnings |
+| Issue #6 Browser/WebMCP | PASS — `http://localhost:4211/`; exactly three tools; inspect reports two semantic lowerers; page proposal staged/rejected without revision change, then applied and one-step undone to the exact revision; camera proposal reviewed/applied with unchanged content revision and no history; no browser warnings/errors; `/private/tmp/fogwood-issue6-semantic-lowerers.png` |
 | `npm test` | PASS — 221/221; pretest compiler check PASS |
 | `npx tsc --noEmit` | PASS |
 | `npm run lint` | PASS — no warnings |

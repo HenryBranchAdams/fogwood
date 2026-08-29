@@ -34,7 +34,15 @@ The public proposal actions are exactly:
   retain stable composition, region, role, rotation, and opacity metadata;
   bound arrows can carry one of the allowlisted typed semantic relationships;
 - `seeded_composition` for deterministic, bounded, preserved remixes; and
-- `add_materials` for qualified local raster or sanitized SVG material.
+- `add_materials` for qualified local raster or sanitized SVG material;
+- `page_ops` for one deterministic create-and-switch page lifecycle; and
+- `camera_ops` for exact reviewed viewport focus without document mutation.
+
+These five action families are versioned semantic lowerers, not Editor method
+dispatch. Each owns a closed schema, availability and precondition rules,
+frozen lowering, preservation promises, refusal conditions, and qualification
+fixtures. New capability families extend this manifest boundary while the
+browser still registers only the same three WebMCP tools.
 
 Every staged action is revision-bound, inspected before review, and rechecked
 before Apply. Accepted matter remains movable, annotatable, connectable,

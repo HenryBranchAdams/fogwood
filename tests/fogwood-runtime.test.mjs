@@ -93,10 +93,10 @@ test('capability search is deterministic, bounded, and exposes no recipe runtime
   assert.equal(JSON.stringify(first).includes('function'), false);
 });
 
-test('public proposal schema has exactly the three active mutation representations', () => {
+test('public proposal schema exposes five closed versioned semantic action families', () => {
   const actionItems = PROPOSAL_INPUT_SCHEMA.properties.actions.items.oneOf;
   assert.equal(PROPOSAL_INPUT_SCHEMA.properties.actions.maxItems, 1);
-  assert.deepEqual(actionItems.map((schema) => schema.properties?.type?.const), ['canvas_ops', 'seeded_composition', 'add_materials']);
+  assert.deepEqual(actionItems.map((schema) => schema.properties?.type?.const), ['canvas_ops', 'seeded_composition', 'add_materials', 'page_ops', 'camera_ops']);
   const materialAction = actionItems.find((schema) => schema.properties?.type?.const === 'add_materials');
   assert.deepEqual(materialAction.required, ['type', 'materials']);
   assert.equal(materialAction.properties.materials.type, 'array');
@@ -117,7 +117,7 @@ test('public proposal schema has exactly the three active mutation representatio
   const ungroup = canvasAction.properties.ops.items.oneOf.find((schema) => schema.properties?.op?.const === 'ungroup');
   assert.equal(ungroup.properties.ids.maxItems, 32);
   assert.deepEqual(CAPABILITY_REGISTRY.find((entry) => entry.id === 'fogwood-propose').input_schema, PROPOSAL_TOOL_INPUT_SCHEMA);
-  assert.deepEqual(searchCapabilities({ kind: 'action', page_size: 20 }).results.map((entry) => entry.id), ['canvas_ops', 'seeded_composition', 'add_materials']);
+  assert.deepEqual(searchCapabilities({ kind: 'action', page_size: 20 }).results.map((entry) => entry.id), ['canvas_ops', 'seeded_composition', 'add_materials', 'page_ops', 'camera_ops']);
 });
 
 test('canvas protocol validation returns a compact native diff', () => {

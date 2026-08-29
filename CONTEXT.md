@@ -32,9 +32,11 @@ The page registers exactly three stable WebMCP tools:
    adapters, and example/qualification vocabulary; and
 3. `fogwood-propose` — validation and staging of one public action.
 
-The only public proposal actions are `canvas_ops`, `seeded_composition`, and
-`add_materials`. The WebMCP call cannot apply its own proposal. Apply and Reject
-are page-owned decisions.
+The public proposal actions are `canvas_ops`, `seeded_composition`,
+`add_materials`, `page_ops`, and `camera_ops`. They are closed, versioned
+semantic lowerers behind the same three stable WebMCP tools—not raw Editor
+method dispatch. The WebMCP call cannot apply its own proposal. Apply and
+Reject are page-owned decisions.
 
 Registry version 8 adds bounded composition metadata and typed relationship
 fields to the existing `canvas_ops` action. The inspect response also carries

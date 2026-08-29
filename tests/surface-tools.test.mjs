@@ -4,6 +4,7 @@ import { createCompareInstrumentScope } from '../app/fogwood-instrument-adapter.
 import { CAPABILITY_REGISTRY } from '../app/fogwood-runtime.ts';
 import { applyProposalToEditor, createInstrumentControlGesture, currentContextToken, currentRevision, inspectSurface, planCapabilityRequestForEditor, proposalActivityDetail, registerSurfaceTools, updateInstrumentControl } from '../app/surface-tools.ts';
 import { relationshipSemanticId } from '../app/fogwood-spatial.ts';
+import { CAMERA_OPS_ACTION_SCHEMA, FOGWOOD_SEMANTIC_LOWERERS, PAGE_OPS_ACTION_SCHEMA, searchSemanticLowerers, validateSemanticLowererManifest } from '../app/capabilities/semantic-lowerers.ts';
 
 // tldraw's state scheduler leaves a MessagePort referenced in Node tests.
 after(() => {
@@ -58,6 +59,7 @@ class FakeEditor {
       shapes: clone(this.shapes),
       bindings: clone(this.bindings ?? []),
       assets: clone(this.assets ?? []),
+      ...(this.pages ? { pages: clone(this.pages), currentPageId: this.currentPageId } : {}),
     });
     return id;
   }
@@ -68,6 +70,7 @@ class FakeEditor {
     this.shapes = clone(snapshot.shapes);
     if ('bindings' in this) this.bindings = clone(snapshot.bindings);
     if ('assets' in this) this.assets = clone(snapshot.assets);
+    if (snapshot.pages) { this.pages = clone(snapshot.pages); this.currentPageId = snapshot.currentPageId; }
     this.pending = null;
     this.markSnapshots.delete(id);
     this.marks.pop();
@@ -102,7 +105,7 @@ class FakeEditor {
 class ProposalEditor extends FakeEditor {
   constructor(shapes) {
     super(shapes);
-    this.options = { maxShapesPerPage: 100 };
+    this.options = { maxShapesPerPage: 100, maxPages: 40 };
     this.store = { allRecords: () => [] };
   }
 
@@ -124,11 +127,14 @@ class CanvasProposalEditor extends ProposalEditor {
     super(shapes);
     this.bindings = [];
     this.assets = [];
+    this.pages = [{ id: 'page:main', typeName: 'page', name: 'Page 1', meta: {} }];
+    this.currentPageId = 'page:main';
+    this.cameraFocuses = [];
     this.markSnapshots = new Map();
     this.nextMarkIndex = 0;
     this.nextIndex = shapes.length;
     this.nextBindingIndex = 0;
-    this.store = { allRecords: () => [...this.shapes, ...this.bindings, ...this.assets] };
+    this.store = { allRecords: () => [...this.shapes, ...this.bindings, ...this.assets, ...this.pages] };
     this.registeredTools = [];
     this.context = {
       selectedShapeIds: [],
@@ -151,6 +157,13 @@ class CanvasProposalEditor extends ProposalEditor {
   getContainer() {
     return { ownerDocument: this.ownerDocument };
   }
+
+  getCurrentPageId() { return this.currentPageId; }
+  getPages() { return [...this.pages]; }
+  getPage(id) { return this.pages.find((page) => page.id === (typeof id === 'string' ? id : id.id)); }
+  createPage(page) { this.pages.push({ typeName: 'page', meta: {}, ...clone(page) }); return this; }
+  setCurrentPage(page) { this.currentPageId = typeof page === 'string' ? page : page.id; return this; }
+  zoomToBounds(bounds, options) { this.cameraFocuses.push({ bounds: clone(bounds), options: clone(options) }); return this; }
 
   getSelectedShapeIds() { return [...this.context.selectedShapeIds]; }
   getCurrentPageState() {
@@ -216,9 +229,9 @@ class CanvasProposalEditor extends ProposalEditor {
 
   run(fn, options) {
     assert.deepEqual(options, { history: 'record' });
-    const before = { shapes: clone(this.shapes), bindings: clone(this.bindings), assets: clone(this.assets) };
+    const before = { shapes: clone(this.shapes), bindings: clone(this.bindings), assets: clone(this.assets), pages: clone(this.pages), currentPageId: this.currentPageId };
     fn();
-    const after = { shapes: clone(this.shapes), bindings: clone(this.bindings), assets: clone(this.assets) };
+    const after = { shapes: clone(this.shapes), bindings: clone(this.bindings), assets: clone(this.assets), pages: clone(this.pages), currentPageId: this.currentPageId };
     if (!this.pending) this.pending = { before, after, canvas: true };
     else this.pending.after = after;
   }
@@ -241,6 +254,8 @@ class CanvasProposalEditor extends ProposalEditor {
       this.shapes = clone(group.before.shapes);
       this.bindings = clone(group.before.bindings);
       this.assets = clone(group.before.assets);
+      this.pages = clone(group.before.pages);
+      this.currentPageId = group.before.currentPageId;
     } else {
       this.shapes = clone(group.before);
     }
@@ -428,6 +443,109 @@ test('fogwood-capabilities route mode composes exact routes from all 213 example
   assert.deepEqual(payload.proposal_contracts.map((step) => step.action_type), ['canvas_ops']);
   assert.equal(payload.proposal_contracts[0].requires_compilation, true);
   assert.deepEqual(editor.shapes, before);
+  assert.equal(editor.marks.length, 0);
+  cleanup();
+});
+
+test('versioned semantic lowerers are immutable, schema-valid, and searchable through the stable capability tool', async () => {
+  assert.deepEqual(FOGWOOD_SEMANTIC_LOWERERS.map((entry) => entry.id), ['page.lifecycle@1', 'camera.focus-bounds@1']);
+  assert.equal(FOGWOOD_SEMANTIC_LOWERERS.every(validateSemanticLowererManifest), true);
+  assert.equal(Object.isFrozen(FOGWOOD_SEMANTIC_LOWERERS), true);
+  assert.equal(Object.isFrozen(FOGWOOD_SEMANTIC_LOWERERS[0].input_schema), true);
+  assert.equal(FOGWOOD_SEMANTIC_LOWERERS[0].input_schema, PAGE_OPS_ACTION_SCHEMA);
+  assert.equal(FOGWOOD_SEMANTIC_LOWERERS[1].input_schema, CAMERA_OPS_ACTION_SCHEMA);
+  assert.equal(validateSemanticLowererManifest({ ...FOGWOOD_SEMANTIC_LOWERERS[0], version: 2 }), false);
+  assert.deepEqual(searchSemanticLowerers('new page').map((entry) => entry.id), ['page.lifecycle@1']);
+
+  const editor = new CanvasProposalEditor();
+  const cleanup = registerSurfaceTools(editor, () => {});
+  assert.deepEqual(editor.registeredTools.map((tool) => tool.name), ['fogwood-inspect', 'fogwood-capabilities', 'fogwood-propose']);
+  const capabilities = editor.registeredTools.find((tool) => tool.name === 'fogwood-capabilities');
+  const response = JSON.parse((await capabilities.execute({ mode: 'search', query: 'viewport focus' })).content[0].text);
+  assert.deepEqual(response.semantic_lowerers.map((entry) => entry.id), ['camera.focus-bounds@1']);
+  cleanup();
+});
+
+test('page lifecycle stages exact frozen page identity and applies or rejects through page authority', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const request = {
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Create a dedicated sketch page',
+    actions: [{ type: 'page_ops', operation: { op: 'create_and_switch', semantic_id: 'page:sketches', name: 'Sketches' } }],
+  };
+  const staged = JSON.parse((await propose.execute(request)).content[0].text);
+  assert.equal(staged.status, 'STAGED');
+  const reviewed = controller.getState().plan;
+  assert.equal(reviewed.actions[0].type, 'page_ops');
+  assert.match(reviewed.action_lowerings[0].page.id, /^page:fogwood-[0-9a-f]{24}$/);
+  assert.equal(Object.isFrozen(reviewed.action_lowerings[0].page), true);
+  assert.equal(editor.pages.length, 1);
+  assert.equal(controller.reject().status, 'REJECTED');
+  assert.equal(editor.pages.length, 1);
+  assert.equal(editor.currentPageId, 'page:main');
+
+  assert.equal(JSON.parse((await propose.execute(request)).content[0].text).status, 'STAGED');
+  assert.equal(controller.apply().status, 'APPLIED');
+  assert.equal(editor.pages.length, 2);
+  assert.equal(editor.currentPageId, reviewed.action_lowerings[0].page.id);
+  assert.equal(editor.getPage(editor.currentPageId).meta.fogwood_semantic_id, 'page:sketches');
+  assert.equal(editor.marks.filter((name) => name === 'Apply agent proposal').length, 1);
+  editor.undo();
+  assert.equal(editor.pages.length, 1);
+  assert.equal(editor.currentPageId, 'page:main');
+  cleanup();
+});
+
+test('page lifecycle refuses the page limit before staging', async () => {
+  const editor = new CanvasProposalEditor();
+  editor.options.maxPages = 1;
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const response = JSON.parse((await propose.execute({
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Create a page beyond the limit',
+    actions: [{ type: 'page_ops', operation: { op: 'create_and_switch', semantic_id: 'page:overflow', name: 'Overflow' } }],
+  })).content[0].text);
+  assert.equal(response.status, 'ERROR');
+  assert.match(response.message, /page limit/i);
+  assert.equal(controller.getState(), null);
+  assert.equal(editor.pages.length, 1);
+  cleanup();
+});
+
+test('camera focus is reviewed as an exact region and applies without document history or revision change', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const request = {
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Focus the sketch region',
+    actions: [{ type: 'camera_ops', operation: { op: 'focus_bounds', x: 120, y: 80, w: 640, h: 420, inset: 48 } }],
+  };
+  assert.equal(JSON.parse((await propose.execute(request)).content[0].text).status, 'STAGED');
+  const reviewed = controller.getState().plan;
+  assert.deepEqual(reviewed.preview.regions.at(-1).bounds, { x: 120, y: 80, w: 640, h: 420 });
+  assert.deepEqual(reviewed.transaction, {
+    contract_version: 1, authority: 'page-owned', atomic: true, editor_run: 'none', history: 'none', undo: 'not-applicable', apply: 'frozen-context-lowering-only', reject: 'no-mutation',
+  });
+  assert.equal(controller.reject().status, 'REJECTED');
+  assert.equal(editor.cameraFocuses.length, 0);
+
+  assert.equal(JSON.parse((await propose.execute(request)).content[0].text).status, 'STAGED');
+  assert.equal(controller.apply().status, 'APPLIED');
+  assert.deepEqual(editor.cameraFocuses, [{ bounds: { x: 120, y: 80, w: 640, h: 420 }, options: { immediate: true, inset: 48 } }]);
+  assert.equal(currentRevision(editor), inspected.content_revision);
   assert.equal(editor.marks.length, 0);
   cleanup();
 });

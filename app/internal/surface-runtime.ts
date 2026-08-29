@@ -1,5 +1,5 @@
-import { AssetRecordType, b64Vecs, createShapeId, toRichText } from 'tldraw';
-import type { Editor, TLAsset, TLAssetId, TLParentId, TLShape, TLShapeId } from 'tldraw';
+import { AssetRecordType, PageRecordType, b64Vecs, createShapeId, toRichText } from 'tldraw';
+import type { Editor, TLAsset, TLAssetId, TLPageId, TLParentId, TLShape, TLShapeId } from 'tldraw';
 import {
   BLOCK_KINDS,
   BLOCK_TONES,
@@ -49,6 +49,8 @@ import type { MaterialDecoder, PreparedMaterial } from '../fogwood-materials';
 import { buildPreparedCanvasPreview } from '../review/prepared-plan-preview.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { createEditorChangeCapture, createFogwoodChangeLedger, FOGWOOD_CHANGE_STORAGE_KEY } from '../runtime/change-ledger.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { FOGWOOD_SEMANTIC_LOWERERS, searchSemanticLowerers } from '../capabilities/semantic-lowerers.ts';
 import type { JsonObject } from '@tldraw/utils';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { sha256Hex } from '../fogwood-identities.ts';
@@ -1104,6 +1106,7 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
       planning_policy: { purity: 'pure', determinism: 'deterministic', speculation: 'shadow-only' },
       mutation_policy: { revision_keyed: true, speculation: 'never', page_apply_required: true },
     },
+    semantic_lowerers: { schema: 'fogwood.semantic-lowerer.v1', count: FOGWOOD_SEMANTIC_LOWERERS.length, manifests: FOGWOOD_SEMANTIC_LOWERERS },
     tldraw_examples: {
       source: TLDRAW_EXAMPLE_SOURCE,
       count: TLDRAW_EXAMPLE_CATALOG.length,
@@ -1813,6 +1816,8 @@ function preflightProposalCanvasOps(editor: Editor, proposal: ProposalV1) {
 type PreparedActionLowering = Readonly<{
   action: ProposalAction;
   canvas?: CanvasOpPlan;
+  page?: Readonly<{ op: 'create_and_switch'; id: TLPageId; semantic_id: string; name: string }>;
+  camera?: Readonly<{ op: 'focus_bounds'; x: number; y: number; w: number; h: number; inset: number }>;
 }>;
 
 type EditorPreparedCanvasPlan = PreparedCanvasPlan & Readonly<{
@@ -1925,6 +1930,13 @@ export function prepareProposalPlan(
         const result = planCanvasOps(current.items, action.ops, current.page_id, action.type === 'canvas_ops' ? action.composition_id : undefined);
         if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
         actionLowerings.push({ action, canvas: result.plan });
+      } else if (action.type === 'page_ops') {
+        if (editor.getPages().length >= editor.options.maxPages) throw new Error('The page limit has been reached; remove a page before staging another.');
+        const id = PageRecordType.createId(`fogwood-${sha256Hex(canonicalSerialize({ semantic_id: action.operation.semantic_id })).slice(0, 24)}`);
+        if (editor.getPage(id)) throw new Error('The deterministic page target already exists; inspect again before retrying.');
+        actionLowerings.push({ action, page: { op: 'create_and_switch', id, semantic_id: action.operation.semantic_id, name: action.operation.name } });
+      } else if (action.type === 'camera_ops') {
+        actionLowerings.push({ action, camera: { ...action.operation, inset: action.operation.inset ?? 64 } });
       } else {
         actionLowerings.push({ action });
       }
@@ -1943,12 +1955,28 @@ export function prepareProposalPlan(
   const frozenMaterialLowerings = Object.freeze(materialLowerings);
   const frozenSeededEvidence = Object.freeze(diff.seeded_compositions);
   const frozenMaterialEvidence = Object.freeze(preparedMaterials.map(materialEvidence));
-  const preview = buildPreparedCanvasPreview({
+  const basePreview = buildPreparedCanvasPreview({
     canvasPlans: actionLowerings.flatMap((entry) => entry.canvas ? [entry.canvas] : []),
     currentItems: current.items,
     materials: preparedMaterials,
   });
-  const transaction = {
+  const cameraRegions = actionLowerings.flatMap((entry, index) => entry.camera ? [{
+    semantic_id: `camera-focus:${index}`,
+    label: 'Viewport focus',
+    bounds: { x: entry.camera.x, y: entry.camera.y, w: entry.camera.w, h: entry.camera.h },
+  }] : []);
+  const preview = cameraRegions.length === 0 ? basePreview : { ...basePreview, regions: [...basePreview.regions, ...cameraRegions] };
+  const cameraOnly = actions.length > 0 && actions.every((action) => action.type === 'camera_ops');
+  const transaction = cameraOnly ? {
+    contract_version: 1 as const,
+    authority: 'page-owned' as const,
+    atomic: true as const,
+    editor_run: 'none' as const,
+    history: 'none' as const,
+    undo: 'not-applicable' as const,
+    apply: 'frozen-context-lowering-only' as const,
+    reject: 'no-mutation' as const,
+  } : {
     contract_version: 1 as const,
     authority: 'page-owned' as const,
     atomic: true as const,
@@ -2019,6 +2047,22 @@ function executePreparedProposal(editor: Editor, plan: EditorPreparedCanvasPlan)
   // transaction. Content revision equality makes context-only changes safe.
   const canvasAdapterError = preflightCanvasOpPlans(editor, plan.action_lowerings.flatMap((entry) => entry.canvas ? [entry.canvas] : []));
   if (canvasAdapterError) return { ok: false as const, status: 'ERROR' as const, message: canvasAdapterError };
+  for (const entry of plan.action_lowerings) {
+    if (entry.page && editor.getPage(entry.page.id)) return { ok: false as const, status: 'ERROR' as const, message: 'The reviewed page target is no longer available.' };
+    if (entry.page && editor.getPages().length >= editor.options.maxPages) return { ok: false as const, status: 'ERROR' as const, message: 'The page limit was reached after review; inspect again before retrying.' };
+  }
+  const cameraOnly = plan.action_lowerings.length > 0 && plan.action_lowerings.every((entry) => Boolean(entry.camera));
+  if (cameraOnly) {
+    try {
+      for (const entry of plan.action_lowerings) if (entry.camera) editor.zoomToBounds(
+        { x: entry.camera.x, y: entry.camera.y, w: entry.camera.w, h: entry.camera.h },
+        { immediate: true, inset: entry.camera.inset },
+      );
+      return { ok: true as const };
+    } catch (error) {
+      return { ok: false as const, status: 'ERROR' as const, message: error instanceof Error ? error.message.slice(0, 180) : 'The page rejected the camera focus.' };
+    }
+  }
   const createdAssetIds: TLAssetId[] = [];
   let applyMark: string | undefined;
   try {
@@ -2036,6 +2080,12 @@ function executePreparedProposal(editor: Editor, plan: EditorPreparedCanvasPlan)
           const materialEntry = plan.material_lowerings.filter((candidate) => action.materials.includes(candidate.material));
           if (materialEntry.length !== action.materials.length) throw new Error('The staged material lowering was incomplete.');
           applyMaterialLowerings(editor, materialEntry, createdAssetIds);
+        } else if (action.type === 'page_ops') {
+          if (!entry.page) throw new Error('The page lowering was not retained through Apply.');
+          editor.createPage({ id: entry.page.id, name: entry.page.name, meta: { fogwood_semantic_id: entry.page.semantic_id } });
+          editor.setCurrentPage(entry.page.id);
+        } else if (action.type === 'camera_ops') {
+          throw new Error('Camera-only plans must use the page-owned context lane.');
         }
       }
     }, { history: 'record' });
@@ -2211,6 +2261,7 @@ export function registerSurfaceTools(
             ontology_version: FOGWOOD_CAPABILITY_ONTOLOGY_VERSION,
             registry_version: FOGWOOD_REGISTRY_VERSION,
             manifests,
+            semantic_lowerers: FOGWOOD_SEMANTIC_LOWERERS,
             counts: {
               available: manifests.filter((entry) => entry.availability === 'available').length,
               blocked: manifests.filter((entry) => entry.availability === 'blocked').length,
@@ -2263,14 +2314,15 @@ export function registerSurfaceTools(
         if (value.page_size !== undefined && (typeof value.page_size !== 'number' || !Number.isInteger(value.page_size) || value.page_size < 1 || value.page_size > 20)) return textResult({ status: 'INVALID_INPUT', error: 'page_size must be an integer from 1 to 20.' }, true);
         if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^\d+$/.test(value.cursor) || value.cursor.length > 16)) return textResult({ status: 'INVALID_INPUT', error: 'cursor must be a bounded numeric string.' }, true);
         const result = searchCapabilities(value as CapabilitySearchInput);
+        const semanticLowerers = searchSemanticLowerers(typeof value.query === 'string' ? value.query : '');
         onActivity?.('Fogwood searched capabilities', `${result.results.length} local capability results returned.`);
-        return textResult(result);
+        return textResult({ ...result, semantic_lowerers: semanticLowerers });
       },
     },
     {
       name: 'fogwood-propose',
       title: 'Propose a Fogwood change',
-      description: 'Validate and stage one bounded typed proposal against an inspect content_revision and context_token. Use canvas_ops to mix exact native operations, seeded_composition to create reproducible preserved variants from a selected or explicit stable scope, or add_materials for qualified local artifacts. Staging never mutates the canvas; a person must choose page Apply or Reject.',
+      description: 'Validate and stage one bounded typed proposal against an inspect content_revision and context_token. Native canvas, material, page lifecycle, and viewport focus operations all prepare frozen lowerings; a person must choose page Apply or Reject.',
       inputSchema: PROPOSAL_TOOL_INPUT_SCHEMA,
       annotations: { untrustedContentHint: true },
       execute: (input) => {
@@ -2289,10 +2341,10 @@ export function registerSurfaceTools(
           && isRecord(input.actions[0])
           ? input.actions[0]
           : null;
-        if (!publicAction || !['canvas_ops', 'seeded_composition', 'add_materials'].includes(String(publicAction.type))) {
+        if (!publicAction || !['canvas_ops', 'seeded_composition', 'add_materials', 'page_ops', 'camera_ops'].includes(String(publicAction.type))) {
           return textResult({
             status: 'INVALID_INPUT',
-            error: 'The public Fogwood protocol accepts exactly one canvas_ops, seeded_composition, or add_materials action per proposal.',
+            error: 'The public Fogwood protocol accepts exactly one bounded native, material, page, or camera action per proposal.',
           }, true);
         }
         if (isRecord(input) && Array.isArray(input.actions) && input.actions.some((action) => isRecord(action) && action.type === 'add_materials')) {

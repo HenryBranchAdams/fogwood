@@ -24,6 +24,8 @@ import type { FogwoodCapabilityManifest } from './fogwood-capability-planner.ts'
 import { isPreparedMaterial, prepareMaterials, MATERIAL_LIMITS, MATERIAL_TEXT_LIMITS, SUPPORTED_MATERIAL_MIME_TYPES } from './fogwood-materials.ts';
 import type { MaterialInput, MaterialDecoder, PreparedMaterial } from './fogwood-materials.ts';
 import type { SemanticRelationship } from './fogwood-spatial.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { CAMERA_OPS_ACTION_SCHEMA, PAGE_OPS_ACTION_SCHEMA } from './capabilities/semantic-lowerers.ts';
 
 export const FOGWOOD_PROTOCOL = 'fogwood-agent-runtime';
 export const FOGWOOD_PROTOCOL_VERSION = '2';
@@ -646,6 +648,8 @@ const exactActionSchemas: Record<string, CapabilitySchema> = {
     },
     required: ['type', 'materials'],
   },
+  page_ops: PAGE_OPS_ACTION_SCHEMA,
+  camera_ops: CAMERA_OPS_ACTION_SCHEMA,
 };
 
 
@@ -662,8 +666,8 @@ export const PROPOSAL_INPUT_SCHEMA: CapabilitySchema = {
       type: 'array',
       minItems: 1,
       maxItems: 1,
-      description: 'One public action per staged proposal. canvas_ops composes up to 24 native editor operations; seeded_composition creates bounded reproducible preserved variants; add_materials stages one bounded local material batch.',
-      items: { oneOf: [exactActionSchemas.canvas_ops, exactActionSchemas.seeded_composition, exactActionSchemas.add_materials] },
+      description: 'One public action per staged proposal. Native, material, page, and camera lowerers all prepare exact bounded effects before page review.',
+      items: { oneOf: [exactActionSchemas.canvas_ops, exactActionSchemas.seeded_composition, exactActionSchemas.add_materials, exactActionSchemas.page_ops, exactActionSchemas.camera_ops] },
     },
   },
   required: ['base_revision', 'summary', 'actions'],
@@ -910,6 +914,28 @@ export const CAPABILITY_REGISTRY: readonly Capability[] = deepFreeze([
     input_schema: exactActionSchemas.add_materials,
   },
   {
+    id: 'page_ops',
+    kind: 'action',
+    version: 1,
+    title: 'Create and enter a page',
+    summary: 'Prepare one deterministic page record and switch to it only after page-owned review.',
+    use_when: 'The person asks for a separate named working space and the current document has page capacity.',
+    keywords: ['page', 'create page', 'new page', 'switch page'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.page_ops,
+  },
+  {
+    id: 'camera_ops',
+    kind: 'action',
+    version: 1,
+    title: 'Focus the viewport',
+    summary: 'Prepare one exact bounded page-space rectangle for page-owned viewport focus.',
+    use_when: 'The person asks to frame, focus, or zoom to a known region without changing document content.',
+    keywords: ['camera', 'viewport', 'focus', 'zoom', 'bounds'],
+    effect: 'page-apply',
+    input_schema: exactActionSchemas.camera_ops,
+  },
+  {
     id: 'primitive.surface-block',
     kind: 'primitive',
     version: 1,
@@ -1006,6 +1032,8 @@ const PUBLIC_CAPABILITY_IDS = new Set([
   'canvas_ops.lock-safety',
   'persistence.device-local',
   'add_materials',
+  'page_ops',
+  'camera_ops',
   ...FOGWOOD_CAPABILITY_ONTOLOGY.map((manifest) => manifest.id),
 ]);
 
@@ -1055,10 +1083,22 @@ export type AddMaterialsAction = {
   materials: Array<MaterialInput | PreparedMaterial>;
 };
 
+export type PageOpsAction = {
+  type: 'page_ops';
+  operation: { op: 'create_and_switch'; semantic_id: string; name: string };
+};
+
+export type CameraOpsAction = {
+  type: 'camera_ops';
+  operation: { op: 'focus_bounds'; x: number; y: number; w: number; h: number; inset?: number };
+};
+
 export type ProposalAction =
   | CanvasOpsAction
   | NormalizedSeededCompositionAction
-  | AddMaterialsAction;
+  | AddMaterialsAction
+  | PageOpsAction
+  | CameraOpsAction;
 
 export type ProposalV1 = {
   base_revision: string;
@@ -1099,6 +1139,15 @@ export type PreparedCanvasPlanTransaction = Readonly<{
   history: 'one-stopping-point';
   undo: 'one-step';
   apply: 'frozen-lowerings-only';
+  reject: 'no-mutation';
+}> | Readonly<{
+  contract_version: 1;
+  authority: 'page-owned';
+  atomic: true;
+  editor_run: 'none';
+  history: 'none';
+  undo: 'not-applicable';
+  apply: 'frozen-context-lowering-only';
   reject: 'no-mutation';
 }>;
 
@@ -1416,7 +1465,10 @@ export function buildProposalDiff(
         adds.material_specs.push(spec);
         adds.specs.push(spec);
       }
+      continue;
     }
+    if (action.type === 'page_ops') warnings.push(`Create and switch to page “${action.operation.name}” (${action.operation.semantic_id}).`);
+    if (action.type === 'camera_ops') warnings.push(`Focus the viewport on page bounds (${action.operation.x}, ${action.operation.y}, ${action.operation.w}, ${action.operation.h}).`);
   }
   adds.total = adds.blocks + adds.shapes + adds.materials;
   removes.total = removes.ids.length;
@@ -1565,6 +1617,17 @@ export function validateProposal(input: unknown, context: ProposalContext, optio
         normalizedMaterials.push(material);
       }
       if (errors.length === 0) normalizedActions.push({ type: 'add_materials', coordinate_space: 'page', materials: normalizedMaterials });
+    }
+  } else if (raw.type === 'page_ops') {
+    if (!hasOnlyKeys(raw, ['type', 'operation']) || !isRecord(raw.operation) || !hasOnlyKeys(raw.operation, ['op', 'semantic_id', 'name'])) addError(errors, 'INVALID_PAGE_OP', 'page_ops accepts one bounded create_and_switch operation.', 'actions[0]');
+    else if (raw.operation.op !== 'create_and_switch' || typeof raw.operation.semantic_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._/-]{0,179}$/u.test(raw.operation.semantic_id) || typeof raw.operation.name !== 'string' || raw.operation.name.length < 1 || raw.operation.name.length > 80) addError(errors, 'INVALID_PAGE_OP', 'create_and_switch requires a stable semantic_id and a 1-80 character name.', 'actions[0].operation');
+    else normalizedActions.push({ type: 'page_ops', operation: { op: 'create_and_switch', semantic_id: raw.operation.semantic_id, name: raw.operation.name } });
+  } else if (raw.type === 'camera_ops') {
+    if (!hasOnlyKeys(raw, ['type', 'operation']) || !isRecord(raw.operation) || !hasOnlyKeys(raw.operation, ['op', 'x', 'y', 'w', 'h', 'inset'])) addError(errors, 'INVALID_CAMERA_OP', 'camera_ops accepts one bounded focus_bounds operation.', 'actions[0]');
+    else {
+      const { op, x, y, w, h, inset } = raw.operation;
+      if (op !== 'focus_bounds' || ![x, y, w, h, inset ?? 0].every(isFiniteNumber) || Math.abs(x as number) > 100_000 || Math.abs(y as number) > 100_000 || (w as number) < 16 || (w as number) > 100_000 || (h as number) < 16 || (h as number) > 100_000 || (inset !== undefined && ((inset as number) < 0 || (inset as number) > 512))) addError(errors, 'INVALID_CAMERA_OP', 'focus_bounds must stay inside the bounded page-space and inset limits.', 'actions[0].operation');
+      else normalizedActions.push({ type: 'camera_ops', operation: { op: 'focus_bounds', x: x as number, y: y as number, w: w as number, h: h as number, ...(inset === undefined ? {} : { inset: inset as number }) } });
     }
   } else {
     return { ok: false, errors: [{ code: 'UNKNOWN_ACTION', message: 'Unsupported action type: ' + raw.type + '.', path: 'actions[0].type' }] };
