@@ -1,7 +1,7 @@
 # Fogwood acceptance manifest
 
-Status: IN PROGRESS — canonicalization and issues #1–#6 are locally qualified;
-revision memoization (#7), exact nested/rotated transforms (#8), independent
+Status: IN PROGRESS — canonicalization and issues #1–#7 are locally qualified;
+exact nested/rotated transforms (#8), independent
 integrated verification, and a final exact-commit deployment remain. Sites
 version 13 is the last deployed baseline and does not include this issue phase.
 
@@ -79,6 +79,7 @@ boundaries.
 | Public WebMCP boundary | Exactly `fogwood-inspect`, `fogwood-capabilities`, `fogwood-propose`; no page-owned apply tool. | PASS |
 | Public proposal union | Five closed semantic families: native, seeded, materials, page lifecycle, and camera focus; schemas share the versioned lowerer manifests. | PASS — local #6 |
 | Semantic lowerer extension | `fogwood.semantic-lowerer.v1`, ADR 0006, and the 213-route coverage matrix distinguish addressing from local/host/stage/success evidence. | PASS — page and camera fixtures plus Browser proof |
+| Revision memoization | Canonical content revision computes at most once per relevant current-page generation; document changes invalidate while camera/selection state does not; cache remains advisory and non-authoritative. | PASS — issue #7 fixtures, 5,000-shape benchmark, rendered Apply/Undo proof |
 | Prepared-plan staging | All lowerings/material decoders prepared once; plan frozen before review; exact digest retained. | PASS |
 | Authority seam split | Public WebMCP, read projection, transaction, review, and compatibility callers use narrow named modules; the old import remains a thin façade. | PASS — boundary tests and unchanged public behavior |
 | Human authority | Page-owned Apply/Reject only; stale revision/precondition refusal; no automatic mutation. | PASS |
@@ -106,7 +107,9 @@ do not promote an unrun check to PASS.
 | --- | --- |
 | Issue #6 local matrix | PASS — 234/234 tests; typecheck, lint, build, compiler check, and diff check all exit 0; build retains only known chunk-size and route-classification warnings |
 | Issue #6 Browser/WebMCP | PASS — `http://localhost:4211/`; exactly three tools; inspect reports two semantic lowerers; page proposal staged/rejected without revision change, then applied and one-step undone to the exact revision; camera proposal reviewed/applied with unchanged content revision and no history; no browser warnings/errors; `/private/tmp/fogwood-issue6-semantic-lowerers.png` |
-| `npm test` | PASS — 221/221; pretest compiler check PASS |
+| Issue #7 local cache matrix | PASS — exact canonical equality; one computation per generation across repeated inspect/capabilities/stage; same-turn shape, binding, referenced asset, page switch, Undo/Redo, persistence restore, and history-reset invalidation; camera/viewport/selection/hover/editing non-invalidation; listener cleanup; 5,000-shape fixture and 100 repeated reads. Threshold is computation count, not wall time. |
+| Issue #7 Browser/WebMCP | PASS — `http://localhost:4211/`; repeated inspect and capabilities held generation/computations at `0/1`; from a settled baseline camera Apply held `1/2` and the exact content revision; native Apply changed the revision and invalidated; one Undo restored the exact prior revision; no browser warnings/errors; `/private/tmp/fogwood-issue7-revision-cache.jpg` |
+| `npm test` | PASS — 238/238; pretest compiler check PASS |
 | `npx tsc --noEmit` | PASS |
 | `npm run lint` | PASS — no warnings |
 | `npm run build` | PASS — only the known >500 kB chunk and vinext route-classification warnings |

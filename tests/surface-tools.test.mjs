@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import { createCompareInstrumentScope } from '../app/fogwood-instrument-adapter.ts';
 import { CAPABILITY_REGISTRY } from '../app/fogwood-runtime.ts';
-import { applyProposalToEditor, createInstrumentControlGesture, currentContextToken, currentRevision, inspectSurface, planCapabilityRequestForEditor, proposalActivityDetail, registerSurfaceTools, updateInstrumentControl } from '../app/surface-tools.ts';
+import { applyProposalToEditor, createInstrumentControlGesture, currentContextToken, currentRevision, currentRevisionCacheStats, inspectSurface, planCapabilityRequestForEditor, proposalActivityDetail, registerSurfaceTools, updateInstrumentControl } from '../app/surface-tools.ts';
 import { relationshipSemanticId } from '../app/fogwood-spatial.ts';
 import { CAMERA_OPS_ACTION_SCHEMA, FOGWOOD_SEMANTIC_LOWERERS, PAGE_OPS_ACTION_SCHEMA, searchSemanticLowerers, validateSemanticLowererManifest } from '../app/capabilities/semantic-lowerers.ts';
 
@@ -344,6 +344,39 @@ class CanvasProposalEditor extends ProposalEditor {
   sendBackward() {}
 }
 
+function installRevisionHistoryStore(editor) {
+  let epoch = 0;
+  let resetEpoch = null;
+  const diffs = [];
+  const listeners = new Set();
+  const allRecords = editor.store.allRecords;
+  editor.store = {
+    allRecords,
+    history: {
+      get: () => epoch,
+      getDiffSince: (from) => resetEpoch !== null && from < resetEpoch ? null : diffs.slice(from),
+    },
+    listen(listener, filters) {
+      assert.deepEqual(filters, { scope: 'document' });
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  return {
+    change(diff, { notify = true, source = 'user' } = {}) {
+      epoch += 1;
+      diffs.push(diff);
+      if (notify) for (const listener of listeners) listener({ changes: diff, source });
+    },
+    reset() {
+      epoch += 1;
+      resetEpoch = epoch;
+      diffs.push({});
+    },
+    listenerCount: () => listeners.size,
+  };
+}
+
 test('the capability tool planner reads the live revision and returns a compound plan without mutation', () => {
   const editor = new CanvasProposalEditor();
   const before = clone(editor.shapes);
@@ -548,6 +581,93 @@ test('camera focus is reviewed as an exact region and applies without document h
   assert.equal(currentRevision(editor), inspected.content_revision);
   assert.equal(editor.marks.length, 0);
   cleanup();
+});
+
+test('registered revision cache invalidates exact page content but ignores ephemeral editor state', async () => {
+  const editor = new CanvasProposalEditor();
+  editor.createAssets([{ id: 'asset:one', typeName: 'asset', type: 'image', props: { src: 'data:image/png;base64,AA==', w: 1, h: 1, mimeType: 'image/png' }, meta: {} }]);
+  editor.createShapes([
+    { id: 'shape:a', type: 'geo', x: 40, y: 50, parentId: 'page:main', props: { w: 120, h: 80 }, meta: { fogwood: { semantic_id: 'idea:a' } } },
+    { id: 'shape:b', type: 'image', x: 220, y: 80, parentId: 'page:main', props: { w: 80, h: 80, assetId: 'asset:one' }, meta: { fogwood: { semantic_id: 'image:b' } } },
+  ]);
+  const history = installRevisionHistoryStore(editor);
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const inspect = editor.registeredTools.find((tool) => tool.name === 'fogwood-inspect');
+  const capabilities = editor.registeredTools.find((tool) => tool.name === 'fogwood-capabilities');
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+
+  const first = JSON.parse((await inspect.execute({})).content[0].text);
+  await inspect.execute({});
+  await capabilities.execute({ mode: 'available', base_revision: first.content_revision, context_token: first.context_token });
+  const staged = JSON.parse((await propose.execute({
+    base_revision: first.content_revision,
+    context_token: first.context_token,
+    summary: 'Stage without changing the page',
+    actions: [{ type: 'camera_ops', operation: { op: 'focus_bounds', x: 0, y: 0, w: 400, h: 300 } }],
+  })).content[0].text);
+  assert.equal(staged.status, 'STAGED');
+  assert.equal(currentRevisionCacheStats(editor).computations, 1);
+  assert.equal(controller.reject().status, 'REJECTED');
+
+  editor.setContext({ selectedShapeIds: ['shape:a'], editingShapeId: 'shape:a', currentToolId: 'draw' });
+  history.change({ updated: { 'instance:one': [{ id: 'instance:one', typeName: 'instance' }, { id: 'instance:one', typeName: 'instance' }] } }, { notify: false });
+  currentRevision(editor);
+  assert.equal(currentRevisionCacheStats(editor).computations, 1);
+
+  const beforeShape = clone(editor.getShape('shape:a'));
+  editor.getShape('shape:a').x = 41;
+  history.change({ updated: { 'shape:a': [beforeShape, clone(editor.getShape('shape:a'))] } }, { notify: false });
+  const afterRapidEdit = currentRevision(editor);
+  assert.notEqual(afterRapidEdit, first.content_revision);
+  assert.equal(currentRevisionCacheStats(editor).computations, 2);
+
+  const beforeAsset = clone(editor.assets[0]);
+  editor.assets[0].props.name = 'changed';
+  history.change({ updated: { 'asset:one': [beforeAsset, clone(editor.assets[0])] } });
+  currentRevision(editor);
+  assert.equal(currentRevisionCacheStats(editor).computations, 3);
+
+  const binding = { id: 'binding:manual', typeName: 'binding', type: 'arrow', fromId: 'shape:a', toId: 'shape:b', props: {}, meta: {} };
+  editor.bindings.push(binding);
+  history.change({ added: { 'binding:manual': binding } });
+  currentRevision(editor);
+  assert.equal(currentRevisionCacheStats(editor).computations, 4);
+
+  const pageOneRevision = currentRevision(editor);
+  editor.pages.push({ id: 'page:two', typeName: 'page', name: 'Page 2', meta: {} });
+  editor.currentPageId = 'page:two';
+  const pageTwoRevision = currentRevision(editor);
+  assert.notEqual(pageTwoRevision, pageOneRevision);
+  assert.equal(currentRevisionCacheStats(editor).computations, 5);
+  editor.currentPageId = 'page:main';
+  assert.equal(currentRevision(editor), pageOneRevision);
+  assert.equal(currentRevisionCacheStats(editor).computations, 6);
+
+  const beforeUndo = clone(editor.getShape('shape:a'));
+  editor.getShape('shape:a').x = 99;
+  const changed = clone(editor.getShape('shape:a'));
+  history.change({ updated: { 'shape:a': [beforeUndo, changed] } });
+  const changedRevision = currentRevision(editor);
+  editor.getShape('shape:a').x = beforeUndo.x;
+  history.change({ updated: { 'shape:a': [changed, clone(editor.getShape('shape:a'))] } });
+  assert.equal(currentRevision(editor), pageOneRevision);
+  editor.getShape('shape:a').x = changed.x;
+  history.change({ updated: { 'shape:a': [beforeUndo, changed] } });
+  assert.equal(currentRevision(editor), changedRevision);
+
+  editor.getShape('shape:a').x = 123;
+  history.reset();
+  assert.notEqual(currentRevision(editor), changedRevision);
+  assert.equal(JSON.parse((await propose.execute({
+    base_revision: first.content_revision,
+    context_token: first.context_token,
+    summary: 'This stale proposal must fail',
+    actions: [{ type: 'camera_ops', operation: { op: 'focus_bounds', x: 0, y: 0, w: 400, h: 300 } }],
+  })).content[0].text).status, 'STALE_STATE');
+
+  cleanup();
+  assert.equal(history.listenerCount(), 0);
 });
 
 test('inspect exposes a bounded context token separate from content revision', () => {

@@ -48,6 +48,14 @@ Every staged action is revision-bound, inspected before review, and rechecked
 before Apply. Accepted matter remains movable, annotatable, connectable,
 branchable, and editable on the canvas.
 
+The opaque content revision is memoized per current-page document generation.
+Repeated inspect, capability, and stage reads reuse the exact canonical bytes;
+relevant shape, binding, referenced-asset, page, Undo, Redo, and restore events
+invalidate the cache. Camera, viewport, selection, hover, and editing state do
+not. This cache is advisory performance infrastructure only: it is neither
+persisted evidence nor an authority decision, and stale Apply checks still
+compare the independently recomputed current generation.
+
 ## Medium participation contract
 
 The inspect response in registry version 8 states the intended operating loop

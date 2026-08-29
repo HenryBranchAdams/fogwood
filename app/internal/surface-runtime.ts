@@ -51,6 +51,8 @@ import { buildPreparedCanvasPreview } from '../review/prepared-plan-preview.ts';
 import { createEditorChangeCapture, createFogwoodChangeLedger, FOGWOOD_CHANGE_STORAGE_KEY } from '../runtime/change-ledger.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { FOGWOOD_SEMANTIC_LOWERERS, searchSemanticLowerers } from '../capabilities/semantic-lowerers.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { createContentRevisionCache } from '../tldraw-adapter/revision-cache.ts';
 import type { JsonObject } from '@tldraw/utils';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { sha256Hex } from '../fogwood-identities.ts';
@@ -727,9 +729,63 @@ function bindingCountsByShape(bindings: readonly { fromId: string; toId: string 
   return counts;
 }
 
-export function currentRevision(editor: Editor) {
+type StoreRecordLike = { id?: unknown; typeName?: unknown; parentId?: unknown; fromId?: unknown; toId?: unknown; type?: unknown; props?: unknown };
+type StoreDiffLike = { added?: Record<string, StoreRecordLike>; updated?: Record<string, [StoreRecordLike, StoreRecordLike]>; removed?: Record<string, StoreRecordLike> };
+
+function revisionDiffIsRelevant(editor: Editor, value: unknown) {
+  if (!isRecord(value)) return true;
+  const diff = value as StoreDiffLike;
+  const records = [
+    ...Object.values(diff.added ?? {}),
+    ...Object.values(diff.updated ?? {}).flatMap((pair) => pair),
+    ...Object.values(diff.removed ?? {}),
+  ];
+  if (records.length === 0) return false;
+  const pageId = String(editor.getCurrentPageId());
+  const currentShapes = editor.getCurrentPageShapes();
+  const currentShapeIds = new Set(currentShapes.map((shape) => String(shape.id)));
+  const changedById = new Map(records.flatMap((record) => typeof record.id === 'string' ? [[record.id, record] as const] : []));
+  const shapeBelongsToPage = (record: StoreRecordLike) => {
+    if (record.typeName !== 'shape') return false;
+    if (typeof record.id === 'string' && currentShapeIds.has(record.id)) return true;
+    const visited = new Set<string>();
+    let parentId = typeof record.parentId === 'string' ? record.parentId : undefined;
+    while (parentId && !visited.has(parentId)) {
+      if (parentId === pageId || currentShapeIds.has(parentId)) return true;
+      visited.add(parentId);
+      const parent = changedById.get(parentId);
+      parentId = parent && typeof parent.parentId === 'string' ? parent.parentId : undefined;
+    }
+    return false;
+  };
+  const changedPageShapes = records.filter(shapeBelongsToPage);
+  if (changedPageShapes.length > 0) return true;
+  const pageShapeIds = new Set([...currentShapeIds, ...changedPageShapes.flatMap((record) => typeof record.id === 'string' ? [record.id] : [])]);
+  const bindings = records.filter((record) => record.typeName === 'binding');
+  if (bindings.some((binding) => typeof binding.fromId === 'string' && typeof binding.toId === 'string' && pageShapeIds.has(binding.fromId) && pageShapeIds.has(binding.toId))) return true;
+  const referencedAssetIds = new Set<string>();
+  for (const shape of [...currentShapes, ...changedPageShapes]) {
+    if (shape.type !== 'image' || !isRecord(shape.props) || typeof shape.props.assetId !== 'string') continue;
+    referencedAssetIds.add(shape.props.assetId);
+  }
+  if (records.some((record) => record.typeName === 'asset' && typeof record.id === 'string' && referencedAssetIds.has(record.id))) return true;
+  return records.some((record) => record.typeName === 'page' && record.id === pageId);
+}
+
+type ActiveRevisionCache = ReturnType<typeof createContentRevisionCache>;
+const revisionCaches = new WeakMap<Editor, ActiveRevisionCache>();
+
+function uncachedCurrentRevision(editor: Editor) {
   const { shapes, bindings, assets } = pageContent(editor);
   return computePageRevision(editor.getCurrentPageId(), shapes, bindings, assets);
+}
+
+export function currentRevision(editor: Editor) {
+  return revisionCaches.get(editor)?.get() ?? uncachedCurrentRevision(editor);
+}
+
+export function currentRevisionCacheStats(editor: Editor) {
+  return revisionCaches.get(editor)?.stats() ?? null;
 }
 
 type ContextEditor = Editor & {
@@ -1095,6 +1151,8 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
     ...canvasContext,
     selected_ids: canvasContext.selected_ids_preview,
   };
+  const contentRevision = currentRevision(editor);
+  const revisionCache = currentRevisionCacheStats(editor);
   return {
     protocol: { name: FOGWOOD_PROTOCOL, version: FOGWOOD_PROTOCOL_VERSION, registry_version: FOGWOOD_REGISTRY_VERSION },
     canvas_protocol: FOGWOOD_CANVAS_PROTOCOL,
@@ -1128,8 +1186,11 @@ export function inspectSurface(editor: Editor, input: { page_size?: number; curs
     workflow_contract: 'inspect -> full-surface route/plan -> local or observed host capability -> bounded proposal -> page Apply/Reject -> inspect again',
     authority: { agent: 'read current state, search local capabilities, and stage typed proposals', page: 'owns validation and Apply/Reject; only page Apply mutates content' },
     no_code: true,
-    content_revision: currentRevision(editor),
+    content_revision: contentRevision,
     revision_source: 'current-page-shapes-bindings-and-referenced-asset-metadata; camera and selection excluded',
+    revision_cache: revisionCache
+      ? { mode: 'memoized', ...revisionCache }
+      : { mode: 'uncached', generation: null, computations: null, last_duration_ms: null, page_id: String(editor.getCurrentPageId()), cached: false },
     context_token: contextToken,
     canvas_context: publicCanvasContext,
     page: {
@@ -2143,6 +2204,17 @@ export function registerSurfaceTools(
   options: SurfaceMaterialOptions = {},
 ) {
   const containerDocument = editor.getContainer().ownerDocument as Document & { modelContext?: ModelContext };
+  const storeWithHistory = editor.store as typeof editor.store & { history?: { get?: () => number; getDiffSince?: (epoch: number) => unknown } };
+  let revisionCache: ActiveRevisionCache | undefined;
+  if (typeof storeWithHistory.listen === 'function' && typeof storeWithHistory.history?.get === 'function' && typeof storeWithHistory.history?.getDiffSince === 'function') {
+    revisionCache = createContentRevisionCache({
+      store: storeWithHistory as Parameters<typeof createContentRevisionCache>[0]['store'],
+      getPageId: () => String(editor.getCurrentPageId()),
+      compute: () => uncachedCurrentRevision(editor),
+      isRelevant: (diff) => revisionDiffIsRelevant(editor, diff),
+    });
+    revisionCaches.set(editor, revisionCache);
+  }
   let memoryChangeLedger = '';
   const changeStorage = {
     read: () => {
@@ -2397,6 +2469,8 @@ export function registerSurfaceTools(
   });
   return () => {
     changeCapture.dispose();
+    revisionCache?.dispose();
+    if (revisionCache) revisionCaches.delete(editor);
     unregister();
   };
 }

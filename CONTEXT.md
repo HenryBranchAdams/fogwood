@@ -99,6 +99,12 @@ remain compatible.
 or adapter works. A searchable example or route is not proof that upstream
 source executed.
 
+**Content revision generation** — a current-page document generation used only
+to memoize the canonical opaque revision. Relevant document diffs, page
+switches, Undo, Redo, and persistence restoration advance it; ephemeral camera,
+viewport, selection, hover, and editing changes do not. The cache is not
+persisted, is not receipt evidence, and never grants authority.
+
 ## Prepared-plan invariants
 
 - Stage validates the inspected content revision and context where required,
@@ -117,6 +123,10 @@ source executed.
   permissions, semantic IDs, targets, or authority.
 - User geometry, locked objects, semantic relationships, and prior variants are
   preserved unless an explicit reviewed operation targets them.
+- Revision memoization permits at most one canonical computation per relevant
+  generation. The benchmark fixture uses the supported 5,000-shape inspect
+  ceiling; its acceptance threshold is computation count and byte-for-byte
+  equality, not a machine-specific wall-time SLA.
 
 ## Bazaar and tldraw examples
 

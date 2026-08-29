@@ -11,6 +11,7 @@ export {
   contextTokenForEditor,
   currentContextToken,
   currentRevision,
+  currentRevisionCacheStats,
   inspectAvailableCapabilities,
   inspectSurface,
   planCapabilityRequestForEditor,
