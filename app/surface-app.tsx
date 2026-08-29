@@ -11,6 +11,7 @@ import { FOGWOOD_PERSISTENCE_KEY } from './fogwood-persistence';
 import { createFogwoodReceiptRecorder } from './fogwood-receipt-recorder';
 import { RECEIPT_STORAGE_KEY, createReceiptLedger } from './fogwood-receipts';
 import type { ProposalControllerState } from './fogwood-runtime';
+import { PreparedPlanOverlay } from './review/prepared-plan-overlay';
 import { SurfaceBlockUtil } from './surface-block';
 import {
   type SurfaceToolController,
@@ -167,6 +168,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const connectionState = connectionPresentation(connection);
   const entries = proposal ? proposalDiffEntries(proposal.diff) : [];
   const seededAction = proposal?.proposal.actions.find((action) => action.type === 'seeded_composition');
+  const tldrawComponents = useMemo(() => ({
+    InFrontOfTheCanvas: () => <PreparedPlanOverlay plan={proposal?.status === 'pending' ? proposal.plan : undefined} />,
+  }), [proposal]);
 
   function applyProposal() {
     const result = proposalController.current?.apply();
@@ -192,6 +196,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
           licenseKey={licenseKey}
           persistenceKey={FOGWOOD_PERSISTENCE_KEY}
           onMount={mountEditor}
+          components={tldrawComponents}
         />
 
         <div
@@ -219,6 +224,10 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
               {proposal.proposal.rationale && (
                 <p className="proposal-rationale">{proposal.proposal.rationale}</p>
               )}
+
+              <p className="proposal-plan-id" title={proposal.plan.plan_id}>
+                Prepared plan <code>{proposal.plan.plan_id.slice(0, 19)}…</code>
+              </p>
 
               <div className="proposal-counts" aria-label="Proposal change counts">
                 <span><strong>{proposal.diff.counts.adds}</strong>adds</span>

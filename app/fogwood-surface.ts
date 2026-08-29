@@ -14,6 +14,8 @@ import type {
   ProposalDiff,
   ProposalV1,
 } from './fogwood-runtime.ts';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { canonicalSerialize } from './fogwood-runtime.ts';
 
 export type SurfaceRevisionRead = Readonly<{
   content_revision: string;
@@ -68,6 +70,15 @@ function isStageRequest(value: ProposalV1 | SurfaceStageRequest): value is Surfa
   return typeof value === 'object' && value !== null && 'proposal' in value && 'diff' in value;
 }
 
+function sameStageRequest(pending: ProposalControllerState, proposal: ProposalV1, diff: ProposalDiff) {
+  try {
+    return canonicalSerialize({ proposal: pending.proposal, diff: pending.diff })
+      === canonicalSerialize({ proposal, diff });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Create the one deep surface seam. `prepare` is called during stage, never
  * during Apply. Pending review state lives here rather than in a second page
@@ -84,6 +95,13 @@ export function createFogwoodSurface(
     const resolvedDiff = isStageRequest(proposalOrRequest) ? proposalOrRequest.diff : diff;
     if (!resolvedDiff) return { status: 'ERROR', message: 'A proposal diff is required before staging.' };
     if (pending) {
+      if (sameStageRequest(pending, proposal, resolvedDiff)) {
+        return {
+          status: 'ALREADY_STAGED',
+          state: pending,
+          message: 'This exact prepared plan is already awaiting page review.',
+        };
+      }
       return {
         status: 'ERROR',
         state: pending,

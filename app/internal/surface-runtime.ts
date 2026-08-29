@@ -45,7 +45,11 @@ import type {
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { isPreparedMaterial, MATERIAL_LIMITS, SUPPORTED_MATERIAL_MIME_TYPES } from '../fogwood-materials.ts';
 import type { MaterialDecoder, PreparedMaterial } from '../fogwood-materials';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { buildPreparedCanvasPreview } from '../review/prepared-plan-preview.ts';
 import type { JsonObject } from '@tldraw/utils';
+// @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
+import { sha256Hex } from '../fogwood-identities.ts';
 // @ts-expect-error TS5097: Node's strip-types test loader resolves explicit source extensions.
 import { FOGWOOD_CANVAS_PROTOCOL, planCanvasOps } from '../fogwood-canvas-ops.ts';
 import type { CanvasOpPlan } from '../fogwood-canvas-ops.ts';
@@ -1899,6 +1903,7 @@ export function prepareProposalPlan(
   if (Number.isFinite(maxShapes) && diff.counts.after > maxShapes) return planError('ERROR', 'The proposal would exceed this page\'s bounded shape limit; no changes were staged.');
 
   const actions = proposal.actions;
+  const current = proposalContext(editor);
 
   const materialActions = actions.filter((action): action is Extract<ProposalAction, { type: 'add_materials' }> => action.type === 'add_materials');
   const rawMaterials = materialActions.flatMap((action) => action.materials);
@@ -1915,7 +1920,6 @@ export function prepareProposalPlan(
   try {
     for (const action of actions) {
       if (action.type === 'canvas_ops' || action.type === 'seeded_composition') {
-        const current = proposalContext(editor);
         const result = planCanvasOps(current.items, action.ops, current.page_id, action.type === 'canvas_ops' ? action.composition_id : undefined);
         if (!result.ok) throw new Error(result.errors.map((error) => error.message).join(' '));
         actionLowerings.push({ action, canvas: result.plan });
@@ -1937,19 +1941,48 @@ export function prepareProposalPlan(
   const frozenMaterialLowerings = Object.freeze(materialLowerings);
   const frozenSeededEvidence = Object.freeze(diff.seeded_compositions);
   const frozenMaterialEvidence = Object.freeze(preparedMaterials.map(materialEvidence));
-  const digestInput = {
+  const preview = buildPreparedCanvasPreview({
+    canvasPlans: actionLowerings.flatMap((entry) => entry.canvas ? [entry.canvas] : []),
+    currentItems: current.items,
+    materials: preparedMaterials,
+  });
+  const transaction = {
+    contract_version: 1 as const,
+    authority: 'page-owned' as const,
+    atomic: true as const,
+    editor_run: 'one' as const,
+    history: 'one-stopping-point' as const,
+    undo: 'one-step' as const,
+    apply: 'frozen-lowerings-only' as const,
+    reject: 'no-mutation' as const,
+  };
+  const preflight = {
+    status: 'passed' as const,
+    page_id: pageId,
+    content_revision: contentRevision,
+    target_count: diff.counts.adds + diff.counts.updates + diff.counts.moves + diff.counts.removes,
+    material_decode: 'complete' as const,
+    plan_lowering: 'complete' as const,
+  };
+  const planIdentityInput = {
     schema: FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA,
     page_id: pageId,
     base_revision: proposal.base_revision,
     content_revision: contentRevision,
-    context_token: contextToken,
+    proposal,
     actions: frozenActions,
     diff,
+    action_lowerings: frozenActionLowerings,
     seeded_evidence: frozenSeededEvidence,
     prepared_materials: preparedMaterials.map(materialDigest),
+    preview,
+    preflight,
+    transaction,
   };
+  const canonicalPlanIdentity = canonicalSerialize(planIdentityInput);
   const plan = freezePlanValue({
     schema: FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA,
+    plan_id: `sha256:${sha256Hex(canonicalPlanIdentity)}` as const,
     page_id: pageId,
     proposal,
     diff,
@@ -1962,24 +1995,10 @@ export function prepareProposalPlan(
     prepared_materials: Object.freeze(preparedMaterials),
     seeded_evidence: frozenSeededEvidence,
     material_evidence: frozenMaterialEvidence,
-    preflight: {
-      status: 'passed' as const,
-      page_id: pageId,
-      content_revision: contentRevision,
-      target_count: diff.counts.adds + diff.counts.updates + diff.counts.moves + diff.counts.removes,
-      material_decode: 'complete' as const,
-      plan_lowering: 'complete' as const,
-    },
-    transaction: {
-      authority: 'page-owned' as const,
-      atomic: true as const,
-      editor_run: 'one' as const,
-      history: 'one-stopping-point' as const,
-      undo: 'one-step' as const,
-      apply: 'frozen-lowerings-only' as const,
-      reject: 'no-mutation' as const,
-    },
-    digest: deterministicHash(canonicalSerialize(digestInput)),
+    preview,
+    preflight,
+    transaction,
+    digest: deterministicHash(canonicalPlanIdentity),
     action_lowerings: frozenActionLowerings,
     material_lowerings: frozenMaterialLowerings,
   }) as EditorPreparedCanvasPlan;
@@ -2245,9 +2264,15 @@ export function registerSurfaceTools(
             }
             if (contextTokenForEditor(editor) !== liveContextToken) return textResult({ status: 'STALE_CONTEXT', message: 'The semantic context changed while the material was being decoded.', recovery: 'Call fogwood-inspect, then retry fogwood-propose with its returned base_revision and context_token.' }, true);
             const staged = controller.stage(validation.proposal, validation.diff);
-            if (staged.status !== 'STAGED') return textResult({ status: staged.status, message: staged.message }, true);
-            onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
-            return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
+            if (staged.status !== 'STAGED' && staged.status !== 'ALREADY_STAGED') return textResult({ status: staged.status, message: staged.message }, true);
+            if (staged.status === 'STAGED') onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
+            return textResult({
+              status: staged.status,
+              plan_id: staged.state?.plan.plan_id,
+              content_revision: staged.state?.plan.content_revision,
+              proposal: validation.proposal,
+              diff: validation.diff,
+            });
           });
         }
         const validation = validateProposal(proposalInput, proposalContext(editor));
@@ -2259,9 +2284,15 @@ export function registerSurfaceTools(
         const adapterError = preflightProposalCanvasOps(editor, validation.proposal);
         if (adapterError) return textResult({ status: 'ADAPTER_UNAVAILABLE', message: adapterError }, true);
         const staged = controller.stage(validation.proposal, validation.diff);
-        if (staged.status !== 'STAGED') return textResult({ status: staged.status, message: staged.message }, true);
-        onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
-        return textResult({ status: 'STAGED', proposal: validation.proposal, diff: validation.diff });
+        if (staged.status !== 'STAGED' && staged.status !== 'ALREADY_STAGED') return textResult({ status: staged.status, message: staged.message }, true);
+        if (staged.status === 'STAGED') onActivity?.('Fogwood staged a proposal', proposalActivityDetail(validation.diff));
+        return textResult({
+          status: staged.status,
+          plan_id: staged.state?.plan.plan_id,
+          content_revision: staged.state?.plan.content_revision,
+          proposal: validation.proposal,
+          diff: validation.diff,
+        });
       },
     },
   ];

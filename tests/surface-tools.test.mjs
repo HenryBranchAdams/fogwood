@@ -671,6 +671,7 @@ test('public material proposals retain a frozen lowering and Apply does not deco
   assert.equal(pending.plan.material_evidence[0].byte_length, 68);
   assert.equal(pending.plan.preflight.status, 'passed');
   assert.deepEqual(pending.plan.transaction, {
+    contract_version: 1,
     authority: 'page-owned',
     atomic: true,
     editor_run: 'one',
@@ -702,6 +703,69 @@ test('public material proposals retain a frozen lowering and Apply does not deco
   cleanup();
 });
 
+test('public prepared-plan identity makes exact retries idempotent and correlates lifecycle events', async () => {
+  const editor = new CanvasProposalEditor();
+  let controller;
+  const lifecycle = [];
+  const cleanup = registerSurfaceTools(
+    editor,
+    () => {},
+    undefined,
+    undefined,
+    (value) => { controller = value; },
+    (event) => lifecycle.push(event),
+  );
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const inspected = inspectSurface(editor);
+  const request = {
+    base_revision: inspected.content_revision,
+    context_token: inspected.context_token,
+    summary: 'Stage one native idea',
+    actions: [{
+      type: 'canvas_ops',
+      composition_id: 'identity-proof',
+      ops: [{ op: 'create', semantic_id: 'idea:identity-proof', kind: 'note', x: 120, y: 140, w: 220, h: 140, text: 'Identity proof' }],
+    }],
+  };
+
+  const first = JSON.parse((await propose.execute(request)).content[0].text);
+  assert.equal(first.status, 'STAGED');
+  assert.match(first.plan_id, /^sha256:[0-9a-f]{64}$/);
+  const stagedPlan = controller.getState().plan;
+  assert.equal(stagedPlan.preview.schema, 'fogwood.prepared-canvas-preview.v1');
+  assert.ok(Object.isFrozen(stagedPlan.preview));
+  assert.ok(Object.isFrozen(stagedPlan.preview.additions));
+  assert.equal(first.plan_id, controller.getState().plan.plan_id);
+  const pending = controller.getState();
+
+  const retry = JSON.parse((await propose.execute(clone(request))).content[0].text);
+  assert.equal(retry.status, 'ALREADY_STAGED');
+  assert.equal(retry.plan_id, first.plan_id);
+  assert.equal(controller.getState(), pending);
+  assert.equal(lifecycle.filter((event) => event.type === 'proposal-staged').length, 1);
+
+  const divergent = JSON.parse((await propose.execute({ ...request, summary: 'A different request' })).content[0].text);
+  assert.equal(divergent.status, 'ERROR');
+  assert.equal(controller.getState(), pending);
+
+  assert.equal(controller.reject().status, 'REJECTED');
+  assert.deepEqual(lifecycle.map((event) => event.type), ['proposal-staged', 'proposal-rejected']);
+  assert.equal(lifecycle.every((event) => event.plan_id === first.plan_id), true);
+
+  const restaged = JSON.parse((await propose.execute(request)).content[0].text);
+  assert.equal(restaged.status, 'STAGED');
+  assert.equal(restaged.plan_id, first.plan_id);
+  assert.equal(controller.apply().status, 'APPLIED');
+  assert.deepEqual(lifecycle.map((event) => event.type), [
+    'proposal-staged',
+    'proposal-rejected',
+    'proposal-staged',
+    'proposal-applied',
+  ]);
+  assert.equal(lifecycle.every((event) => event.plan_id === first.plan_id), true);
+  cleanup();
+});
+
 test('prepared-plan digest commits to the exact accepted material bytes', async () => {
   const editor = new CanvasProposalEditor();
   let controller;
@@ -723,10 +787,12 @@ test('prepared-plan digest commits to the exact accepted material bytes', async 
   const red = await stage(svg('red'));
   const redBytes = red.prepared_materials[0].canonical_base64;
   const redDigest = red.digest;
+  const redPlanId = red.plan_id;
   assert.equal(controller.reject().status, 'REJECTED');
   const blue = await stage(svg('blue'));
   assert.notEqual(blue.prepared_materials[0].canonical_base64, redBytes);
   assert.notEqual(blue.digest, redDigest);
+  assert.notEqual(blue.plan_id, redPlanId);
   assert.notEqual(blue.material_evidence[0].content_hash, red.material_evidence[0].content_hash);
   assert.equal(controller.reject().status, 'REJECTED');
   cleanup();
@@ -888,6 +954,7 @@ test('seeded composition stages through WebMCP, preserves sources, applies once,
   assert.equal(preparedPlan.seeded_evidence.length, 1);
   assert.equal(preparedPlan.seeded_evidence[0].source_revision, inspected.content_revision);
   assert.equal(preparedPlan.seeded_evidence[0].algorithm_version, 1);
+  const firstSeedPlanId = preparedPlan.plan_id;
   assert.equal(preparedPlan.preflight.status, 'passed');
   assert.equal(Object.isFrozen(preparedPlan.action_lowerings[0].canvas), true);
   assert.deepEqual(editor.shapes, before);
@@ -912,6 +979,7 @@ test('seeded composition stages through WebMCP, preserves sources, applies once,
     actions: [{ type: 'seeded_composition', scope: { kind: 'selection' }, seed: 'other-branch', wildness: 0.3 }],
   });
   assert.equal(JSON.parse(rejectResponse.content[0].text).status, 'STAGED');
+  assert.notEqual(controller.getState().plan.plan_id, firstSeedPlanId);
   const revisionBeforeReject = currentRevision(editor);
   assert.equal(controller.reject().status, 'REJECTED');
   assert.equal(currentRevision(editor), revisionBeforeReject);

@@ -9,6 +9,7 @@ const proposal = Object.freeze({
   actions: [{ type: 'canvas_ops', ops: [{ op: 'create', semantic_id: 'idea:review', kind: 'note', x: 80, y: 80, w: 220, h: 140, text: 'Review me' }] }],
 });
 const diff = Object.freeze({ counts: { adds: 1, updates: 0, moves: 0, removes: 0 } });
+const planId = `sha256:${'2'.repeat(64)}`;
 
 function baseController() {
   let state = null;
@@ -16,8 +17,8 @@ function baseController() {
     getState: () => state,
     stage(nextProposal, nextDiff) {
       if (nextProposal.base_revision === 'stale') return { status: 'STALE_STATE', message: 'stale' };
-      state = { status: 'pending', proposal: nextProposal, diff: nextDiff };
-      return { status: 'STAGED', proposal: nextProposal, diff: nextDiff };
+      state = { status: 'pending', proposal: nextProposal, diff: nextDiff, plan: { plan_id: planId } };
+      return { status: 'STAGED', state };
     },
     apply() {
       if (!state) return { status: 'ERROR', message: 'nothing pending' };
@@ -48,6 +49,7 @@ test('accepted stage/apply lifecycle emits exact revisions once and ignores fail
   assert.equal(controller.stage(proposal, diff).status, 'STAGED');
   assert.deepEqual(events, [{
     type: 'proposal-staged',
+    plan_id: planId,
     proposal,
     source_revision: 'revision:before',
     base_revision: 'revision:before',
@@ -56,6 +58,7 @@ test('accepted stage/apply lifecycle emits exact revisions once and ignores fail
   assert.equal(controller.apply().status, 'APPLIED');
   assert.deepEqual(events[1], {
     type: 'proposal-applied',
+    plan_id: planId,
     proposal,
     source_revision: 'revision:before',
     base_revision: 'revision:before',
@@ -78,6 +81,7 @@ test('accepted reject emits no result revision and never mutates through the evi
   assert.equal(controller.reject().status, 'REJECTED');
   assert.deepEqual(events.at(-1), {
     type: 'proposal-rejected',
+    plan_id: planId,
     proposal,
     source_revision: 'revision:before',
     base_revision: 'revision:before',

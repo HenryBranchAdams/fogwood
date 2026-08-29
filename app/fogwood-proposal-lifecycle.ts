@@ -1,4 +1,5 @@
 import type {
+  PreparedCanvasPlanId,
   ProposalControllerResult,
   ProposalControllerState,
   ProposalDiff,
@@ -8,12 +9,14 @@ import type {
 export type ProposalLifecycleEvent =
   | Readonly<{
       type: 'proposal-staged';
+      plan_id: PreparedCanvasPlanId;
       proposal: ProposalV1;
       source_revision: string;
       base_revision: string;
     }>
   | Readonly<{
       type: 'proposal-applied';
+      plan_id: PreparedCanvasPlanId;
       proposal: ProposalV1;
       source_revision: string;
       base_revision: string;
@@ -21,6 +24,7 @@ export type ProposalLifecycleEvent =
     }>
   | Readonly<{
       type: 'proposal-rejected';
+      plan_id: PreparedCanvasPlanId;
       proposal: ProposalV1;
       source_revision: string;
       base_revision: string;
@@ -67,6 +71,7 @@ export function createProposalLifecycleController<T extends ProposalLifecycleBas
       if (result.status === 'STAGED') {
         emit(Object.freeze({
           type: 'proposal-staged',
+          plan_id: result.state!.plan.plan_id,
           proposal,
           source_revision: proposal.base_revision,
           base_revision: proposal.base_revision,
@@ -80,6 +85,7 @@ export function createProposalLifecycleController<T extends ProposalLifecycleBas
       if (result.status === 'APPLIED' && pending) {
         emit(Object.freeze({
           type: 'proposal-applied',
+          plan_id: pending.plan.plan_id,
           proposal: pending.proposal,
           source_revision: pending.proposal.base_revision,
           base_revision: pending.proposal.base_revision,
@@ -94,6 +100,7 @@ export function createProposalLifecycleController<T extends ProposalLifecycleBas
       if (result.status === 'REJECTED' && pending) {
         emit(Object.freeze({
           type: 'proposal-rejected',
+          plan_id: pending.plan.plan_id,
           proposal: pending.proposal,
           source_revision: pending.proposal.base_revision,
           base_revision: pending.proposal.base_revision,

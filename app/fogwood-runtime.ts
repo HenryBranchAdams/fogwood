@@ -1065,6 +1065,7 @@ export type ProposalV1 = {
 };
 
 export const FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA = 'fogwood.prepared-canvas-plan.v1' as const;
+export type PreparedCanvasPlanId = `sha256:${string}`;
 
 export type PreparedMaterialEvidence = Readonly<{
   semantic_id: string;
@@ -1088,6 +1089,7 @@ export type PreparedCanvasPlanPreflight = Readonly<{
 }>;
 
 export type PreparedCanvasPlanTransaction = Readonly<{
+  contract_version: 1;
   authority: 'page-owned';
   atomic: true;
   editor_run: 'one';
@@ -1095,6 +1097,52 @@ export type PreparedCanvasPlanTransaction = Readonly<{
   undo: 'one-step';
   apply: 'frozen-lowerings-only';
   reject: 'no-mutation';
+}>;
+
+export type PreparedCanvasPreviewBounds = Readonly<{
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation?: number;
+}>;
+
+export type PreparedCanvasPreview = Readonly<{
+  schema: 'fogwood.prepared-canvas-preview.v1';
+  additions: readonly Readonly<{
+    semantic_id: string;
+    kind: string;
+    label: string;
+    bounds: PreparedCanvasPreviewBounds;
+    role?: string;
+  }>[];
+  moves: readonly Readonly<{
+    id: string;
+    before: PreparedCanvasPreviewBounds;
+    after: PreparedCanvasPreviewBounds;
+  }>[];
+  removals: readonly Readonly<{
+    id: string;
+    label: string;
+    bounds: PreparedCanvasPreviewBounds;
+  }>[];
+  relationships: readonly Readonly<{
+    semantic_id: string;
+    label: string;
+    bounds: PreparedCanvasPreviewBounds;
+  }>[];
+  regions: readonly Readonly<{
+    semantic_id: string;
+    label: string;
+    bounds: PreparedCanvasPreviewBounds;
+  }>[];
+  materials: readonly Readonly<{
+    semantic_id: string;
+    label: string;
+    mime_type: string;
+    content_hash: string;
+    bounds: PreparedCanvasPreviewBounds;
+  }>[];
 }>;
 
 /**
@@ -1106,6 +1154,7 @@ export type PreparedCanvasPlanTransaction = Readonly<{
  */
 export type PreparedCanvasPlan = Readonly<{
   schema: typeof FOGWOOD_PREPARED_CANVAS_PLAN_SCHEMA;
+  plan_id: PreparedCanvasPlanId;
   page_id: string;
   proposal: ProposalV1;
   diff: ProposalDiff;
@@ -1118,6 +1167,7 @@ export type PreparedCanvasPlan = Readonly<{
   prepared_materials: readonly PreparedMaterial[];
   seeded_evidence: Readonly<ProposalDiff['seeded_compositions']>;
   material_evidence: readonly PreparedMaterialEvidence[];
+  preview: PreparedCanvasPreview;
   preflight: PreparedCanvasPlanPreflight;
   transaction: PreparedCanvasPlanTransaction;
   digest: string;
@@ -1588,7 +1638,7 @@ export type ProposalControllerState = {
 };
 
 export type ProposalControllerResult = {
-  status: 'STAGED' | 'APPLIED' | 'REJECTED' | 'STALE_STATE' | 'NO_PENDING' | 'ERROR';
+  status: 'STAGED' | 'ALREADY_STAGED' | 'APPLIED' | 'REJECTED' | 'STALE_STATE' | 'NO_PENDING' | 'ERROR';
   state?: ProposalControllerState;
   message?: string;
 };

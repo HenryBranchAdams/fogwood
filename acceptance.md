@@ -718,6 +718,49 @@ dashboard-like explanatory furniture.
 
 ## Remaining boundaries
 
+## Prepared-plan identity and spatial review — issues #2 and #4
+
+Fogwood now assigns every completely prepared plan a page-computed SHA-256
+`plan_id` over the bounded canonical plan identity: exact proposal, normalized
+actions, frozen Canvas Protocol lowerings, accepted material bytes, seeded
+evidence, page/base revisions, preflight, and transaction contract version.
+Exact retries while that plan is pending return `ALREADY_STAGED` without a
+second pending state or lifecycle event. Divergent retries remain refused.
+Stage, Apply, Reject, review UI, and device-local receipts carry the same ID;
+knowledge of the ID grants no Apply authority.
+
+The pending plan also contains `fogwood.prepared-canvas-preview.v1`, derived
+only from the retained Canvas Protocol plans and prepared material objects that
+Apply consumes. The `InFrontOfTheCanvas` overlay renders pointer-transparent
+ghost additions, before/after geometry, deletion masks, typed connectors,
+regions, and bounded local material thumbnails. It never writes tldraw records,
+selection, history, receipts, or revisions and disappears with the sole pending
+plan. Rendering tolerance is the browser's sub-pixel CSS/tldraw projection;
+page-space bounds and rotations come from the frozen lowering without replanning.
+
+Local qualification on 2026-08-29:
+
+- `npm test`: 226/226 passed.
+- `npx tsc --noEmit`, `npm run lint`, `npm run build`, Bazaar compiler check,
+  and `git diff --check`: passed; build retained only the known chunk-size and
+  route-classification warnings.
+- Browser at `http://localhost:4211/` registered exactly the three stable page
+  tools. A successful WebMCP proposal staged plan
+  `sha256:c7bd7d045a4af1bc89d8cb67fcb78c027eb95233d2f00801789e53bff39d13bf`.
+  The rendered canvas contained one overlay with four distinct ghost elements
+  for two additions, the connector, and its region/shape treatment. Reject
+  removed both overlay and dock; the revision stayed exactly
+  `fogwood-agent-runtime/2-e13d8f267fc2064c` and shape count stayed zero.
+  A second stage followed by page Apply removed the overlay, created three
+  native shapes plus two arrow bindings, and changed the revision to
+  `fogwood-agent-runtime/2-fee30fd2cdb91a50`; one `Command-Z` restored the
+  exact zero-shape revision.
+- Desktop screenshot: `/private/tmp/fogwood-plan-preview-desktop.png`.
+- 390x844 screenshot: `/private/tmp/fogwood-plan-preview-mobile.png`; body
+  client and scroll widths were both 390 pixels.
+
+This is local rendered and WebMCP evidence, not hosted deployment evidence.
+
 The complete Route corpus is not a claim that all 213 upstream demonstrations
 execute locally. It is a complete dynamic addressing and lowering surface over
 eight safe adapter families. Host Capability observation, measured cost/latency,

@@ -159,6 +159,7 @@ function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeo
         };
   if (event.type === 'proposal-staged') {
     return createProposalStagedReceipt({
+      plan_id: event.plan_id,
       proposal: evidenceBoundProposal,
       ...evidence,
       source_revision: event.source_revision,
@@ -169,6 +170,7 @@ function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeo
   }
   if (event.type === 'proposal-applied') {
     return createProposalAppliedReceipt({
+      plan_id: event.plan_id,
       proposal: evidenceBoundProposal,
       ...evidence,
       source_revision: event.source_revision,
@@ -179,6 +181,7 @@ function proposalDraft(event: ProposalLifecycleEvent, proposal: ReturnType<typeo
     });
   }
   return createProposalRejectedReceipt({
+    plan_id: event.plan_id,
     proposal: evidenceBoundProposal,
     ...evidence,
     source_revision: event.source_revision,

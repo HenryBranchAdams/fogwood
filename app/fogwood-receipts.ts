@@ -101,6 +101,7 @@ export type ReceiptSeededCompositionEvidence = {
 
 export type ReceiptDraft = {
   event: ReceiptEvent;
+  plan_id?: string;
   source_revision?: string;
   base_revision?: string;
   result_revision?: string;
@@ -126,6 +127,7 @@ export type Receipt = Readonly<{
   authority: ReceiptAuthority;
   locality: ReceiptLocality;
   event: ReceiptEvent;
+  plan_id?: string;
   source_revision?: string;
   base_revision?: string;
   result_revision?: string;
@@ -283,6 +285,7 @@ export type ReceiptValidateStoredResult =
 const GENERATED_KEYS = ['schema_version', 'receipt_id', 'sequence', 'recorded_at', 'authority'] as const;
 const DRAFT_KEYS = [
   'event',
+  'plan_id',
   'source_revision',
   'base_revision',
   'result_revision',
@@ -313,6 +316,8 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
+
+const PREPARED_PLAN_ID = /^sha256:[0-9a-f]{64}$/u;
 
 export type ReceiptConstructionErrorCode =
   | 'CYCLIC_INPUT'
@@ -788,6 +793,12 @@ function validateDraft(input: unknown, limits: ReceiptLedgerLimits): ReceiptVali
   if (!hasOnlyKeys(input, DRAFT_KEYS)) addError(errors, 'UNKNOWN_FIELD', 'Receipt draft contains an unknown field.');
   const event = isReceiptEvent(input.event) ? input.event : undefined;
   if (event === undefined) addError(errors, 'INVALID_EVENT', 'Receipt event is not supported.', 'event');
+  const planId = input.plan_id === undefined
+    ? undefined
+    : typeof input.plan_id === 'string' && PREPARED_PLAN_ID.test(input.plan_id)
+      ? input.plan_id
+      : null;
+  if (planId === null) addError(errors, 'INVALID_PLAN_ID', 'plan_id must be a lowercase SHA-256 prepared-plan identity.', 'plan_id');
 
   const outcome = isReceiptOutcome(input.outcome) ? input.outcome : undefined;
   if (outcome === undefined) addError(errors, 'INVALID_OUTCOME', 'outcome must be one of staged, applied, rejected, inserted, or exported.', 'outcome');
@@ -891,6 +902,7 @@ function validateDraft(input: unknown, limits: ReceiptLedgerLimits): ReceiptVali
   if (errors.length > 0 || event === undefined || outcome === undefined || qualificationBoundary === undefined) return { ok: false, status: 'INVALID_RECEIPT', errors };
   const normalized = {
     event,
+    ...(planId === undefined || planId === null ? {} : { plan_id: planId }),
     ...(sourceRevision === undefined ? {} : { source_revision: sourceRevision }),
     ...(baseRevision === undefined ? {} : { base_revision: baseRevision }),
     ...(resultRevision === undefined ? {} : { result_revision: resultRevision }),

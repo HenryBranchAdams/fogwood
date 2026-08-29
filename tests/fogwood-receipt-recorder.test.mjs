@@ -44,17 +44,21 @@ const genericProposal = Object.freeze({
 
 test('generic proposal lifecycle writes exactly one receipt per accepted transition', () => {
   const { ledger, recorder, writes } = setup();
+  const planId = `sha256:${'a'.repeat(64)}`;
   const staged = recorder.recordProposalLifecycle({
     type: 'proposal-staged',
+    plan_id: planId,
     proposal: genericProposal,
     source_revision: 'revision:before',
     base_revision: 'revision:before',
   });
   assert.equal(staged.ok, true);
   assert.deepEqual(staged.receipts.map((receipt) => receipt.event), ['proposal-staged']);
+  assert.equal(staged.receipts[0].plan_id, planId);
 
   const applied = recorder.recordProposalLifecycle({
     type: 'proposal-applied',
+    plan_id: planId,
     proposal: genericProposal,
     source_revision: 'revision:before',
     base_revision: 'revision:before',
@@ -63,15 +67,18 @@ test('generic proposal lifecycle writes exactly one receipt per accepted transit
   assert.equal(applied.ok, true);
   assert.deepEqual(applied.receipts.map((receipt) => receipt.event), ['proposal-applied']);
   assert.equal(applied.receipts[0].result_revision, 'revision:after');
+  assert.equal(applied.receipts[0].plan_id, planId);
 
   const rejected = recorder.recordProposalLifecycle({
     type: 'proposal-rejected',
+    plan_id: planId,
     proposal: genericProposal,
     source_revision: 'revision:before',
     base_revision: 'revision:before',
   });
   assert.equal(rejected.ok, true);
   assert.deepEqual(rejected.receipts.map((receipt) => receipt.event), ['proposal-rejected']);
+  assert.equal(rejected.receipts[0].plan_id, planId);
   assert.equal(writes.length, 3);
   assert.deepEqual(ledger.list({ newest_first: false }).receipts.map((receipt) => receipt.event), [
     'proposal-staged',

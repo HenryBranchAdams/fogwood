@@ -24,6 +24,7 @@ const diff = {
 function planFor(preparedMaterials = []) {
   return Object.freeze({
     schema: 'fogwood.prepared-canvas-plan.v1',
+    plan_id: `sha256:${'1'.repeat(64)}`,
     page_id: 'page:main',
     proposal,
     diff,
@@ -45,6 +46,7 @@ function planFor(preparedMaterials = []) {
       plan_lowering: 'complete',
     }),
     transaction: Object.freeze({
+      contract_version: 1,
       authority: 'page-owned',
       atomic: true,
       editor_run: 'one',
@@ -81,7 +83,8 @@ test('FogwoodSurface prepares before stage, keeps one pending plan, and exposes 
   assert.equal(surface.stage({ proposal, diff }).status, 'STAGED');
   assert.equal(prepared, 1);
   assert.equal(surface.getState().plan.digest, 'digest:1');
-  assert.equal(surface.stage(proposal, diff).status, 'ERROR');
+  assert.equal(surface.stage(proposal, diff).status, 'ALREADY_STAGED');
+  assert.equal(prepared, 1);
 
   // Ephemeral context changes do not invalidate the content-bound plan.
   context = 'context:b';
