@@ -1,6 +1,6 @@
 # Fogwood acceptance manifest
 
-Status: PASS — local and in-app Browser autophagy boundary.
+Status: PASS — local, deployed Sites, and in-app Browser autophagy boundary.
 
 This is the one authoritative acceptance manifest. The current phase simplifies
 Fogwood into an empty, device-local tldraw surface where Codex turns intent and
@@ -48,9 +48,11 @@ Dead dashboard-era product code removed in this phase:
 - `tests/fogwood-snapshot.test.mjs`
 - their retired gallery, starter, chat, and snapshot CSS selector families
 
-The current candidate has passed the local, Browser, and independent-verifier
-gates recorded below. Deployment, live external providers, and direct
-conversation inventory remain separate, explicitly unqualified boundaries.
+The current candidate has passed the local, deployed Sites, Browser, and
+independent-verifier gates recorded below. One live Codex image-generation
+artifact has passed the constrained material bridge. Other external providers
+and direct conversation inventory remain separate, explicitly unqualified
+boundaries.
 
 ## Acceptance matrix — current phase
 
@@ -71,7 +73,8 @@ conversation inventory remain separate, explicitly unqualified boundaries.
 | Browser / host exposure | Current host inventory of page tools. | PASS — in-app Browser WebMCP inventory |
 | Conversation inventory | Direct top-level conversation tool inventory, separate from Browser. | NOT EXPOSED DIRECTLY — Browser-mediated tools only |
 | Harmless WebMCP call | Successful inspect/capabilities/propose call with no unauthorized mutation. | PASS |
-| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | UNQUALIFIED |
+| Deployment provenance | Commit, build artifact, Sites/deployment URL and version. | PASS — Sites version 12 from `56fa61b6c40c8ff996c471636d5670f5c6ad5990` |
+| Live Codex artifact bridge | Real externally generated material stages with exact provenance, applies once, undoes once, and persists after reload. | PASS — Codex PNG `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4` |
 | Independent acceptance | Read-only verifier rechecks current candidate and rejects dashboard-like output. | PASS — no confirmed P1/P2 |
 
 ## Evidence ledger — current phase
@@ -97,14 +100,17 @@ do not promote an unrun check to PASS.
 | WebMCP host exposure | PASS — in-app Browser returned the same three page tools and their current schemas |
 | Harmless successful WebMCP call | PASS — `fogwood-inspect`, `fogwood-capabilities` available/plan, and stage-only `fogwood-propose`; page Apply remained a separate human action |
 | Direct conversation inventory | NOT EXPOSED DIRECTLY — this session reached Fogwood only through the in-app Browser WebMCP bridge |
-| Deployment provenance | PENDING — commit/url/version: `<value>` |
+| Deployment provenance | PASS — source commit `56fa61b6c40c8ff996c471636d5670f5c6ad5990`; Sites version 12 (`appgprj_6a8eed68a0f88191b7467ac94efcc8dc~appgver_8d9949ce2e7c819188e0b3401d09223f`); archive `sha256:fac58d84b6f932250908451aee1293a0deb275b56b0ad60adfb959dda35771f3`; deployment `appgdep_6a922498d64081919bd171ce90000793`; terminal status `succeeded`; URL `https://fogwood.madebyhenry.chatgpt.site` |
+| Hosted real Codex material | PASS — generated PNG, 2,017,411 bytes, 1214x1295, exact hash `sha256:cd5e0ea067c4ec5c954443b9184b7d1de2a705000a295ce4047bb5ea770093d4`; staged preview `/private/tmp/fogwood-hosted-real-material-staged.png`; selected editable result `/private/tmp/fogwood-hosted-real-material-selected.png` |
+| Hosted Apply / Undo / persistence | PASS — Apply changed revision and produced one image plus one referenced local asset; one Undo returned the exact prior revision and removed both; re-Apply survived reload with the same revision and material identity |
+| Hosted context concurrency | PASS — selecting the generated material changed only `context_token`; a proposal using the prior token returned `STALE_CONTEXT`, left the content revision unchanged, and created no review state |
 | Independent verifier | PASS — all mandated checks rerun; schema/runtime repair rechecked; no confirmed P1/P2; supplied screenshots are native-tldraw and anti-dashboard |
 
 ## Current risks and explicit boundaries
 
-- Live Codex image generation, research, external providers, and other host
-  capabilities are not implied by page registration. If unavailable, artifact
-  ingestion remains fixture-qualified only.
+- Live Codex image generation is qualified for one PNG artifact through the
+  Browser-mediated bridge. Research, other external providers, other MIME
+  paths, and broader host capabilities are not implied by that result.
 - Page registration, Browser exposure, conversation inventory, and successful
   invocation are separate evidence layers.
 - Browser or hosted qualification does not follow from local tests/builds.
@@ -113,6 +119,11 @@ do not promote an unrun check to PASS.
 - Persisted pages and old ledgers may contain historical block, recipe, or
   snapshot records; compatibility means reading them safely, not reviving old
   dashboard UI or executable runtime paths.
+- The production Browser profile already contained legacy device-local canvas
+  matter under `open-surface-local`, which the release correctly preserved.
+  Fresh-profile blank-first-run behavior remains qualified on the isolated
+  local origin; the hosted screenshots qualify migration compatibility and the
+  live material bridge rather than a pristine first visit.
 
 ## Historical qualification archive
 
