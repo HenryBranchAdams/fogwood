@@ -258,7 +258,7 @@ export type CanvasOpStep =
   | { kind: 'create'; op: CreateCanvasOp; pending_id: string; bounds: { x: number; y: number; w: number; h: number } }
   | { kind: 'draw'; op: DrawCanvasOp; pending_id: string; bounds: { x: number; y: number; w: number; h: number } }
   | { kind: 'connect'; op: ConnectCanvasOp; pending_id: string; from: { id: string; type: string; semantic_id?: string }; to: { id: string; type: string; semantic_id?: string }; bounds: { x: number; y: number; w: number; h: number } }
-  | { kind: 'variant'; op: VariantCanvasOp; pending_id: string; source: { id: string; type: string; semantic_id: string; transform_fingerprint: string; parent_id: string }; local_position: { x: number; y: number }; bounds: { x: number; y: number; w: number; h: number }; lineage: { variant_id: string; lineage_source_id: string; parent_variant_id?: string } }
+  | { kind: 'variant'; op: VariantCanvasOp; pending_id: string; source: { id: string; type: string; semantic_id: string; transform_fingerprint: string; parent_id: string }; local_position: { x: number; y: number }; bounds: { x: number; y: number; w: number; h: number }; geometry: PageGeometry; lineage: { variant_id: string; lineage_source_id: string; parent_variant_id?: string } }
   | { kind: 'update'; op: UpdateCanvasOp; fields: DiffFields; target: PreparedTransformTarget; local_position?: { x: number; y: number }; after_page_geometry: PageGeometry }
   | { kind: 'resize'; op: ResizeCanvasOp; target: PreparedTransformTarget; scale: { x: number; y: number }; before: PageGeometry; after: PageGeometry }
   | { kind: 'arrange'; op: AlignCanvasOp | DistributeCanvasOp | StackCanvasOp | PackCanvasOp; placements: Array<{ id: string; type: string; parent_id: string; transform_fingerprint: string; local_x: number; local_y: number; rotation: number; before: PageGeometry; after: PageGeometry }> }
@@ -1149,6 +1149,7 @@ export function planCanvasOps(
             source: { id: source.id, type: source.type, semantic_id: source.semantic_id, transform_fingerprint: projection.fingerprint, parent_id: projection.parent_id },
             local_position: { x: localPosition.x, y: localPosition.y },
             bounds,
+            geometry: pageGeometry(translatedProjection),
             lineage,
           });
           adds.push({

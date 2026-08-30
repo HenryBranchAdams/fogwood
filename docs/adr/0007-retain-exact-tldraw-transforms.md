@@ -17,8 +17,9 @@ Nested movement and same-parent arrangement convert reviewed page origins back
 through the inspected parent inverse. Rotated resize calls tldraw's public
 `resizeShape` with the retained local bounds, page transform, page-space scale
 origin, and axis rotation. Preserved variants keep their parent and local
-rotation. The visual review includes exact before/after corners as well as an
-axis-aligned overlay.
+rotation. The visual review projects retained before/after corners directly
+into the viewport as SVG polygons. It must not reconstruct a rotated or nested
+footprint by rotating its page AABB from the AABB's top-left.
 
 Native text reflow can change intrinsic geometry inside tldraw. A single
 `update` therefore cannot mix `text` with `x`, `y`, or `rotation`: content and

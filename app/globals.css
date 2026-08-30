@@ -220,6 +220,94 @@ select {
   border-radius: 8px;
 }
 
+.plan-ghost-add {
+  --plan-color: #4f8c5d;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 2px dashed color-mix(in srgb, var(--plan-color) 84%, #263127);
+  background: color-mix(in srgb, var(--plan-color) 17%, rgba(255, 255, 255, 0.84));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--plan-color) 7%, transparent), 0 10px 28px rgba(29, 38, 30, 0.08);
+  color: color-mix(in srgb, var(--plan-color) 72%, #182019);
+  animation: plan-matter-arrive 420ms cubic-bezier(0.2, 0.82, 0.24, 1) both;
+}
+
+.plan-ghost-add strong {
+  max-width: 86%;
+  padding: 5px;
+  overflow: hidden;
+  font: 650 12px/1.25 Inter, ui-sans-serif, sans-serif;
+  letter-spacing: -0.015em;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.plan-ghost-color-black { --plan-color: #30332d; }
+.plan-ghost-color-grey { --plan-color: #858b82; }
+.plan-ghost-color-violet { --plan-color: #886dc3; }
+.plan-ghost-color-blue { --plan-color: #4c76b8; }
+.plan-ghost-color-light-blue { --plan-color: #72afca; }
+.plan-ghost-color-yellow { --plan-color: #d1a443; }
+.plan-ghost-color-orange { --plan-color: #d77440; }
+.plan-ghost-color-green { --plan-color: #4f8c5d; }
+.plan-ghost-color-light-green { --plan-color: #7eb46b; }
+.plan-ghost-color-light-red { --plan-color: #d97970; }
+.plan-ghost-color-red { --plan-color: #b84f46; }
+.plan-ghost-color-white { --plan-color: #a6aaa2; }
+
+.plan-ghost-fill-solid {
+  background: color-mix(in srgb, var(--plan-color) 31%, rgba(255, 255, 255, 0.72));
+}
+
+.plan-ghost-fill-semi {
+  background: color-mix(in srgb, var(--plan-color) 19%, rgba(255, 255, 255, 0.78));
+}
+
+.plan-ghost-fill-pattern {
+  background-color: color-mix(in srgb, var(--plan-color) 8%, rgba(255, 255, 255, 0.78));
+  background-image: radial-gradient(color-mix(in srgb, var(--plan-color) 38%, transparent) 1px, transparent 1px);
+  background-size: 7px 7px;
+}
+
+.plan-ghost-kind-ellipse {
+  border-radius: 50%;
+}
+
+.plan-ghost-kind-cloud {
+  border-radius: 48% 54% 45% 58% / 56% 43% 59% 46%;
+}
+
+.plan-ghost-kind-diamond {
+  border-radius: 5px;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.plan-ghost-kind-triangle {
+  border-radius: 4px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.plan-ghost-kind-note {
+  border-style: solid;
+  border-radius: 2px 2px 13px 2px;
+  box-shadow: 0 9px 22px rgba(29, 38, 30, 0.13);
+}
+
+.plan-ghost-kind-text {
+  overflow: visible;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+@keyframes plan-matter-arrive {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    scale: 0.94;
+  }
+}
+
 .plan-ghost small {
   position: absolute;
   top: -23px;
@@ -238,9 +326,8 @@ select {
 
 .plan-ghost-add,
 .plan-ghost-move {
-  border: 2px dashed rgb(35 158 103 / 80%);
-  background: rgb(63 191 124 / 10%);
-  box-shadow: 0 0 0 4px rgb(63 191 124 / 6%);
+  outline: 1px solid rgb(255 255 255 / 55%);
+  outline-offset: -4px;
 }
 
 .plan-ghost-before {
@@ -258,6 +345,132 @@ select {
   margin-top: -1px;
   border-top: 2px dashed rgb(34 94 166 / 75%);
   border-radius: 0;
+}
+
+.prepared-plan-links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Exact frozen page-space corners are projected as SVG polygons. This avoids
+   pretending a nested rotated footprint is an AABB rotated from its own corner. */
+.plan-polygon polygon {
+  vector-effect: non-scaling-stroke;
+}
+
+.plan-polygon-before polygon {
+  fill: rgb(50 66 60 / 4%);
+  stroke: rgb(50 66 60 / 38%);
+  stroke-width: 1;
+  stroke-dasharray: 5 5;
+}
+
+.plan-polygon-move polygon {
+  fill: rgb(79 140 93 / 9%);
+  stroke: rgb(79 140 93 / 80%);
+  stroke-width: 2;
+  stroke-dasharray: 8 5;
+}
+
+.plan-polygon-add {
+  --plan-color: #4f8c5d;
+  animation: plan-link-arrive 420ms cubic-bezier(0.2, 0.82, 0.24, 1) both;
+}
+
+.plan-polygon-add polygon {
+  fill: color-mix(in srgb, var(--plan-color) 17%, rgba(255, 255, 255, 0.84));
+  stroke: color-mix(in srgb, var(--plan-color) 84%, #263127);
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+}
+
+.plan-polygon-add.plan-ghost-fill-solid polygon {
+  fill: color-mix(in srgb, var(--plan-color) 31%, rgba(255, 255, 255, 0.72));
+}
+
+.plan-polygon-add.plan-ghost-fill-semi polygon {
+  fill: color-mix(in srgb, var(--plan-color) 19%, rgba(255, 255, 255, 0.78));
+}
+
+.plan-polygon-add text {
+  paint-order: stroke;
+  fill: color-mix(in srgb, var(--plan-color) 72%, #182019);
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 4px;
+  font: 650 12px/1.25 Inter, ui-sans-serif, sans-serif;
+}
+
+.plan-link {
+  color: #4c76b8;
+}
+
+.plan-link path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-dasharray: 7 7;
+  vector-effect: non-scaling-stroke;
+  animation: plan-link-arrive 540ms ease-out both;
+}
+
+.plan-trace {
+  fill: none;
+  stroke: #886dc3;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 2 10;
+  opacity: 0.78;
+  vector-effect: non-scaling-stroke;
+  animation: plan-link-arrive 560ms ease-out both;
+}
+
+.plan-trace-black { stroke: #30332d; }
+.plan-trace-grey { stroke: #858b82; }
+.plan-trace-violet { stroke: #886dc3; }
+.plan-trace-blue { stroke: #4c76b8; }
+.plan-trace-light-blue { stroke: #72afca; }
+.plan-trace-yellow { stroke: #b98c2e; }
+.plan-trace-orange { stroke: #d77440; }
+.plan-trace-green { stroke: #4f8c5d; }
+.plan-trace-light-green { stroke: #7eb46b; }
+.plan-trace-light-red { stroke: #d97970; }
+.plan-trace-red { stroke: #b84f46; }
+
+.plan-link marker path,
+#fogwood-plan-arrow path {
+  fill: currentColor;
+  stroke: none;
+}
+
+.plan-link text {
+  paint-order: stroke;
+  fill: color-mix(in srgb, currentColor 78%, #172017);
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 4px;
+  font: 650 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.plan-link-violet { color: #886dc3; }
+.plan-link-blue { color: #4c76b8; }
+.plan-link-light-blue { color: #72afca; }
+.plan-link-yellow { color: #b98c2e; }
+.plan-link-orange { color: #d77440; }
+.plan-link-green { color: #4f8c5d; }
+.plan-link-light-green { color: #7eb46b; }
+.plan-link-light-red { color: #d97970; }
+.plan-link-red { color: #b84f46; }
+.plan-link-grey { color: #858b82; }
+.plan-link-black { color: #30332d; }
+
+@keyframes plan-link-arrive {
+  from {
+    opacity: 0;
+    stroke-dashoffset: 48;
+  }
 }
 
 .plan-ghost-material {
@@ -941,26 +1154,165 @@ select {
   box-shadow: 0 0 0 3px rgba(146, 150, 142, 0.12);
 }
 
+.canvas-participation-invitation {
+  position: absolute;
+  top: 27%;
+  left: clamp(72px, 13vw, 220px);
+  width: min(470px, calc(100vw - 144px));
+  color: #252722;
+  pointer-events: auto;
+  animation: canvas-invitation-arrive 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.canvas-invitation-kicker {
+  margin: 0 0 11px;
+  color: #72806e;
+  font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.canvas-participation-invitation h1 {
+  max-width: 430px;
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(34px, 4.2vw, 64px);
+  font-weight: 400;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.canvas-invitation-copy {
+  max-width: 390px;
+  margin: 17px 0 0;
+  color: #70746b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.canvas-invitation-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 18px;
+}
+
+.canvas-invitation-actions button,
+.canvas-invitation-actions a {
+  border: 0;
+  background: none;
+  color: #4f6450;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.canvas-invitation-actions button {
+  padding: 8px 11px;
+  border: 1px solid rgba(79, 100, 80, 0.22);
+  border-radius: 999px;
+  background: rgba(249, 250, 245, 0.88);
+}
+
+.canvas-invitation-actions a {
+  color: #969a91;
+  text-decoration: underline;
+  text-decoration-color: rgba(150, 154, 145, 0.38);
+  text-underline-offset: 3px;
+}
+
+.canvas-invitation-actions button:focus-visible,
+.canvas-invitation-actions a:focus-visible {
+  outline: 3px solid rgba(92, 138, 97, 0.22);
+  outline-offset: 3px;
+}
+
+@keyframes canvas-invitation-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
 .proposal-dock {
   position: absolute;
   z-index: 700;
-  right: 12px;
-  bottom: 12px;
-  width: min(390px, calc(100vw - 24px));
-  max-height: min(680px, calc(100vh - 24px));
+  bottom: 18px;
+  left: 50%;
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 36px));
   overflow: auto;
   border: 1px solid rgba(24, 27, 23, 0.13);
-  border-radius: 17px;
-  background: rgba(255, 254, 250, 0.97);
+  border-radius: 20px;
+  background: rgba(255, 255, 251, 0.94);
   box-shadow: 0 24px 70px rgba(24, 27, 23, 0.18), 0 4px 16px rgba(24, 27, 23, 0.07);
   backdrop-filter: blur(18px);
+  transform: translateX(-50%);
 }
 
 .proposal-dock .proposal-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 18px;
   margin: 0;
+  padding: 13px 14px;
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.proposal-dock .proposal-review-header {
+  min-width: 0;
+}
+
+.proposal-dock .proposal-review h3 {
+  overflow: hidden;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposal-dock .proposal-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  gap: 7px;
+  margin: 0;
+}
+
+.proposal-dock .proposal-actions button {
+  min-width: 76px;
+  padding: 0 14px;
+  border-radius: 999px;
+}
+
+.proposal-details {
+  grid-column: 1 / -1;
+  padding-top: 9px;
+  border-top: 1px solid rgba(24, 27, 23, 0.09);
+}
+
+.proposal-details summary {
+  color: #777b72;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 680;
+  list-style-position: outside;
+}
+
+.proposal-details[open] summary {
+  margin-bottom: 9px;
+}
+
+.proposal-dock .proposal-footnote {
+  grid-column: 1 / -1;
+  margin: -3px 0 0;
+  color: #8b8e86;
+  font-size: 9px;
 }
 
 .surface-notice {
@@ -983,7 +1335,8 @@ select {
 }
 
 .proposal-dock + .surface-notice {
-  right: 414px;
+  right: 12px;
+  bottom: 118px;
 }
 
 @media (max-width: 840px) {
@@ -996,5 +1349,40 @@ select {
     right: 12px;
     bottom: auto;
     top: 52px;
+  }
+
+  .proposal-dock {
+    bottom: 10px;
+    width: calc(100vw - 20px);
+  }
+
+  .proposal-dock .proposal-review {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .proposal-dock .proposal-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .proposal-dock .proposal-actions button {
+    flex: 1;
+  }
+
+  .canvas-participation-invitation {
+    top: 22%;
+    left: 58px;
+    width: calc(100vw - 92px);
+  }
+
+  .canvas-participation-invitation h1 {
+    font-size: clamp(34px, 11vw, 48px);
+  }
+
+  .canvas-invitation-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 11px;
   }
 }

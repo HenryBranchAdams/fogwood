@@ -71,7 +71,7 @@ test('the acceptance manifest names the autophagy kernel and its three-tool publ
   assert.deepEqual([...new Set(publicTools)].sort(), ['fogwood-capabilities', 'fogwood-inspect', 'fogwood-propose']);
 });
 
-test('the public shell is a blank tldraw surface without product-gallery chrome', async () => {
+test('the public shell is a blank tldraw surface with one disappearing participation invitation and no product-gallery chrome', async () => {
   const source = await readFile(new URL('../app/surface-app.tsx', import.meta.url), 'utf8');
   const toolsFacade = await readFile(new URL('../app/surface-tools.ts', import.meta.url), 'utf8');
   const toolsSource = await readFile(new URL('../app/internal/surface-runtime.ts', import.meta.url), 'utf8');
@@ -79,6 +79,9 @@ test('the public shell is a blank tldraw surface without product-gallery chrome'
 
   assert.match(source, /<Tldraw\b/);
   assert.match(source, /surface-mark/);
+  assert.match(source, /canvas-participation-invitation/);
+  assert.match(source, /Make a mark\. Ask Codex to grow it\./);
+  assert.match(source, /getCurrentPageShapes\(\)\.length === 0/);
   assert.doesNotMatch(source, /BazaarPanel|empty-invitation|agent-sidebar|ChatGPT surface chat|Export SVG/);
   assert.match(toolsFacade, /Compatibility façade/);
   assert.doesNotMatch(toolsFacade, /name: 'fogwood-/);
@@ -422,6 +425,17 @@ test('Canvas Protocol plans a preserved variant and can mutate it later in the s
     source: { id: 'shape:source', type: 'geo', semantic_id: 'idea:source', transform_fingerprint: 'fnv1a32:72226092', parent_id: pageId },
     local_position: { x: 128, y: 184 },
     bounds: { x: 128, y: 184, w: 180, h: 100 },
+    geometry: {
+      origin: { x: 128, y: 184 },
+      bounds: { x: 128, y: 184, w: 180, h: 100 },
+      corners: [
+        { x: 128, y: 184 },
+        { x: 308, y: 184 },
+        { x: 308, y: 284 },
+        { x: 128, y: 284 },
+      ],
+      rotation: 0,
+    },
     lineage: { variant_id: 'idea:variant', lineage_source_id: 'idea:source' },
   });
   assert.equal(result.plan.adds[0].kind, 'variant');

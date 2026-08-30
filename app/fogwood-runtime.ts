@@ -1168,6 +1168,11 @@ export type PreparedCanvasPreview = Readonly<{
     label: string;
     bounds: PreparedCanvasPreviewBounds;
     role?: string;
+    color?: string;
+    fill?: string;
+    points?: readonly Readonly<{ x: number; y: number }>[];
+    /** Exact page-space footprint when a lowering retains non-axis-aligned geometry. */
+    corners?: readonly Readonly<{ x: number; y: number }>[];
   }>[];
   moves: readonly Readonly<{
     id: string;
@@ -1185,6 +1190,10 @@ export type PreparedCanvasPreview = Readonly<{
     semantic_id: string;
     label: string;
     bounds: PreparedCanvasPreviewBounds;
+    from_center?: Readonly<{ x: number; y: number }>;
+    to_center?: Readonly<{ x: number; y: number }>;
+    relationship_kind?: string;
+    color?: string;
   }>[];
   regions: readonly Readonly<{
     semantic_id: string;

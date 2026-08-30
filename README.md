@@ -107,8 +107,10 @@ SVG behavior. Asset bytes are validated, sanitized where needed, hashed over
 the exact accepted bytes, and recorded with minimal provenance before Apply.
 The existing `fogwood-receipts-local:v1` parser and legacy recipe/snapshot
 constructors remain readable. New lifecycle transitions emit one generic
-proposal receipt each. `open-surface-local`, the surface-block renderer, and
-direct user gestures remain compatible with persisted pages.
+proposal receipt each. New visits use the blank-first `fogwood-local-v2`
+device-local canvas. Earlier `open-surface-local` matter is preserved without
+deletion or dual writes and remains available through `?legacy=1`; the
+surface-block renderer and direct user gestures remain compatible there.
 
 ## Run locally
 

@@ -1863,23 +1863,32 @@ test('already-rotated direct matter rotates and resizes around its reviewed loca
   assert.ok(Math.abs(after.transform.page_origin.y - beforeOrigin.y) < 1e-7);
 });
 
-test('nested rotated variants preserve parent, rotation, lineage, and exact page offset', () => {
+test('nested rotated variants preserve parent, rotation, lineage, and exact frozen preview corners', async () => {
   const parent = { id: 'shape:frame', typeName: 'shape', type: 'frame', parentId: 'page:main', x: 300, y: 140, rotation: -0.35, opacity: 1, isLocked: false, index: 'a1', meta: { fogwood: { semantic_id: 'frame:branch', semantic_id_source: 'stable' } }, props: { w: 500, h: 360, name: 'Branch' } };
   const child = { id: 'shape:source', typeName: 'shape', type: 'geo', parentId: parent.id, x: 55, y: 70, rotation: 0.6, opacity: 0.8, isLocked: false, index: 'a2', meta: { extension: { retained: true }, fogwood: { semantic_id: 'idea:source-nested', semantic_id_source: 'stable' } }, props: { geo: 'ellipse', w: 120, h: 80, richText: { type: 'doc', content: [] } } };
   const editor = new CanvasProposalEditor([parent, child]);
   const before = inspectSurface(editor);
   const sourceProjection = before.items.find((item) => item.id === child.id).transform;
-  const result = applyProposalToEditor(editor, {
-    base_revision: before.content_revision, summary: 'Preserve a nested branch',
+  let controller;
+  const cleanup = registerSurfaceTools(editor, () => {}, undefined, undefined, (value) => { controller = value; });
+  const propose = editor.registeredTools.find((tool) => tool.name === 'fogwood-propose');
+  const staged = JSON.parse((await propose.execute({
+    base_revision: before.content_revision,
+    context_token: before.context_token,
+    summary: 'Preserve a nested branch',
     actions: [{ type: 'canvas_ops', ops: [{ op: 'variant', id: 'semantic:idea:source-nested', semantic_id: 'idea:variant-nested', offset_x: 90, offset_y: 45 }] }],
-  });
-  assert.deepEqual(result, { ok: true });
+  })).content[0].text);
+  assert.equal(staged.status, 'STAGED');
+  const preview = controller.getState().plan.preview.additions.find((addition) => addition.semantic_id === 'idea:variant-nested');
+  assert.deepEqual(preview.corners, sourceProjection.page_corners.map((point) => ({ x: point.x + 90, y: point.y + 45 })));
+  assert.equal(controller.apply().status, 'APPLIED');
   const variant = inspectSurface(editor).items.find((item) => item.semantic_id === 'idea:variant-nested');
   assert.equal(variant.parent_id, parent.id);
   assert.equal(variant.rotation, child.rotation);
   assert.ok(Math.abs(variant.transform.page_origin.x - sourceProjection.page_origin.x - 90) < 1e-7);
   assert.ok(Math.abs(variant.transform.page_origin.y - sourceProjection.page_origin.y - 45) < 1e-7);
   assert.equal(variant.meta.lineage_source_id, 'idea:source-nested');
+  cleanup();
 });
 
 test('same-parent rotated arrangement is exact and staged parent changes refuse atomically', async () => {

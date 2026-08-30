@@ -63,8 +63,10 @@ active page. The 213 examples are addressing and qualification vocabulary, not
 
 ## Compatibility
 
-This decision does not rewrite persisted user pages. Keep the `open-surface-local`
-storage key, the `surface-block` renderer and direct user gestures, and the
+This decision does not rewrite persisted user pages. ADR 0008 amends the
+storage-identity clause: new visits use `fogwood-local-v2`, while the untouched
+`open-surface-local` document remains an explicit `?legacy=1` archive. Keep the
+`surface-block` renderer and direct user gestures, and the
 `fogwood-receipts-local:v1` parser. Legacy recipe and snapshot receipt event
 types and constructors remain readable for old ledgers. New lifecycle
 transitions use one generic proposal receipt per transition. Older internal
@@ -79,8 +81,8 @@ regression-tested compatibility surfaces.
   lowering logic and make it unclear which object owns review state.
 - Letting Apply regenerate from a proposal would permit prepared material bytes
   or model choices to change after human review.
-- Replacing the old persistence or receipt formats would strand device-local
-  work and erase provenance.
+- Deleting, rewriting, or dual-writing the old persistence or receipt formats
+  would strand device-local work or make authority ambiguous.
 - Exposing `call_editor_method`, generated JavaScript, HTML, remote embeds, or
   a dynamic import escape hatch would cross the trust boundary.
 

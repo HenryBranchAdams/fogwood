@@ -156,12 +156,14 @@ closed Fogwood protocol and remain subject to page review.
 
 ## Compatibility boundary
 
-The old `open-surface-local` persistence key and `surface-block` renderer/direct
-user gestures remain supported while the public direction stays native-shape
-first. Existing block, instrument, material, seeded, receipt, and Bazaar tests
-are regression coverage, not the first-run product grammar. Dead dashboard-era
-modules and gallery CSS were removed in the autophagy phase; their deletion is
-recorded in `acceptance.md`.
+New visits use the blank-first `fogwood-local-v2` persistence identity. Earlier
+`open-surface-local` documents are not deleted, copied, or rewritten; they are
+an explicit device-local archive reached with `?legacy=1`. The
+`surface-block` renderer and direct user gestures remain supported there while
+the public direction stays native-shape first. Existing block, instrument,
+material, seeded, receipt, and Bazaar tests are regression coverage, not the
+first-run product grammar. Dead dashboard-era modules and gallery CSS were
+removed in the autophagy phase; their deletion is recorded in `acceptance.md`.
 
 ## Historical decisions
 
@@ -173,6 +175,7 @@ seeded-composition decisions remain in:
 - [`docs/adr/0003-compile-the-full-example-surface.md`](docs/adr/0003-compile-the-full-example-surface.md), superseded for active runtime execution by ADR 0005
 - [`docs/adr/0004-seed-composition-after-authority.md`](docs/adr/0004-seed-composition-after-authority.md), still current for seed routing
 - [`docs/adr/0005-prepared-plan-autophagy.md`](docs/adr/0005-prepared-plan-autophagy.md)
+- [`docs/adr/0008-blank-first-with-legacy-archive.md`](docs/adr/0008-blank-first-with-legacy-archive.md)
 
 Historical qualification results and commit provenance remain in the archive
 section of [`acceptance.md`](acceptance.md). They must not be read as current

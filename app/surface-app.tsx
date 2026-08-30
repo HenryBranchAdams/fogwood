@@ -4,10 +4,13 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Editor, Tldraw } from 'tldraw';
+import { Editor, Tldraw, useEditor, useValue } from 'tldraw';
 import 'tldraw/tldraw.css';
 import type { ProposalLifecycleEvent } from './fogwood-proposal-lifecycle';
-import { FOGWOOD_PERSISTENCE_KEY } from './fogwood-persistence';
+import {
+  FOGWOOD_LEGACY_PERSISTENCE_KEY,
+  persistenceKeyFromSearch,
+} from './fogwood-persistence';
 import { createFogwoodReceiptRecorder } from './fogwood-receipt-recorder';
 import { RECEIPT_STORAGE_KEY, createReceiptLedger } from './fogwood-receipts';
 import type { ProposalControllerState } from './fogwood-runtime';
@@ -20,6 +23,56 @@ import {
 } from './webmcp/surface-tools';
 
 const shapeUtils = [SurfaceBlockUtil];
+const STARTING_PROMPT = 'Look at this Fogwood canvas. Make me a strange place to explore using native shapes, arrows, open space, and one surprising artifact. Stage it for review; do not apply it.';
+
+function CanvasParticipationLayer({
+  plan,
+  isLegacy,
+}: {
+  plan?: ProposalControllerState['plan'];
+  isLegacy: boolean;
+}) {
+  const editor = useEditor();
+  const isEmpty = useValue(
+    'Fogwood canvas is empty',
+    () => editor.getCurrentPageShapes().length === 0,
+    [editor],
+  );
+  const [copied, setCopied] = useState(false);
+
+  async function copyStartingPrompt() {
+    try {
+      await navigator.clipboard.writeText(STARTING_PROMPT);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_800);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <>
+      <PreparedPlanOverlay plan={plan} />
+      {isEmpty && !plan && (
+        <section className="canvas-participation-invitation" aria-label="Start shaping Fogwood">
+          <p className="canvas-invitation-kicker">The canvas is the prompt.</p>
+          <h1>Make a mark. Ask Codex to grow it.</h1>
+          <p className="canvas-invitation-copy">
+            Draw, write, or place anything—then invite Codex to turn its capabilities into editable canvas matter.
+          </p>
+          <div className="canvas-invitation-actions">
+            <button type="button" onClick={copyStartingPrompt}>
+              {copied ? 'Copied' : 'Copy a strange starting prompt'}
+            </button>
+            <a href={isLegacy ? '/' : '?legacy=1'}>
+              {isLegacy ? 'Return to the blank canvas' : 'Open the earlier canvas archive'}
+            </a>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
 
 function diffValue(value: unknown) {
   if (value === undefined) return 'none';
@@ -110,6 +163,11 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const registrationCleanup = useRef<(() => void) | null>(null);
   const proposalController = useRef<SurfaceToolController | null>(null);
+  const persistenceKey = useMemo(
+    () => persistenceKeyFromSearch(typeof window === 'undefined' ? '' : window.location.search),
+    [],
+  );
+  const isLegacy = persistenceKey === FOGWOOD_LEGACY_PERSISTENCE_KEY;
 
   const receiptRecorder = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -169,8 +227,13 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
   const entries = proposal ? proposalDiffEntries(proposal.diff) : [];
   const seededAction = proposal?.proposal.actions.find((action) => action.type === 'seeded_composition');
   const tldrawComponents = useMemo(() => ({
-    InFrontOfTheCanvas: () => <PreparedPlanOverlay plan={proposal?.status === 'pending' ? proposal.plan : undefined} />,
-  }), [proposal]);
+    InFrontOfTheCanvas: () => (
+      <CanvasParticipationLayer
+        plan={proposal?.status === 'pending' ? proposal.plan : undefined}
+        isLegacy={isLegacy}
+      />
+    ),
+  }), [isLegacy, proposal]);
 
   function applyProposal() {
     const result = proposalController.current?.apply();
@@ -194,7 +257,7 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
         <Tldraw
           shapeUtils={shapeUtils}
           licenseKey={licenseKey}
-          persistenceKey={FOGWOOD_PERSISTENCE_KEY}
+          persistenceKey={persistenceKey}
           onMount={mountEditor}
           components={tldrawComponents}
         />
@@ -221,22 +284,25 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
                 </span>
               </div>
 
-              {proposal.proposal.rationale && (
-                <p className="proposal-rationale">{proposal.proposal.rationale}</p>
-              )}
+              <details className="proposal-details">
+                <summary>Inspect plan &amp; provenance</summary>
 
-              <p className="proposal-plan-id" title={proposal.plan.plan_id}>
-                Prepared plan <code>{proposal.plan.plan_id.slice(0, 19)}…</code>
-              </p>
+                {proposal.proposal.rationale && (
+                  <p className="proposal-rationale">{proposal.proposal.rationale}</p>
+                )}
 
-              <div className="proposal-counts" aria-label="Proposal change counts">
-                <span><strong>{proposal.diff.counts.adds}</strong>adds</span>
-                <span><strong>{proposal.diff.counts.updates}</strong>updates</span>
-                <span><strong>{proposal.diff.counts.moves}</strong>moves</span>
-                <span><strong>{proposal.diff.counts.removes}</strong>removes</span>
-              </div>
+                <p className="proposal-plan-id" title={proposal.plan.plan_id}>
+                  Prepared plan <code>{proposal.plan.plan_id.slice(0, 19)}…</code>
+                </p>
 
-              {seededAction && (
+                <div className="proposal-counts" aria-label="Proposal change counts">
+                  <span><strong>{proposal.diff.counts.adds}</strong>adds</span>
+                  <span><strong>{proposal.diff.counts.updates}</strong>updates</span>
+                  <span><strong>{proposal.diff.counts.moves}</strong>moves</span>
+                  <span><strong>{proposal.diff.counts.removes}</strong>removes</span>
+                </div>
+
+                {seededAction && (
                 <section className="proposal-seeded-evidence" aria-label="Seeded composition replay evidence">
                   <div className="proposal-seeded-heading">
                     <span className="proposal-diff-title">Seeded remix · originals preserved</span>
@@ -258,9 +324,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
                     ))}
                   </ul>
                 </section>
-              )}
+                )}
 
-              {proposal.diff.adds.material_specs.length > 0 && (
+                {proposal.diff.adds.material_specs.length > 0 && (
                 <section className="proposal-material-diff" aria-label="Qualified material previews">
                   <span className="proposal-diff-title">Local material preview</span>
                   <div className="proposal-material-list">
@@ -285,9 +351,9 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
                     })}
                   </div>
                 </section>
-              )}
+                )}
 
-              {entries.length > 0 && (
+                {entries.length > 0 && (
                 <div className="proposal-diff" aria-label="Affected canvas matter">
                   <span className="proposal-diff-title">Affected canvas matter</span>
                   <ul className="proposal-diff-list">
@@ -299,17 +365,18 @@ export default function SurfaceApp({ licenseKey }: { licenseKey?: string }) {
                     <span className="proposal-diff-more">Showing the first 32 bounded changes.</span>
                   )}
                 </div>
-              )}
+                )}
 
-              {proposal.diff.warnings.length > 0 && (
+                {proposal.diff.warnings.length > 0 && (
                 <ul className="proposal-warnings">
                   {proposal.diff.warnings.slice(0, 4).map((warning) => (
                     <li key={warning}>{warning}</li>
                   ))}
                 </ul>
-              )}
+                )}
 
-              {proposal.message && <p className="proposal-message">{proposal.message}</p>}
+                {proposal.message && <p className="proposal-message">{proposal.message}</p>}
+              </details>
 
               <div className="proposal-actions">
                 <button type="button" onClick={applyProposal} disabled={proposal.status !== 'pending'}>
